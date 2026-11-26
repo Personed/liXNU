@@ -42,8 +42,12 @@ Report the profile alongside the stage:
 - **x86-64 PC → QEMU TCG → ARM64 Linux → PureDarwin console:** this complementary full
   route is tracked in [#36]. Its acceptance workflow builds a paired PureDarwin image and
   collection, requires a Darwin console command and guest-issued halt, then verifies module
-  unload and Linux power-off. The current profile uses 16 GiB guest RAM, 4 KiB pages, PAC
-  at EL1, and a fixed FKI carve-out; results apply only to that measured profile and do not
+  unload and Linux power-off. The current profile assigns 16 GiB guest RAM with `mem=7G`,
+  uses 4 KiB pages and PAC at EL1, reserves an 8,156 MiB FKI carve-out at
+  `0x200000000`, and assigns 7,900 MiB to XNU. The workflow selects Ubuntu's latest
+  generic ARM64 kernel package at runtime and records the release and `.config` digest;
+  pinning the package or repository snapshot is still needed for identical reruns.
+  Results apply only to that measured profile and do not
   establish Tahoe/KVM or support on every PC. The earlier #36 head `5312b29` passed run
   #72 on Ubuntu 24.04 x86-64 with QEMU 8.2.2: it printed the Darwin console command
   marker, halted from the guest, unloaded `xnu.ko`, powered Linux off, and exited QEMU
@@ -154,10 +158,11 @@ XNU stage and contiguous DRAM interval / configured carve-out comparison:
 PureDarwin console command / guest-issued halt result:
 
 Native x86_64 hosted-XNU profile (only when applicable):
-CPU vendor/model/features / Linux kernel / page size / RAM:
+CPU vendor/model/features / Linux kernel release and .config or SHA-256 / page size / RAM:
 Tahoe build / matching XNU source and collection revision:
 Native hosted desktop / disk, input, network, rendering / result:
-Linux host-integrity checks before and during / result:
+Last boot stage reached if the desktop does not start / failure evidence:
+Linux host-integrity checks before, during and after shutdown / result:
 Guest-issued shutdown / module unload / result:
 
 Supplemental QEMU/KVM guest profile (only when applicable):

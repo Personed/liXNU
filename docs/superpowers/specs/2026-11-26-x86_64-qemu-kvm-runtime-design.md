@@ -46,7 +46,7 @@ The optional x86_64 guest launcher does not build or load the x86_64 modules req
 
 ## Current evidence and limits
 
-- The direct x86 FKI module fails modpost due to six missing architecture hooks, and `xnu_main.c` fails assembly on AArch64 instructions.
+- PR #48 added the x86_64 FKI Linux host backend and builds it against Debian 6.12.118 headers, but `fki_caps()` remains zero and the backend does not enter XNU. PR #47's normal x86_64 XNU module still fails closed with `-EOPNOTSUPP`; the architecture-specific execution boundary remains unimplemented.
 - Apple XNU `xnu-12377.121.6` includes `osfmk/i386` and `config/MASTER.x86_64`.
 - QEMU 10.0.13 in the disposable environment provides Q35, OVMF 4 MiB firmware, `isa-applesmc`, AHCI, E1000, USB input and VGA devices. A Debian 6.12.118 x86_64 guest booted under TCG.
 - This environment has no `/dev/kvm` and no Tahoe disk. It can validate the launcher and TCG harness but cannot validate native KVM acceleration or macOS boot.

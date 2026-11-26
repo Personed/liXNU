@@ -113,7 +113,7 @@ case "$last" in
       if [ "$EUID" -eq 0 ]; then
         "@REAL_CHOWN@" 65534:65534 "$last" "$last/sentinel"
       else
-        "@SUDO_BIN@" -n "@REAL_CHOWN@" 65534:65534 "$last" "$last/sentinel"
+        "@SUDO_BIN@" "@REAL_CHOWN@" 65534:65534 "$last" "$last/sentinel"
       fi
       printf '%s\n' "$last" >"@STAGE_MARKER@"
     } >>"@TRACE_PATH@" 2>&1

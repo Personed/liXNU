@@ -1,14 +1,16 @@
 # xnulinux
 
-Run macOS userspace on Linux with two architecture-specific paths: a direct hosted-kernel path on ARM64, and a QEMU/KVM guest path on x86_64 PCs.
+Run XNU and Darwin userspace on Linux directly on compatible ARM64 hosts, or in an ARM64 Linux VM on Intel/AMD x86-64 PCs. The PC path uses QEMU TCG software emulation and currently targets the PureDarwin console; a separate experimental QEMU/KVM path runs a user-prepared Tahoe x86-64 guest.
 
 On ARM64, xnulinux builds XNU, the open-source kernel of macOS, from Apple's published sources and runs it as a loadable kernel
 module (`xnu.ko`) inside an unmodified arm64 Linux kernel. The hosted XNU drives the CPU and MMU directly, so macOS
 processes run natively next to Linux processes on the same CPUs. Linux lends XNU its memory, timers, files, network and
 GPU through a small interface module (`fki.ko`).
 
-On x86_64 Intel and AMD PCs, the experimental path runs a user-prepared Tahoe 26 guest with QEMU/KVM. It does not load
-the ARM64-only project modules on x86_64. The ARM64 path remains unchanged.
+On Intel/AMD x86-64 PCs, QEMU TCG runs an ARM64 Linux guest with the xnulinux modules and PureDarwin. It does not need
+VT-x or AMD-V, but the documented profile allocates 16 GiB to the guest plus additional host RAM. It does not claim a
+macOS desktop, graphics, networking, or practical performance on every PC. A separate experimental QEMU/KVM path runs
+a user-prepared Tahoe 26 x86-64 guest without loading the ARM64-only project modules on x86-64.
 
 On a supported ARM64 host with a stock Ubuntu kernel, `insmod xnu.ko` boots a macOS 27 system disk made by Apple's own installer to the
 desktop: loginwindow, WindowServer, Dock, Finder, Safari and Chrome.
@@ -88,15 +90,18 @@ Working on two arm64 Linux setups:
 
 ### Architecture support
 
-| Linux host | Hosted macOS | Status |
+| Linux host | Guest/system | Status |
 |---|---|---|
 | ARM64 with PAC and 4 KiB pages | macOS 27 ARM64 | Existing supported path; tested on Apple Silicon Linux VMs and NVIDIA DGX Spark as described above. |
+| Intel/AMD x86-64 with QEMU TCG and 16 GiB guest RAM plus host RAM | ARM64 Linux, then PureDarwin ARM64 console | Experimental; full console boot and guest-requested halt are awaiting the current CI run. No macOS desktop or performance claim. |
 | Intel x86_64 with VT-x/KVM and required CPU features | macOS Tahoe 26 x86_64 | Experimental QEMU/KVM launcher; physical Intel desktop boot and host-integrity acceptance remain. |
 | AMD x86_64 with AMD-V/KVM and required CPU features | macOS Tahoe 26 x86_64 | Experimental QEMU/KVM launcher; requires AMD OpenCore kernel patches and physical AMD acceptance. |
 
-The x86_64 launcher and test harness are present, but neither x86_64 host row is a support claim yet. TCG runs validate
-only a disposable Linux guest; support requires a Tahoe desktop boot and Linux host-integrity checks on physical Intel
-and AMD hardware. See [`tests/x86_64/README.md`](tests/x86_64/README.md) for setup and current evidence.
+The ARM64 VM setup and current PureDarwin acceptance profile are documented in [`docs/qemu.md`](docs/qemu.md) and
+[`docs/portability-validation.md`](docs/portability-validation.md). A passing TCG console run will validate that profile
+on its recorded runner; it will not establish a macOS desktop, graphics, networking, or practical performance on every
+PC. The separate x86_64 QEMU/KVM launcher remains experimental and needs Tahoe desktop boot and Linux host-integrity
+checks on physical Intel and AMD systems. See [`tests/x86_64/README.md`](tests/x86_64/README.md) for that path.
 
 Shipping it as a hosted service (what is distributed, what a user installs to run Apple's macOS) is in
 [`docs/hosted-service.md`](docs/hosted-service.md).

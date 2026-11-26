@@ -57,9 +57,13 @@ def choose_display_backend(qemu, host, requested=None):
     }
     if requested is not None and requested not in available:
         choices = ", ".join(sorted(available)) or "none detected"
+        if host == "Windows" and "sdl" not in available:
+            recovery = "Windows graphical mode requires SDL; install QEMU with SDL support or omit --graphical"
+        else:
+            recovery = "omit --display-backend to use the host default"
         raise ValueError(
             f"QEMU does not provide the requested display backend {requested!r} "
-            f"(available: {choices}); omit --display-backend to use the host default"
+            f"(available: {choices}); {recovery}"
         )
     for backend in preferred:
         if backend in available:

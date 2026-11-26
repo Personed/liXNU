@@ -31,6 +31,11 @@ PROFILE = (
 )
 GUEST_RAM_BYTES = 16 * 1024 ** 3
 HOST_HEADROOM_BYTES = 4 * 1024 ** 3
+SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
+GUEST_INPUT_HASHES = {
+    "arm64_guest_image_sha256": ("kernel_sha256", "ARM64 guest kernel"),
+    "arm64_guest_initramfs_sha256": ("initramfs_sha256", "ARM64 guest initramfs"),
+}
 
 
 def command_output(command: list[str]) -> str:
@@ -113,7 +118,7 @@ def available_memory_bytes() -> int | None:
     return host_facts()["memory_available_bytes"]
 
 
-def ram_capacity(host: dict) -> dict:
+def ram_capacity(host: dict, measurement_phase: str) -> dict:
     reasons = []
     total = host["memory_total_bytes"]
     available = host["memory_available_bytes"]
@@ -122,6 +127,7 @@ def ram_capacity(host: dict) -> dict:
     if available is None or available < HOST_HEADROOM_BYTES:
         reasons.append("available RAM before QEMU is below the 4 GiB host-headroom allowance")
     return {
+        "measurement_phase": measurement_phase,
         "minimum_total_ram_bytes": GUEST_RAM_BYTES + HOST_HEADROOM_BYTES,
         "minimum_available_before_qemu_bytes": HOST_HEADROOM_BYTES,
         "capacity_screen_passed": not reasons,
@@ -139,6 +145,13 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def sha256_if_readable_file(path: Path) -> str | None:
+    try:
+        return sha256_file(path) if path.is_file() else None
+    except OSError:
+        return None
 
 
 def read_manifest(path: Path) -> tuple[str | None, dict[str, str]]:
@@ -178,8 +191,15 @@ def output_tail(value) -> str:
     return "\n".join((value or "").splitlines()[-80:])
 
 
-def save_report(report: dict, serial_log: Path, *, write_summary: bool = True) -> None:
+def save_report(
+    report: dict,
+    serial_log: Path,
+    *,
+    memory_phase: str,
+    write_summary: bool = True,
+) -> None:
     report["host"]["memory_available_at_report_bytes"] = available_memory_bytes()
+    report["host"]["memory_available_at_report_phase"] = memory_phase
     temp_dir = Path(os.environ.get("RUNNER_TEMP", str(serial_log.parent)))
     report_path = temp_dir / "puredarwin-tcg-boot-report.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -205,7 +225,8 @@ def save_report(report: dict, serial_log: Path, *, write_summary: bool = True) -
         f"- Host OS: {host['system']} {host['release']} ({host['architecture']})",
         f"- Host CPU: {host['processor']}",
         f"- Host resources: {host['logical_cpus']} logical CPUs / {memory_text} total RAM",
-        f"- Available RAM snapshots: {available_text} before QEMU / {available_at_report_text} when report was written",
+        f"- Available RAM at capacity screen ({report['ram_capacity']['measurement_phase']}): {available_text}",
+        f"- Available RAM when report was written ({host['memory_available_at_report_phase']}): {available_at_report_text}",
         f"- RAM capacity screen: {'passed' if report['ram_capacity']['capacity_screen_passed'] else 'capacity-limited'}",
         f"- QEMU: {report['qemu_version']}",
         f"- Profile: {report['profile']}",
@@ -240,6 +261,65 @@ def save_report(report: dict, serial_log: Path, *, write_summary: bool = True) -
         summary.write("\n".join(lines) + "\n")
 
 
+def compare_manifest_digest(
+    errors: list[str],
+    description: str,
+    expected: str | None,
+    actual: str | None,
+) -> None:
+    if not expected:
+        errors.append(f"manifest is missing {description} SHA-256")
+    elif not SHA256_PATTERN.fullmatch(expected):
+        errors.append(f"manifest {description} is not a valid SHA-256 digest")
+    elif actual is None:
+        errors.append(f"cannot verify {description} SHA-256: input file is missing or unreadable")
+    elif not SHA256_PATTERN.fullmatch(actual):
+        errors.append(f"computed {description} is not a valid SHA-256 digest")
+    elif expected.lower() != actual.lower():
+        errors.append(f"{description} SHA-256 does not match its manifest")
+
+
+def manifest_input_errors(
+    input_hashes: dict[str, str | None],
+    missing_inputs: list[Path],
+    build_manifest_text: str | None,
+    build_manifest: dict[str, str],
+    guest_manifest_text: str | None,
+    guest_manifest: dict[str, str],
+) -> list[str]:
+    errors = [f"missing input file: {path}" for path in missing_inputs]
+
+    if not build_manifest_text:
+        errors.append("build-manifest.txt is missing")
+    else:
+        compare_manifest_digest(
+            errors,
+            "PureDarwin disk",
+            build_manifest.get("puredarwin_disk_sha256"),
+            input_hashes.get("disk_sha256"),
+        )
+
+    if not guest_manifest_text:
+        errors.append("guest-manifest.txt is missing")
+    else:
+        for key in (
+            "arm64_guest_kernel_release",
+            "arm64_guest_page_size",
+            "arm64_guest_pac",
+            "arm64_guest_exception_level",
+        ):
+            if key not in guest_manifest:
+                errors.append(f"guest manifest is missing {key}")
+        for manifest_key, (input_key, description) in GUEST_INPUT_HASHES.items():
+            compare_manifest_digest(
+                errors,
+                description,
+                guest_manifest.get(manifest_key),
+                input_hashes.get(input_key),
+            )
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("kernel", type=Path)
@@ -259,9 +339,9 @@ def main() -> int:
     host = host_facts()
     args.serial_log.parent.mkdir(parents=True, exist_ok=True)
     input_hashes = {
-        "kernel_sha256": sha256_file(args.kernel) if args.kernel.is_file() else None,
-        "initramfs_sha256": sha256_file(args.initramfs) if args.initramfs.is_file() else None,
-        "disk_sha256": sha256_file(args.disk) if args.disk.is_file() else None,
+        "kernel_sha256": sha256_if_readable_file(args.kernel),
+        "initramfs_sha256": sha256_if_readable_file(args.initramfs),
+        "disk_sha256": sha256_if_readable_file(args.disk),
     }
     build_manifest_path = args.kernel.parent / "build-manifest.txt"
     guest_manifest_path = args.kernel.parent / "guest-manifest.txt"
@@ -270,7 +350,7 @@ def main() -> int:
     report = {
         "runner_label": os.environ.get("XNULINUX_RUNNER_LABEL", "local"),
         "host": host,
-        "ram_capacity": ram_capacity(host),
+        "ram_capacity": ram_capacity(host, "python_runner_after_preparation_before_qemu"),
         "qemu_version": "unavailable",
         "profile": PROFILE,
         "inputs": input_hashes,
@@ -310,25 +390,14 @@ def main() -> int:
         except OSError as error:
             report["qemu_version"] = f"unavailable ({error})"
 
-    manifest_errors = []
-    manifest_errors.extend(f"missing input file: {path}" for path in missing_inputs)
-    expected_disk_sha = build_manifest.get("puredarwin_disk_sha256")
-    if not build_manifest_text:
-        manifest_errors.append("build-manifest.txt is missing")
-    elif not expected_disk_sha:
-        manifest_errors.append("build manifest has no puredarwin_disk_sha256")
-    elif expected_disk_sha.lower() != input_hashes["disk_sha256"].lower():
-        manifest_errors.append("downloaded PureDarwin disk SHA-256 does not match the build manifest")
-    if not guest_manifest_text:
-        manifest_errors.append("guest-manifest.txt is missing")
-    for key in (
-        "arm64_guest_kernel_release",
-        "arm64_guest_page_size",
-        "arm64_guest_pac",
-        "arm64_guest_exception_level",
-    ):
-        if key not in guest_manifest:
-            manifest_errors.append(f"guest manifest is missing {key}")
+    manifest_errors = manifest_input_errors(
+        input_hashes,
+        missing_inputs,
+        build_manifest_text,
+        build_manifest,
+        guest_manifest_text,
+        guest_manifest,
+    )
 
     host_errors = []
     if host["architecture"].lower() not in ("x86_64", "amd64"):
@@ -346,7 +415,7 @@ def main() -> int:
             "errors": manifest_errors + host_errors,
         }
         print("TCG boot could not start: " + "; ".join(manifest_errors + host_errors), file=sys.stderr)
-        save_report(report, args.serial_log)
+        save_report(report, args.serial_log, memory_phase="validation_failed_before_qemu")
         return 1
 
     command = [
@@ -395,7 +464,7 @@ def main() -> int:
         print(f"TCG boot could not complete: {error}", file=sys.stderr)
         if report["result"]["qemu_stderr_tail"]:
             print(report["result"]["qemu_stderr_tail"], file=sys.stderr)
-        save_report(report, args.serial_log)
+        save_report(report, args.serial_log, memory_phase="qemu_start_failed_or_timed_out")
         return 1
 
     log, messages, missing = serial_evidence(args.serial_log)
@@ -409,7 +478,7 @@ def main() -> int:
     if result.returncode != 0:
         report["result"]["qemu_stdout_tail"] = output_tail(result.stdout)
         report["result"]["qemu_stderr_tail"] = output_tail(result.stderr)
-    save_report(report, args.serial_log)
+    save_report(report, args.serial_log, memory_phase="after_qemu_exit")
     if result.returncode != 0 or missing:
         print(f"QEMU exit status: {result.returncode}", file=sys.stderr)
         if missing:

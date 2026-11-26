@@ -19,8 +19,9 @@ if [[ "${RUNNER_OS:-Linux}" == "macOS" ]]; then
 		memory_available=$(vm_stat 2>/dev/null | awk -v page_size="$page_size" '
 			/Pages free:|Pages inactive:|Pages speculative:|Pages purgeable:/ {
 				gsub(/[^0-9]/, "", $NF); pages += $NF
+				found=1
 			}
-			END { print pages * page_size + 0 }
+			END { if (found) printf "%.0f\n", pages * page_size + 0; else print "null" }
 		')
 	else
 		memory_available=null
@@ -31,8 +32,8 @@ else
 	architecture=$(uname -m)
 	processor=$(awk -F: '/^model name[[:space:]]*:/ { sub(/^[[:space:]]+/, "", $2); print $2; exit }' /proc/cpuinfo)
 	logical_cpus=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo null)
-	memory_total=$(awk '/^MemTotal:/ { print $2 * 1024; exit }' /proc/meminfo)
-	memory_available=$(awk '/^MemAvailable:/ { print $2 * 1024; exit }' /proc/meminfo)
+	memory_total=$(awk '/^MemTotal:/ { printf "%.0f\n", $2 * 1024; found=1; exit } END { if (!found) print "null" }' /proc/meminfo)
+	memory_available=$(awk '/^MemAvailable:/ { printf "%.0f\n", $2 * 1024; found=1; exit } END { if (!found) print "null" }' /proc/meminfo)
 fi
 
 system=$(clean "$system")
@@ -69,7 +70,8 @@ cat > "$report" <<EOF
     "logical_cpus": $logical_cpus,
     "memory_total_bytes": $memory_total,
     "memory_available_bytes": $memory_available,
-    "memory_available_at_report_bytes": $memory_available
+    "memory_available_at_report_bytes": $memory_available,
+    "memory_available_at_report_phase": "host_preflight_before_artifact_downloads"
   },
   "qemu_version": "not checked",
   "profile": "ARM64 Linux, 4 KiB pages, PAC at EL1, fixed 16 GiB QEMU guest-memory setting",
@@ -82,6 +84,7 @@ cat > "$report" <<EOF
   "ram_capacity": {
     "minimum_total_ram_bytes": $total_min,
     "minimum_available_before_qemu_bytes": $available_min,
+    "measurement_phase": "host_preflight_before_artifact_downloads",
     "capacity_screen_passed": $capacity_passed,
     "reasons": [$capacity_reasons]
   },

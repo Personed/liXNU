@@ -29,6 +29,7 @@ $report = [ordered]@{
         memory_total_bytes = $totalBytes
         memory_available_bytes = $availableBytes
         memory_available_at_report_bytes = $availableBytes
+        memory_available_at_report_phase = 'host_preflight_before_artifact_downloads'
     }
     qemu_version = 'not checked'
     profile = 'ARM64 Linux, 4 KiB pages, PAC at EL1, fixed 16 GiB QEMU guest-memory setting'
@@ -41,6 +42,7 @@ $report = [ordered]@{
     ram_capacity = [ordered]@{
         minimum_total_ram_bytes = $minimumTotal
         minimum_available_before_qemu_bytes = $minimumAvailable
+        measurement_phase = 'host_preflight_before_artifact_downloads'
         capacity_screen_passed = ($capacityReasons.Count -eq 0)
         reasons = @($capacityReasons.ToArray())
     }

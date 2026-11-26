@@ -128,6 +128,7 @@ jobs:
         run: |
           python3 tests/puredarwin/test-template-layout.py
           python3 tests/puredarwin/test-segment-copies.py
+          python3 tests/puredarwin/test-tcg-e2e-report.py
           bash scripts/vm-xnu-build.sh
           bash scripts/free-kc/build.sh
           cp "$HOME/w/dvm/out/k27/kernel-k27.macho" "$RUNNER_TEMP/puredarwin-e2e-inputs/kernel.macho"
@@ -237,12 +238,16 @@ jobs:
           cp "$RUNNER_TEMP/puredarwin-e2e-inputs/manifest.txt" \
             "$RUNNER_TEMP/puredarwin-e2e-guest/build-manifest.txt"
           config_sha=$(sha256sum "$kernel_config" | awk '{print $1}')
+          image_sha=$(sha256sum "$RUNNER_TEMP/puredarwin-e2e-guest/Image" | awk '{print $1}')
+          initramfs_sha=$(sha256sum "$RUNNER_TEMP/puredarwin-e2e-guest/initramfs.cpio.gz" | awk '{print $1}')
           {
             echo "arm64_guest_kernel_release=$KERNEL_RELEASE"
             echo 'arm64_guest_page_size=4096 (CONFIG_ARM64_4K_PAGES=y)'
             echo 'arm64_guest_pac=runtime checked through /proc/cpuinfo paca and FKI_CAP_PAC'
             echo 'arm64_guest_exception_level=EL1 (QEMU virt,virtualization=off)'
             echo "arm64_guest_kernel_config_sha256=$config_sha"
+            echo "arm64_guest_image_sha256=$image_sha"
+            echo "arm64_guest_initramfs_sha256=$initramfs_sha"
           } > "$RUNNER_TEMP/puredarwin-e2e-guest/guest-manifest.txt"
       - name: Retain the ARM64 Linux guest inputs
         uses: actions/upload-artifact@v4

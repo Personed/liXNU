@@ -183,13 +183,15 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
     def test_xnu_rebuild_uses_its_checkout_and_cdpath_dvm(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            launch = root / "dev"
+            launch = root / "launch"
+            dev = root / "dev"
             stable = root / "stable"
             vm = root / "vm-real"
             alternate_vm = root / "vm-alternate"
             fake_bin = root / "bin"
+            launch.mkdir()
             fake_bin.mkdir()
-            for checkout, marker in ((launch, "dev.c"), (stable, "stable.c")):
+            for checkout, marker in ((dev, "dev.c"), (stable, "stable.c")):
                 (checkout / "scripts").mkdir(parents=True)
                 (checkout / "xnu-patches/include").mkdir(parents=True)
                 (checkout / "xnu-patches/corecrypto/include/corecrypto").mkdir(parents=True)
@@ -199,11 +201,11 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                     f"+++ b/{marker}\n",
                     encoding="utf-8",
                 )
-            (launch / "scripts/vm-xnu-rebuild.sh").write_text(
+            (dev / "scripts/vm-xnu-rebuild.sh").write_text(
                 (ROOT / "scripts/vm-xnu-rebuild.sh").read_text(encoding="utf-8"),
                 encoding="utf-8",
             )
-            (launch / "vm-link").symlink_to(vm, target_is_directory=True)
+            (dev / "vm-link").symlink_to(vm, target_is_directory=True)
             (stable / "vm-link").symlink_to(alternate_vm, target_is_directory=True)
             (alternate_vm / "out/k27/xnu").mkdir(parents=True)
 
@@ -242,7 +244,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             )
             env.pop("POC", None)
             result = subprocess.run(
-                ["bash", "scripts/vm-xnu-rebuild.sh"],
+                ["bash", "../dev/scripts/vm-xnu-rebuild.sh"],
                 cwd=launch,
                 env=env,
                 stdout=subprocess.PIPE,

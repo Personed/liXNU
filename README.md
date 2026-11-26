@@ -100,6 +100,9 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 - A macOS 27 installation (an Apple Virtualization VM disk) of your own. **No Apple binaries are in this repository or
   distributed by it**: the kexts Apple ships, the macOS system disk and its trust cache come from your own installation.
 
+For the experimental software-emulated ARM64 Linux VM on an Intel or AMD PC, see the
+[QEMU guide](docs/qemu.md).
+
 ## Building and running
 
 1. `scripts/vm-xnu-build.sh` (on the arm64 Linux host, once): sets up the macOS-DroidVM Linux toolchain and builds XNU

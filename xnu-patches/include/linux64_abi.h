@@ -23,7 +23,7 @@
 #ifndef _LINUX64_ABI_H_
 #define _LINUX64_ABI_H_
 
-#define LINUX64_ABI_VERSION 4
+#define LINUX64_ABI_VERSION 5
 
 enum linux64_call {
 	LINUX64_CALL_KERNEL_TABLES  = 210,	/* boot: a1 = XNU's kernel L1 table; the host installs its kernel-range entries */
@@ -72,6 +72,15 @@ enum linux64_call {
 #define LINUX64_PROT_READ  (1 << 0)
 #define LINUX64_PROT_WRITE (1 << 1)
 #define LINUX64_PROT_EXEC  (1 << 2)
+
+/*
+ * Pure EL0 host: where the host maps all of the hosted system's DRAM, linearly, for good (the kernel's physical
+ * aperture): the start of the kernel's window (VM_MIN_KERNEL_ADDRESS), below the kernel, so that it takes none of the
+ * 48 GiB after the kernel's link address, which are the kernel map's. The image and the boot data (up to
+ * topOfKernelData, rounded up to 2 MiB) are mapped a second time at the kernel's base, virtBase.
+ */
+#define LINUX64_EL0_APERTURE_VA 0xffffffe000000000ULL
+#define LINUX64_EL0_APERTURE_END 0xfffffff000000000ULL	/* LOW_GLOBAL_BASE_ADDRESS: the aperture ends at or below it */
 
 /* EL0 host capability bits exported to XNU via linux64_el0_caps. */
 #define LINUX64_EL0_CAP_EXEC_ONLY (1U << 0)	/* host supports execute-only (--x) user mappings */

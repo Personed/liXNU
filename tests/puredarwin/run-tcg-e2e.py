@@ -33,7 +33,14 @@ def parse_memory_size(value: str, option: str) -> int:
 
 
 def run_with_timeout(command: list[str], timeout_seconds: int) -> tuple[int, int, bool]:
-    """Run one direct child, returning its exit status, exact peak RSS in KiB, and timeout flag."""
+    """Run one child, returning its exit status, exact peak RSS in KiB on Unix, and timeout flag."""
+    if not hasattr(os, "fork") or not hasattr(os, "wait4"):
+        try:
+            result = subprocess.run(command, check=False, timeout=timeout_seconds)
+            return result.returncode, 0, False
+        except subprocess.TimeoutExpired:
+            return -15, 0, True
+
     pid = os.fork()
     if pid == 0:
         try:

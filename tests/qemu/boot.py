@@ -44,7 +44,7 @@ def main():
             "-no-reboot",
             "-kernel", str(kernel),
             "-initrd", str(initramfs),
-            "-append", "console=ttyAMA0 rdinit=/init panic=1 loglevel=4 mem=768M",
+            "-append", "console=ttyAMA0 rdinit=/init panic=1 loglevel=4 printk.time=0 mem=768M",
         ]
         try:
             result = subprocess.run(command, timeout=180)

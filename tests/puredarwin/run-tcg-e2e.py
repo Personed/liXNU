@@ -22,11 +22,12 @@ MEMORY_SUFFIXES = {
 }
 
 
-def parse_memory_size(value: str, option: str) -> int:
+def parse_memory_size(value: str, option: str, bare_unit_multiplier: int = 1) -> int:
     match = re.fullmatch(r"([0-9]+)([KMGT]?)(?:i?b?)?", value.strip(), re.IGNORECASE)
     if not match:
         raise ValueError(f"{option} must be a positive memory size such as 512M or 16G")
-    size = int(match.group(1)) * MEMORY_SUFFIXES[match.group(2).upper()]
+    suffix = match.group(2).upper()
+    size = int(match.group(1)) * (MEMORY_SUFFIXES[suffix] if suffix else bare_unit_multiplier)
     if size < 1:
         raise ValueError(f"{option} must be positive")
     return size
@@ -98,8 +99,14 @@ def main() -> int:
     parser.add_argument("--qemu-memory", default="16G")
     parser.add_argument("--linux-memory", default="7G")
     parser.add_argument("--fki-carve-base", default="0x200000000")
-    parser.add_argument("--fki-carve-mb", type=int, default=8156)
-    parser.add_argument("--xnu-ram-mb", type=int, default=7900)
+    parser.add_argument(
+        "--fki-carve-mb", type=int, default=8156,
+        help="reserved FKI RAM in MiB; must exceed XNU RAM to leave room for the XNU image and boot data",
+    )
+    parser.add_argument(
+        "--xnu-ram-mb", type=int, default=7900,
+        help="XNU's DRAM size in MiB; reserve additional FKI carve-out space for the XNU image and boot data",
+    )
     parser.add_argument("--max-rss-mib", type=int)
     args = parser.parse_args()
     for path in (args.kernel, args.initramfs, args.disk):
@@ -119,7 +126,8 @@ def main() -> int:
     if carve_base < 0 or carve_base >= 1 << 64:
         parser.error("--fki-carve-base must fit in a 64-bit address")
     try:
-        qemu_memory_bytes = parse_memory_size(args.qemu_memory, "--qemu-memory")
+        # QEMU interprets a bare -m value as MiB, unlike Linux's bare mem= value (bytes).
+        qemu_memory_bytes = parse_memory_size(args.qemu_memory, "--qemu-memory", 1024**2)
         linux_memory_bytes = parse_memory_size(args.linux_memory, "--linux-memory")
     except ValueError as error:
         parser.error(str(error))
@@ -130,8 +138,8 @@ def main() -> int:
         parser.error("FKI carve-out must start after the memory given to Linux")
     if carve_end > qemu_memory_end:
         parser.error("FKI carve-out must end inside the QEMU guest RAM")
-    if args.xnu_ram_mb > args.fki_carve_mb:
-        parser.error("XNU RAM must fit inside the FKI carve-out")
+    if args.xnu_ram_mb >= args.fki_carve_mb:
+        parser.error("XNU RAM must be smaller than the FKI carve-out to leave room for the XNU image and boot data")
     carve_base_hex = hex(carve_base)
     required = (
         f"fki: {args.fki_carve_mb} MiB at {carve_base_hex} for the foreign kernel's DRAM",

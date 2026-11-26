@@ -18,23 +18,32 @@ spec.loader.exec_module(run_tcg_e2e)
 
 class RssMeasurementTest(unittest.TestCase):
     def test_child_rss_excludes_unrelated_processes(self):
-        unrelated = subprocess.Popen([
-            sys.executable, "-c",
-            "x=bytearray(128*1024*1024); import time; time.sleep(3)",
-        ])
-        try:
-            returncode, peak_rss_kib, timed_out = run_tcg_e2e.run_with_timeout([
+        with subprocess.Popen([
                 sys.executable, "-c",
-                "x=bytearray(24*1024*1024); import time; time.sleep(0.3)",
-            ], 10)
-        finally:
-            unrelated.terminate()
-            unrelated.wait()
+                "x=bytearray(128*1024*1024); "
+                "[x.__setitem__(i, 1) for i in range(0, len(x), 4096)]; "
+                "print('ready', flush=True)",
+            ], stdout=subprocess.PIPE, text=True) as unrelated:
+            self.assertEqual(unrelated.stdout.readline().strip(), "ready")
+            self.assertEqual(unrelated.wait(timeout=10), 0)
+
+        returncode, peak_rss_kib, timed_out = run_tcg_e2e.run_with_timeout([
+            sys.executable, "-c",
+            "x=bytearray(24*1024*1024); import time; time.sleep(0.3)",
+        ], 10)
 
         self.assertEqual(returncode, 0)
         self.assertFalse(timed_out)
         self.assertGreater(peak_rss_kib, 20 * 1024)
         self.assertLess(peak_rss_kib, 80 * 1024)
+
+    def test_qemu_bare_memory_value_uses_mib(self):
+        qemu_with_suffix = run_tcg_e2e.parse_memory_size("6G", "--qemu-memory", 1024**2)
+        qemu_without_suffix = run_tcg_e2e.parse_memory_size("6144", "--qemu-memory", 1024**2)
+        linux_without_suffix = run_tcg_e2e.parse_memory_size("6144", "--linux-memory")
+
+        self.assertEqual(qemu_without_suffix, qemu_with_suffix)
+        self.assertEqual(linux_without_suffix, 6144)
 
     def test_timeout_terminates_child_and_reports_rss(self):
         started = time.monotonic()

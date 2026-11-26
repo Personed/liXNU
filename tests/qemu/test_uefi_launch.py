@@ -4,6 +4,7 @@
 
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -52,6 +53,40 @@ class UefiLaunchTest(unittest.TestCase):
                     return code, variables
         self.fail("could not find matching AArch64 UEFI images; see `qemu-system-aarch64 -L help`")
 
+    def wait_for_qemu_window(self, qemu):
+        deadline = time.monotonic() + 15
+        tree_output = ""
+        title_pattern = re.compile(r'^\s*(0x[0-9a-fA-F]+)\s+"([^\"]+)"')
+        while time.monotonic() < deadline and qemu.poll() is None:
+            try:
+                tree = subprocess.run(
+                    ["xwininfo", "-root", "-tree"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=2,
+                    check=False,
+                )
+                tree_output = tree.stdout or ""
+                for line in tree_output.splitlines():
+                    match = title_pattern.match(line)
+                    if not match or not re.match(r"^QEMU(?:\b|\s)", match.group(2), re.IGNORECASE):
+                        continue
+                    detail = subprocess.run(
+                        ["xwininfo", "-id", match.group(1)],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        timeout=2,
+                        check=False,
+                    )
+                    if "Map State: IsViewable" in (detail.stdout or ""):
+                        return True, tree_output
+            except (OSError, subprocess.TimeoutExpired) as error:
+                tree_output = f"{tree_output}\nxwininfo failed: {error}"
+            time.sleep(0.25)
+        return False, tree_output
+
     def start_guest(self, graphical=False):
         qemu_binary = shutil.which("qemu-system-aarch64")
         missing = []
@@ -92,45 +127,50 @@ class UefiLaunchTest(unittest.TestCase):
             qemu = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             window_found = False
             window_output = ""
-            if graphical:
-                deadline = time.monotonic() + 15
-                while time.monotonic() < deadline and qemu.poll() is None:
-                    windows = subprocess.run(
-                        ["xwininfo", "-root", "-tree"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        check=False,
-                    )
-                    window_output = windows.stdout or ""
-                    if "qemu" in window_output.lower():
-                        window_found = True
-                        break
-                    time.sleep(0.25)
+            timed_out = False
             try:
-                qemu.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                if os.name == "nt":
-                    killed = subprocess.run(
-                        ["taskkill", "/PID", str(qemu.pid), "/T", "/F"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        check=False,
-                    )
-                    self.assertEqual(killed.returncode, 0, killed.stdout)
-                else:
-                    qemu.send_signal(signal.SIGTERM)
-                output, _ = qemu.communicate(timeout=10)
-                self.assertIsNotNone(qemu.returncode, output)
-                if os.name != "nt":
-                    self.assertEqual(qemu.returncode, 0, output)
-                self.assertIn("UEFI Interactive Shell", output)
                 if graphical:
-                    self.assertTrue(window_found, "QEMU window did not appear in Xvfb:\n" + window_output)
-            else:
-                output, _ = qemu.communicate()
+                    window_found, window_output = self.wait_for_qemu_window(qemu)
+                try:
+                    qemu.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+            finally:
+                if qemu.poll() is None:
+                    if os.name == "nt":
+                        subprocess.run(
+                            ["taskkill", "/PID", str(qemu.pid), "/T", "/F"],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                            timeout=10,
+                            check=False,
+                        )
+                    else:
+                        qemu.send_signal(signal.SIGTERM)
+                try:
+                    output, _ = qemu.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    if os.name == "nt":
+                        subprocess.run(
+                            ["taskkill", "/PID", str(qemu.pid), "/T", "/F"],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                            timeout=10,
+                            check=False,
+                        )
+                    else:
+                        qemu.kill()
+                    output, _ = qemu.communicate(timeout=10)
+            if not timed_out:
                 self.fail(f"QEMU exited before the UEFI guest could be stopped ({qemu.returncode}):\n{output}")
+            self.assertIsNotNone(qemu.returncode, output)
+            if os.name != "nt":
+                self.assertEqual(qemu.returncode, 0, output)
+            self.assertIn("UEFI Interactive Shell", output)
+            if graphical:
+                self.assertTrue(window_found, "visible QEMU top-level window did not appear in Xvfb:\n" + window_output)
 
     def test_launcher_starts_headless_uefi_guest(self):
         self.start_guest()

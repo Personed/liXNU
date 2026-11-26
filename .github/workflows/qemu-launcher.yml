@@ -36,7 +36,7 @@ jobs:
         env:
           QEMU_TEST_REQUIRED: "1"
         run: python tests/qemu/test_uefi_launch.py UefiLaunchTest.test_launcher_starts_headless_uefi_guest
-  uefi-graphical:
+  uefi-launch:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

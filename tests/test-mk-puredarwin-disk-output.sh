@@ -27,7 +27,8 @@ for output in "$regular" "$symlink" "$dangling" "$fifo"; do
   esac
 done
 
-if message=$(CDPATH=. "$script_dir/scripts/mk-puredarwin-disk.sh" "$work/missing-root.tar.gz" "$regular" 2>&1); then
+if message=$(cd "$script_dir" && CDPATH=. ./scripts/mk-puredarwin-disk.sh \
+  "$work/missing-root.tar.gz" "$regular" 2>&1); then
   echo 'expected existing output rejection with CDPATH set' >&2
   exit 1
 fi

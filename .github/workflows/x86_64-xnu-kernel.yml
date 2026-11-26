@@ -25,6 +25,7 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode_26.1.app
       - name: Record host toolchain
         run: |
+          uname -m
           sw_vers
           xcodebuild -version
           xcrun --find clang
@@ -55,5 +56,63 @@ jobs:
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/libdispatch-build.log
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/x86_64-build.env
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/sdk-public-availability.sha256
+          if-no-files-found: ignore
+          retention-days: 5
+  cross-build-on-arm64-host:
+    # This probes the x86_64 target build from Apple Silicon; it is not Intel runtime validation.
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select pinned Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.1.app
+      - name: Record and verify Apple Silicon host
+        run: |
+          test "$(uname -m)" = arm64
+          sw_vers
+          xcodebuild -version
+          xcrun --find clang
+          xcrun --find ld
+      - name: Cross-build pinned XNU for x86_64
+        env:
+          XNU_X86_BUILD_DIR: ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe
+        run: scripts/x86_64/build-xnu-kernel.sh
+      - name: Verify cross-build host and target manifest
+        env:
+          XNU_X86_BUILD_DIR: ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe
+        run: |
+          python3 - "$XNU_X86_BUILD_DIR/out/build-result.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as manifest_file:
+              manifest = json.load(manifest_file)
+          assert manifest["build_host_arch"] == "arm64", manifest
+          assert manifest["build_host_mode"] == "cross", manifest
+          assert manifest["target_architecture"] == "x86_64", manifest
+          assert manifest["architecture"] == "x86_64", manifest
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xnu-tahoe26-target-x86_64-host-arm64-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/kernel.development
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/build-result.json
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/x86_64-build.env
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/libdispatch/dst/usr/local/lib/kernel/libfirehose_kernel.a
+          if-no-files-found: error
+          retention-days: 5
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xnu-tahoe26-target-x86_64-host-arm64-diagnostics-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/xnu-build.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/availability-build.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/xnu-export-headers.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/xnu-header-install.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/libdispatch-build.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/x86_64-build.env
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/sdk-public-availability.sha256
           if-no-files-found: ignore
           retention-days: 5

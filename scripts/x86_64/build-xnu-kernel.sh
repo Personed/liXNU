@@ -12,6 +12,7 @@ usage() {
 Usage: build-xnu-kernel.sh [--check]
 
 Build the pinned Tahoe 26 XNU source as an x86_64 macOS development kernel.
+This works on Intel macOS natively and on Apple Silicon macOS as a cross-build.
 The build uses pinned AvailabilityVersions, XNU, and libdispatch revisions
 with Xcode 26.1.1's macOS 26.1 SDK. It does not use or modify a system disk.
 
@@ -53,7 +54,11 @@ readonly XCODE_VERSION='26.1.1'
 HOST_OS="$(uname -s)"
 HOST_ARCH="$(uname -m)"
 [[ "$HOST_OS" == Darwin ]] || fail 'the pinned Apple build tools require a macOS build host'
-[[ "$HOST_ARCH" == x86_64 ]] || fail "run this x86_64 artifact build on an Intel macOS host (found $HOST_ARCH)"
+case "$HOST_ARCH" in
+  x86_64) BUILD_HOST_MODE='native' ;;
+  arm64) BUILD_HOST_MODE='cross' ;;
+  *) fail "the x86_64 XNU build requires an Intel or Apple Silicon macOS host (found $HOST_ARCH)" ;;
+esac
 
 for tool in git make xcrun xcodebuild sysctl python3 shasum ditto; do
   command -v "$tool" >/dev/null 2>&1 || fail "required host tool not found: $tool"
@@ -510,6 +515,9 @@ compiler=$CLANG
 linker=$LD
 iig=$IIG
 jobs=$JOBS
+build_host_arch=$HOST_ARCH
+build_host_mode=$BUILD_HOST_MODE
+target_arch=x86_64
 EOF
 
 printf 'Building XNU %s for X86_64/NONE with %s\n' "$XNU_TAG" "$ACTUAL_XCODE_VERSION"
@@ -537,7 +545,8 @@ python3 - "$PACKAGE_KERNEL" "$RESULT" "$XNU_COMMIT" "$XNU_TAG" "$SOURCE_VERSION"
   "$KERNEL_VERSION" "$SDK_VERSION" "$XCODE_VERSION" "$ARCHS" \
   "$LIBDISPATCH_COMMIT" "$LIBDISPATCH_TAG" "$FIREHOSE_ARCHIVE_SHA256" \
   "$AVAILABILITY_COMMIT" "$AVAILABILITY_TAG" "$AVAILABILITY_TOOL_SHA256" \
-  "$SDK_PUBLIC_AVAILABILITY_SHA256" "$MACHINE_CPU_NUMBER_SHA256" "$I386_CPU_NUMBER_SHA256" <<'PY'
+  "$SDK_PUBLIC_AVAILABILITY_SHA256" "$MACHINE_CPU_NUMBER_SHA256" "$I386_CPU_NUMBER_SHA256" \
+  "$HOST_ARCH" "$BUILD_HOST_MODE" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -550,6 +559,9 @@ result = {
     "artifact_sha256": digest,
     "artifact_type": "XNU development kernel",
     "architecture": sys.argv[9],
+    "target_architecture": sys.argv[9],
+    "build_host_arch": sys.argv[19],
+    "build_host_mode": sys.argv[20],
     "xnu_commit": sys.argv[3],
     "xnu_tag": sys.argv[4],
     "xnu_source_version": sys.argv[5],

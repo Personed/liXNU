@@ -35,6 +35,8 @@ Native x86_64 hosting of Tahoe 26 remains a separate workstream; direct ARM64 ho
 | Windows Server 2025 x86-64 host, QEMU TCG | PR #89 run [#151](https://github.com/Personed/xnulinux/actions/runs/45904189412), head `3fbfa6a` on #83 `07d08c5` / #52 `24e4a9c`: image, disk/collection, guest preparation, and the Ubuntu boot passed. Windows/QEMU 11.1.0 started the same 6 GiB guest inputs but XNU loading hit an ARM64 level-2 write-permission fault at `fffffff007004000`; Darwin, userland, halt, and unload markers were absent. QEMU exited 0, but the route harness failed for missing guest evidence. Windows host memory before downloads was 17,174,360,064 bytes total and 14,339,944,448 available; before QEMU it reported 17,174,360,064 total and 13,703,258,112 available. Process RSS was not measured. The same inputs passed on Ubuntu/QEMU 8.2.2; isolate the QEMU-version and host-platform difference before assigning the cause. |
 | Intel macOS 15 host, QEMU TCG | PR #89 run [#151](https://github.com/Personed/xnulinux/actions/runs/45904189412) used the same guest artifacts as the Windows and Ubuntu jobs. macOS/QEMU 11.1.0 started the 6 GiB guest but hit the same ARM64 level-2 XNU write-permission fault at `fffffff007004000`; Darwin, userland, halt, and unload markers were absent. QEMU exited 0, while the route harness failed for missing guest evidence. The runner reported 15,032,385,536 bytes total and 10,459,959,296 available before QEMU; peak QEMU RSS was 3,476,652 KiB (3.32 GiB). Ubuntu/QEMU 8.2.2 passed with the shared inputs, so the QEMU-version and host-platform difference remains unresolved. |
 
+PR #89 run [#151](https://github.com/Personed/xnulinux/actions/runs/45904189412) used the paired [guest/build manifest artifact](https://github.com/Personed/xnulinux/actions/runs/45904189412/artifacts/15158822689) and [disk artifact](https://github.com/Personed/xnulinux/actions/runs/45904189412/artifacts/15159442035). Both Windows and macOS boot logs recorded the same inputs: Image SHA-256 `02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6`, initramfs SHA-256 `a548f8fc4075fd535fece9648c808d97a9460ad520f67a750f221b6ba18babe8`, and disk SHA-256 `269cc4ba7a8ec973cc672d50bffeebb84b9e3a5f9051f567b152d566d8b9acb5`.
+
 
 PR #52 run [#148](https://github.com/Personed/xnulinux/actions/runs/45902417451) passed all four image, disk/collection, guest-preparation, and TCG-boot jobs on current head `24e4a9c`. The boot ran on Ubuntu 24.04.5 in an Azure VM under Microsoft virtualization, with 4 vCPUs and a virtual AMD EPYC 7763. QEMU 8.2.2 used 6 GiB RAM, Linux `mem=2G`, a 3,072 MiB FKI carve-out at `0xc0000000`, and 2,816 MiB XNU RAM. Host `MemTotal` was 16,367,500 kB; `MemAvailable` was 15,418,148 kB before artifacts and 14,965,924 kB at boot. Peak QEMU RSS was 3,833,380 KiB (3.66 GiB). The log reached Darwin, `XNULINUX_USERLAND_OK`, guest halt, `XNULINUX_E2E_XNU_UNLOADED`, and Linux power-off. The successful boot job means the harness's zero-QEMU-exit requirement passed, although the retained log has no separate exit-status line. This confirms the 6 GiB profile on the current virtual runner, not a physical-PC or RAM floor.
 PR #46's older cross-host branch used the historical 16 GiB profile and its earlier run #79 failed in `kclink` before guest boot; it is not evidence for the current reduced profile. PR #89 head `3fbfa6a` is based on #83 head `07d08c5` / #52 head `24e4a9c` and checks shared input hashes before boot. In run #151, Ubuntu/QEMU 8.2.2 passed the 6 GiB route with peak RSS 3,820,440 KiB; Windows and Intel macOS/QEMU 11.1.0 both failed at the same XNU write-permission fault using the shared guest artifacts. The image, disk/collection, and guest preparation jobs passed, as did modules #945 and launcher #476; no cause is assigned to the host OS or QEMU version yet. Current #52 image run #148 passed; #83 image run #149 was in progress at 23:16 UTC, while modules #922 and launcher #455 passed. PR #96 adds a separate informational memory-profile sweep, with image run #157 in progress at 23:16 UTC, modules #989 passed and launcher #511 passed. Its five experimental profiles range from 5 GiB to 2 GiB QEMU RAM; no profile result is available yet. Earlier run #147 belongs to a superseded #89 head and is not current-head evidence. Module jobs are stage smoke tests, not a full PureDarwin route. Do not claim Windows/macOS support until those profiles reach console and guest shutdown, and do not claim physical-PC support until representative Intel/AMD hardware is tested.
@@ -263,25 +265,44 @@ Report the profile alongside the stage:
   The retained log does not include a standalone QEMU exit-status line.
 
   These PR-branch runs are not integrated in `main` and do not establish physical-PC
-  acceptance. Status checked 2026-11-26 23:16 UTC: PR #52 head `24e4a9c` includes the
-  #72 TTBR1 guard and #75 package digests; image run #148 passed, as did modules #920 and launcher #454. PR #72 run #140 passed the full reduced profile on
-  commit `e61f578`, whose Git tree matches #52's earlier head `3b47444`; PR #75 run #143
-  passed the same profile plus package digests on its head `5fa6947`, based on that earlier
-  tree. PR #3
-  run #78 passed only the UEFI launcher smoke on Linux x86-64/ARM64, Windows Server 2025
-  x86-64, and macOS 15 Intel/Apple Silicon. PR #83 is head `07d08c5` based on current #52
-  `24e4a9c`; image run #149 was in progress, while modules #922 and launcher #455 passed. PR #89 head `3fbfa6a`, based on current #83 / #52, is the current
-  cross-host matrix. In image run #151, Ubuntu/QEMU 8.2.2 passed the 6 GiB route at
-  3,820,440 KiB RSS; Windows and Intel macOS/QEMU 11.1.0 failed at the same XNU level-2
-  write-permission fault at `fffffff007004000` on the shared inputs. Image, disk/collection,
-  guest-preparation, modules #945, and launcher #476 passed. PR #96 head `e358351` adds
-  the experimental below-6-GiB sweep on the #52 base;
-  image run #157 was in progress, while modules #989 and launcher #511 passed. The
-  The Windows and Intel macOS runs did not reach the PureDarwin console; cause is not
-  isolated between QEMU 11.1.0 and those host platforms. The Ubuntu host passed; all
-  memory-sweep profile outcomes remain pending. PR #36 run #118 passed on
-  tested head `c55a700`, not current head `93e3cf4`. PR #46 run #79 failed in `kclink`
-  before host preparation or boot. Earlier Windows matrix job [#71](https://github.com/Personed/xnulinux/actions/runs/45845436111) (job [`140017731012`](https://github.com/Personed/xnulinux/actions/runs/45845436111/job/140017731012)) ran on synthetic merge commit [`3ee7ffb`](https://github.com/Personed/xnulinux/commit/3ee7ffb3ea60b0ffb5314152f4d0cac96e716691), combining then-current PR #46 head [`a227f9b`](https://github.com/Personed/xnulinux/commit/a227f9b104509d63080b47cbe1e46e5de9a9a70f) with base [`c1c0d39`](https://github.com/Personed/xnulinux/commit/c1c0d39d131933be3235aa78e56dcf4e8a291a6b) from the fixed-layout #44 branch. QEMU 11.1.0 and Linux exited 0 after booting the ARM64 guest, but XNU loading faulted at `macho_copy+0x10c` while writing to read-only memory at `fffffff007004000`; Darwin console, halt, and unload markers were absent. This old artifact/layout failure is separate from run #151's current shared-input comparison. Keep every result tied to its tested SHA and base.
+  acceptance. Status checked 2026-11-26 23:25 UTC: PR #52 head `24e4a9c` includes the
+  #72 TTBR1 guard and #75 package digests; image run #148 passed all four image,
+  disk/collection, guest-preparation, and 6 GiB boot jobs. PR #72 run #140 passed the
+  reduced profile on a tree identical to #52's earlier head `3b47444`; PR #75 run #143
+  passed the same profile plus package digests on its earlier head `5fa6947`. PR #3
+  run #78 passed only the UEFI launcher smoke on hosted runners.
+
+  PR #83 head `07d08c5` passed image run #149 through the complete 6 GiB TCG boot; its
+  modules #922 and launcher #455 also passed. PR #83 was then merged into the #52/#50
+  chain as `cc4574a`. This runner result is tied to head `07d08c5`, not bare-metal
+  hardware. PR #89 is now retargeted to `codex/kclink-overlap-guard` head `cc4574a`.
+  Its run #151 was executed before that retarget, on head `3fbfa6a` based on #83
+  `07d08c5` / #52 `24e4a9c`: Ubuntu/QEMU 8.2.2 passed the 6 GiB console and shutdown
+  route at 3,820,440 KiB peak RSS; Windows and Intel macOS/QEMU 11.1.0 both failed while
+  loading XNU with the same ARM64 level-2 write-permission fault at
+  `fffffff007004000`. QEMU exited 0 on those hosts, but the console, halt, and unload
+  markers were absent, so neither is a boot pass. Image, disk/collection, guest
+  preparation, modules #945, and launcher #476 passed. The QEMU-version and host-platform
+  difference remains unresolved; rerun the matrix after the shared mapping correction
+  before making host-support claims.
+
+  PR #96 head `e358351` adds an experimental 5, 4, 3, 2.5, and 2 GiB guest sweep on the
+  #52 base. As of 23:25 UTC, image run #157 was queued, modules #989 and launcher #511
+  passed, and no lower-memory boot result was available. Earlier run #147 belongs to a
+  superseded #89 head. PR #36 run #118 passed on tested head `c55a700`, not current head
+  `93e3cf4`; PR #46 run #79 failed in `kclink` before host preparation or boot.
+  Earlier Windows matrix job [#71](https://github.com/Personed/xnulinux/actions/runs/45845436111)
+  (job [`140017731012`](https://github.com/Personed/xnulinux/actions/runs/45845436111/job/140017731012))
+  ran on synthetic merge commit [`3ee7ffb`](https://github.com/Personed/xnulinux/commit/3ee7ffb3ea60b0ffb5314152f4d0cac96e716691),
+  combining then-current PR #46 head [`a227f9b`](https://github.com/Personed/xnulinux/commit/a227f9b104509d63080b47cbe1e46e5de9a9a70f)
+  with base [`c1c0d39`](https://github.com/Personed/xnulinux/commit/c1c0d39d131933be3235aa78e56dcf4e8a291a6b)
+  from the fixed-layout #44 branch. That older job faulted in `macho_copy+0x10c` and
+  lacked Darwin, halt, and unload markers; it is separate from current run #151 evidence.
+
+  Module jobs are stage smoke tests, not a full PureDarwin route. Do not claim
+  Windows/macOS support until the synchronized cross-host route reaches the console and
+  guest shutdown on those hosts. Do not claim physical-PC support until representative
+  Intel and AMD hardware is tested; no universal RAM floor is established.
 
   The reduced 6 GiB guest profile passed on #52 head `8d41fa9` in run #138 and on the
   #52-equivalent tree `3421056` in #72 run #140; earlier #69 head `3eb5e0e` also passed.

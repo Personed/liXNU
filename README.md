@@ -104,7 +104,7 @@ Working on two arm64 Linux setups:
 | Linux host | Guest target | Status |
 |---|---|---|
 | ARM64 with PAC and 4 KiB pages | macOS 27 ARM64 (direct hosted XNU) | Existing supported path; tested on Apple Silicon Linux VMs and NVIDIA DGX Spark as described above. |
-| Intel x86_64 PC | ARM64 Linux via QEMU TCG → PureDarwin console | UEFI guest-start smoke is validated on hosted runners; end-to-end route remains under validation. No physical Intel PC boot or minimum RAM is established; Windows and Intel-macOS full boots remain pending. |
+| Intel x86_64 PC | ARM64 Linux via QEMU TCG → PureDarwin console | PR #50 run #89 reached the console, guest halt, module unload, Linux power-off, and QEMU exit on a nested KVM-backed Intel Xeon runner (Ubuntu 24.04.5, QEMU 8.2.2); this run is not yet integrated into #36. No physical Intel PC boot or minimum RAM is established; Windows and Intel-macOS full boots remain pending. |
 | AMD x86_64 PC | ARM64 Linux via QEMU TCG → PureDarwin console | Console/halt evidence exists on a virtualized AMD-model runner; physical AMD PC support and minimum RAM are not established. |
 | Native x86_64/Tahoe experiment | macOS Tahoe 26 x86_64 through native hosted XNU | FKI host backend builds but advertises no XNU execution capability; the XNU stub is fail-closed. No native runtime support is claimed. |
 | Intel/AMD x86_64 with QEMU/KVM | User-prepared macOS guest | Separate guest-launcher experiment; does not use the hosted-XNU modules or validate the TCG PC route. |

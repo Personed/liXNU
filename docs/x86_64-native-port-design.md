@@ -1,11 +1,11 @@
-# Native x86_64 hosted-XNU port
+# Separate native x86_64 hosted-XNU experiment
 
 ## Project goal and current boundary
 
-The active x86_64 target is hosted XNU on native Intel/AMD Linux PCs, running macOS Tahoe 26 (the latest macOS release
-compatible with Intel). Preserve the existing direct ARM64 hosted-XNU path and its macOS 27 target. QEMU TCG → ARM64
-Linux → FKI/XNU → PureDarwin and the QEMU/KVM macOS guest launcher are complementary profiles; neither substitutes
-for the native port.
+The active Intel/AMD PC compatibility path is x86-64 PC → QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin. Preserve the
+direct hosted-XNU path on compatible ARM64 Linux hosts and its macOS 27 target. This document describes a separate
+native x86_64/Tahoe 26 experiment; it is not the active PC route and has no native XNU execution support yet. The
+QEMU/KVM macOS guest launcher is another separate experiment and provides no evidence for either hosted-XNU route.
 
 PR #48 provides the x86_64 Linux-side FKI host backend, with `fki_caps() == 0`. PR #47 adds an x86_64 `xnu.ko` target
 that refuses to load. Neither PR executes XNU. Keep both gates fail-closed until the architecture boundary below is

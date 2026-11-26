@@ -18,6 +18,7 @@
 
 - [ ] ARM64 behavior remains covered when shared module code changes.
 - [ ] No Apple system images, firmware, or local SMC OSK values are included.
-- [ ] The x86_64 target is the native FKI/XNU port for Tahoe 26 on Linux; QEMU/KVM and TCG results are labeled as complementary experiments, not native-port acceptance.
+- [ ] The active Intel/AMD PC compatibility route is QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin; direct hosted XNU on compatible ARM64 Linux remains a separate host profile.
+- [ ] Native x86_64/Tahoe and QEMU/KVM macOS results are labeled as separate experiments and are not used as acceptance evidence for the TCG PC route.
 - [ ] Every related agent has visible scope, interface, and result updates in PR comments.
 - [ ] Required automated checks are green before merge; the owner authorized merging without waiting for human review.

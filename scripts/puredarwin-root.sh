@@ -177,7 +177,6 @@ archive_dir='' archive_identity='' archive='' loop='' check_log=''
 cleanup() {
   local cleanup_mount_identity cleanup_mount_owner_mode cleanup_parent_identity cleanup_parent_owner_mode
   local cleanup_archive_identity cleanup_archive_owner_mode
-  local staging_owner_mode staging_owner staging_mode
   trap '' INT TERM
   if [ -n "$mount_dir" ] && { [ -e "$mount_dir" ] || [ -L "$mount_dir" ]; }; then
     if mountpoint -q -- "$mount_dir"; then
@@ -201,19 +200,11 @@ cleanup() {
     fi
   fi
   if [ -n "$archive_dir" ] && [ -z "$archive_identity" ]; then
-    CDPATH= cd -P -- "$output_dir" || return 1
-    if [ -d "$archive_dir" ] && [ ! -L "$archive_dir" ]; then
-      staging_owner_mode=$(stat -c '%u:%a' -- "$archive_dir" 2>/dev/null || true)
-      staging_owner=${staging_owner_mode%%:*}
-      staging_mode=${staging_owner_mode#*:}
-      if [ "$staging_owner" = "$EUID" ] &&
-         { [ "$staging_mode" = 700 ] || [ "$staging_mode" = 2700 ]; } &&
-         [ -z "$(find "$archive_dir" -mindepth 1 -print -quit 2>/dev/null)" ] &&
-         export_path_is_safe "$output_dir"; then
-        rmdir -- "$archive_dir" || return 1
-      else
-        echo "Staging path changed before its identity was recorded; leaving it untouched: $archive_dir" >&2
-      fi
+    # A signal can arrive after mkdir creates the path but before this shell
+    # records the resulting inode. Without that identity, even an empty
+    # same-owner directory may be a replacement, so leave it for recovery.
+    if [ -e "$archive_dir" ] || [ -L "$archive_dir" ]; then
+      echo "Staging path identity was not recorded before cleanup; leaving it untouched: $archive_dir" >&2
     fi
     archive_dir=''
   fi

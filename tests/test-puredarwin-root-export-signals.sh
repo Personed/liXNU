@@ -184,6 +184,13 @@ case "$last" in
       ln -s -- "$ATTACKER_DIR" "$last"
       printf '%s\n' "$last.original" >"$TEST_STATE/replaced-stage"
     fi
+    if [ "${REPLACE_ARCHIVE_AFTER_MKDIR:-0}" = 1 ]; then
+      mv -- "$last" "$last.original"
+      "$REAL_MKDIR" -m 0700 -- "$last"
+      "$REAL_CHMOD" 0700 -- "$last"
+      "$REAL_CHMOD" g-s -- "$last"
+      printf '%s\n' "$last.original" >"$TEST_STATE/replaced-stage"
+    fi
     if [ "${PAUSE_AFTER_ARCHIVE_MKDIR:-0}" = 1 ]; then
       : >"$TEST_STATE/archive-mkdir-ready"
       while [ ! -e "$TEST_STATE/archive-mkdir-release" ]; do sleep 0.01; done
@@ -353,12 +360,12 @@ echo 'PureDarwin root exporter mount-directory signal cleanup test passed.'
 
 unset SIGNAL_AFTER_MOUNT SIGNAL_BEFORE_MOUNT
 
-# Interrupt the entire process group while mkdir is paused after creating the
-# archive stage but before returning. The exporter already knows the pathname,
-# so its signal trap can remove the empty directory without mktemp output.
+# Replace the new archive stage after mkdir creates it but before the
+# exporter records its inode, then interrupt the entire process group. Cleanup
+# must leave both the original and the replacement untouched.
 early_output=$tmp/early-mkdir-signal.tar.gz
-rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/archive-mkdir-ready" "$state/archive-mkdir-release" "$state/archive-export-pgid" "$state/check-log"
-PAUSE_AFTER_ARCHIVE_MKDIR=1 setsid --wait bash -c 'printf "%s\\n" "$$" >"$TEST_STATE/archive-export-pgid"; exec "$@"' _ \
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/archive-mkdir-ready" "$state/archive-mkdir-release" "$state/archive-export-pgid" "$state/check-log" "$state/replaced-stage"
+REPLACE_ARCHIVE_AFTER_MKDIR=1 PAUSE_AFTER_ARCHIVE_MKDIR=1 setsid --wait bash -c 'printf "%s\\n" "$$" >"$TEST_STATE/archive-export-pgid"; exec "$@"' _ \
   "$script" "$image" "$early_output" >/dev/null 2>&1 &
 early_export_pid=$!
 for attempt in {1..500}; do
@@ -382,10 +389,15 @@ status=$?
 set -e
 [ "$status" -eq 143 ] || { echo "Expected archive-mkdir SIGTERM exit 143; got $status" >&2; exit 1; }
 early_archive_dir=$(cat "$state/archive-dir")
-[ ! -e "$early_archive_dir" ]
+early_original=$(cat "$state/replaced-stage")
+[ -d "$early_original" ]
+[ -d "$early_archive_dir" ]
+[ ! -L "$early_archive_dir" ]
+[ "$(stat -c '%a' -- "$early_archive_dir")" = 700 ]
 [ ! -e "$early_output" ]
 [ ! -e "$state/loop-attached" ]
-echo 'PureDarwin root exporter process-group archive-mkdir signal cleanup test passed.'
+rm -rf -- "$early_original" "$early_archive_dir"
+echo 'PureDarwin root exporter process-group archive-mkdir replacement signal test passed.'
 
 # The sudo re-exec deliberately drops TMPDIR. The private child must restore
 # the original value before selecting a physical mount staging path.

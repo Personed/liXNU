@@ -85,14 +85,13 @@ PATH="$chmod_bin:$PATH" "$script" "$image" "$symlink_output" >/dev/null
 [ -f "$output_dir/via-symlink.tar.gz" ]
 [ ! -e "$tmp/via-symlink.tar.gz" ]
 
-# Replace the temporary directory after mkdir creates it, simulating a user
-# who can rename entries in the shared output directory. The exporter must
-# detect the changed owner before writing through the replacement symlink.
-attacker_dir=$tmp/attacker-owned
-mkdir -- "$attacker_dir"
-printf 'private sentinel\n' >"$attacker_dir/root.tar.gz"
-chmod 0700 "$attacker_dir"
-run_as_root chown 65534:65534 "$attacker_dir" "$attacker_dir/root.tar.gz"
+# Replace the temporary directory after mkdir creates it with a real
+# directory owned by another UID. The exporter must reject it based on owner
+# validation before writing anything into the replacement.
+foreign_stage=$tmp/foreign-owned-stage
+mkdir -m 0700 -- "$foreign_stage"
+printf 'foreign stage sentinel\n' >"$foreign_stage/sentinel"
+run_as_root chown 65534:65534 "$foreign_stage" "$foreign_stage/sentinel"
 replace_bin=$tmp/replace-bin
 mkdir -- "$replace_bin"
 real_mkdir=$(command -v mkdir)
@@ -105,24 +104,27 @@ for arg do last=$arg; done
 case "$last" in
   */.puredarwin-root.*)
     mv -- "$last" "$last.original"
-    ln -s -- "@ATTACKER_DIR@" "$last"
+    mv -- "@FOREIGN_STAGE@" "$last"
     ;;
 esac
 WRAPPER
 attack_output=$output_dir/attack-output.tar.gz
-sed -i "s|@REAL_MKDIR@|$real_mkdir|g; s|@ATTACKER_DIR@|$attacker_dir|g" "$replace_bin/mkdir"
+sed -i "s|@REAL_MKDIR@|$real_mkdir|g; s|@FOREIGN_STAGE@|$foreign_stage|g" "$replace_bin/mkdir"
 chmod +x "$replace_bin/mkdir"
 if PATH="$replace_bin:$PATH" \
   "$script" "$image" "$attack_output" >/dev/null 2>&1; then
   echo 'Exporter accepted a replaced staging directory.' >&2
   exit 1
 fi
-[ "$(run_as_root cat "$attacker_dir/root.tar.gz")" = 'private sentinel' ]
+foreign_replacement=$(find "$output_dir" -maxdepth 1 -type d -name '.puredarwin-root.*' ! -name '*.original' -print -quit)
+[ -n "$foreign_replacement" ]
+[ ! -L "$foreign_replacement" ]
+[ "$(run_as_root stat -c '%u' -- "$foreign_replacement")" = 65534 ]
+[ "$(run_as_root cat "$foreign_replacement/sentinel")" = 'foreign stage sentinel' ]
 [ ! -e "$attack_output" ]
 replaced_dir=$(find "$output_dir" -maxdepth 1 -type d -name '.puredarwin-root.*.original' -print -quit)
 [ -n "$replaced_dir" ]
-run_as_root rm -rf -- "$replaced_dir"
-rm -- "$output_dir"/.puredarwin-root.*
+run_as_root rm -rf -- "$replaced_dir" "$foreign_replacement"
 
 expect_refusal() {
   local path=$1

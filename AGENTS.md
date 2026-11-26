@@ -36,18 +36,18 @@ Do not leave parallel agents to infer ownership from the code. Use the PR commen
 
 ## Validation
 
-Keep x86_64 and ARM64 kernel header trees separate. The x86_64 FKI build compiles only the host backend; the x86_64 XNU target is a refusal stub, not a runtime implementation. The x86_64 stub-load test taints its kernel and must run only in a disposable VM. CI covers the x86_64 FKI build, the x86_64 fail-closed XNU test, and the ARM64 module build.
+Keep x86_64 and ARM64 kernel header trees separate, and pass the architecture explicitly to Kbuild. Run the x86_64 commands on an x86_64 Linux host with matching headers; the ARM64 commands below run on an ARM64 Linux host with matching headers. The x86_64 FKI build compiles only the host backend; the x86_64 XNU target is a refusal stub, not a runtime implementation. The stub-load script starts its own disposable VM and taints only that guest kernel. CI covers the x86_64 FKI build, the x86_64 fail-closed XNU test, and the ARM64 module build.
 
 ```sh
 X86_KDIR=/path/to/x86_64/kernel-headers
 ARM64_KDIR=/path/to/arm64/kernel-headers
 
 tests/x86_64/build-fki.sh "$X86_KDIR"
-make -C "$X86_KDIR" M="$PWD/xnu-ko" modules
-tests/x86_64/test-xnu-stub-vm.sh "$X86_KDIR"  # disposable x86_64 Linux VM only
+make -C "$X86_KDIR" ARCH=x86_64 M="$PWD/xnu-ko" modules
+tests/x86_64/test-xnu-stub-vm.sh "$X86_KDIR"  # run on the x86_64 host; this script boots the disposable VM
 
-make -C "$ARM64_KDIR" M="$PWD/fki-ko" modules
-make -C "$ARM64_KDIR" M="$PWD/xnu-ko" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
+make -C "$ARM64_KDIR" ARCH=arm64 M="$PWD/fki-ko" modules
+make -C "$ARM64_KDIR" ARCH=arm64 M="$PWD/xnu-ko" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
 git diff --check
 ```
 

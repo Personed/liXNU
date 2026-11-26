@@ -86,7 +86,9 @@ We ship these. The user's disk script installs them into their own macOS disk:
    full physical RAM map and before an earlier `mem=` limit has hidden the carve-out. It detects `LINUX_MEM`,
    `CARVE_BASE` and `CARVE_MB` by default, accepts those values as environment overrides, checks their final geometry
    before changing GRUB or installing the FKI service, and prints a suggested `RAM_MB` for the guest. Use that guest
-   memory size in `/etc/xnulinux.conf`. The carve-out is RAM Linux never manages. After reboot, `mem=` may hide the
+   memory size in `/etc/xnulinux.conf`; the installation command prints the same recommendation outside `--dry-run`.
+   The automatic suggestion remains capped at 7900 MiB, while explicit `RAM_MB` is checked against the selected
+   carve-out's available size. The carve-out is RAM Linux never manages. After reboot, `mem=` may hide the
    reserved range from `/proc/iomem`; do not rerun memory detection against that reduced map. To change the layout,
    temporarily boot without the old `mem=` limit, run the setup again with the complete physical map, and reboot.
 3. **Kit.** Unpack it to `/opt/xnulinux/kit`, and install `kc-free.bin` as `/lib/firmware/xnu/kc-free.bin`.

@@ -111,4 +111,5 @@ else
   echo "note: systemd not active; load fki.ko at boot with: insmod $P/fki-ko/fki.ko carve_base=$CARVE_BASE carve_mb=$CARVE_MB" >&2
 fi
 sync
+echo "recommended hosted XNU setting for /etc/xnulinux.conf: RAM_MB=$RAM_MB"
 echo "after a reboot: Linux on $LINUX_MEM, fki.ko loaded with the $CARVE_MB MB carve-out at $CARVE_BASE (rebuild fki-ko before a reboot when it changes)"

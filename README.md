@@ -107,15 +107,21 @@ At head `5312b29`, [run #72](https://github.com/Personed/xnulinux/actions/runs/4
 unload, power-off, and QEMU-exit markers on Ubuntu 24.04 x86-64. It is not a valid acceptance pass: independent
 byte comparison confirmed the historical collection's `__TEXT_EXEC`/`__KLD` overlap at `0x3854000-0x3858000`,
 with output bytes matching `__KLD` rather than `__TEXT_EXEC`. Current #36 head `97727ac` adds a file-backed range
-check; run #74 failed before boot on that overlap. PR #50 proposes relocating `__KLD`/`__LAST` and relinking; its current head is `eb01aba` and
-run #89 is in progress. PR #52 pins the ARM64 guest kernel and records input hashes; it is rebased onto `eb01aba`
-and run #91 is in progress. The workflow uses an immutable Ubuntu snapshot, but fixed expected hashes for downloaded
-packages and package-availability validation are still pending. PR #57 now also targets `eb01aba` and run #92 is
-in progress to validate retention of the final post-relink segment-check output. Cross-host PR #46
+check; run #74 failed before boot on that overlap. Status below was checked 2026-11-26 17:06 UTC.
+PR #50 proposes relocating `__KLD`/`__LAST` and relinking; its current head is `eb01aba`,
+[run #89](https://github.com/Personed/xnulinux/actions/runs/45860811942) and modules run #595 are queued,
+and launcher run #221 passed. PR #52 pins the ARM64 guest kernel and records input hashes; it is rebased
+onto `eb01aba`, [run #91](https://github.com/Personed/xnulinux/actions/runs/45861689004) is in progress,
+modules run #600 is queued, and launcher run #224 passed. The workflow uses an immutable Ubuntu snapshot,
+but fixed expected hashes for downloaded packages and package-availability validation are still pending.
+PR #57 now also targets `eb01aba`; [run #92](https://github.com/Personed/xnulinux/actions/runs/45861736981)
+is in progress to validate retention of the final post-relink segment-check output, modules run #602 is
+queued, and launcher run #225 passed. Cross-host PR #46
 run #79 built the guest image but failed the XNU source build
 at the same `__TEXT_EXEC`/`__KLD` overlap; preparation and host boots were skipped. It is based on the
 pre-relocation/pre-pin head and provides no host acceptance. PR #58 adds guest-input hash checks and reliable
-per-host preflight reports; current run #90 is in progress. It now preserves raw-byte digests for invalid-UTF-8
+per-host preflight reports; [run #90](https://github.com/Personed/xnulinux/actions/runs/45861350689) is in
+progress, modules run #597 is queued, and launcher run #222 passed. It now preserves raw-byte digests for invalid-UTF-8
 manifests; review still asks for the macOS preflight case where `vm_stat` has no page-count rows. After
 #50/#52/#57/#58 are synchronized, rerun the full console/halt route and host matrix with identical guest hashes.
 Its public runners are reported as 16 GB for Windows and 14 GB for Intel macOS, less than the 16 GiB guest allocation
@@ -125,6 +131,11 @@ kernel at run time, so reruns are not yet pinned to identical kernel inputs. Thi
 performance, GUI, networking, or Tahoe/KVM claim. See
 [PR #3](https://github.com/Personed/xnulinux/pull/3) for Windows/macOS/Linux host setup and
 [`docs/portability-validation.md`](docs/portability-validation.md) for stage-specific evidence.
+
+The ARM64 FKI compatibility change in [PR #62](https://github.com/Personed/xnulinux/pull/62) reports
+a local Linux 6.8 cross-build and console/halt run. On its current head, modules run #613 passed the
+Linux 6.12 and ARM64 smoke jobs, while the x86-64 FKI, SPDX, and QEMU matrix jobs were cancelled; this
+does not replace the integrated #36/#46 acceptance.
 
 Shipping it as a hosted service (what is distributed, what a user installs to run Apple's macOS) is in
 [`docs/hosted-service.md`](docs/hosted-service.md).

@@ -68,20 +68,28 @@ Report the profile alongside the stage:
   resident or that the host avoided swap/overcommit. Current #36
   head `97727ac` adds a file-backed range check; run #74 failed in `kclink` before boot because file-backed
   `__TEXT_EXEC` and `__KLD` overlap at `0x3854000-0x3858000`, so run #72 is historical observation and not acceptance.
-  PR #50 proposes relocating `__KLD`/`__LAST` and relinking; current head is `eb01aba` and run #89 is in progress.
-  PR #52 pins the guest inputs and is rebased onto `eb01aba`; run #91 is in progress. It uses an immutable Ubuntu
-  snapshot, but fixed expected hashes for downloaded packages and package-availability validation are pending.
-  PR #57 is also rebased onto `eb01aba`; run #92 is in progress to validate retention of final post-relink segment-check
-  output. Cross-host
+  Status checked 2026-11-26 17:06 UTC: PR #50 proposes relocating `__KLD`/`__LAST` and relinking; current head is
+  `eb01aba`, [run #89](https://github.com/Personed/xnulinux/actions/runs/45860811942) and modules run #595 are queued,
+  and launcher run #221 passed. PR #52 pins the guest inputs and is rebased onto `eb01aba`; [run #91](https://github.com/Personed/xnulinux/actions/runs/45861689004)
+  is in progress, modules run #600 is queued, and launcher run #224 passed. It uses an immutable Ubuntu snapshot,
+  but fixed expected hashes for downloaded packages and package-availability validation are pending. PR #57 is also
+  rebased onto `eb01aba`; [run #92](https://github.com/Personed/xnulinux/actions/runs/45861736981) is in progress to
+  validate retention of final post-relink segment-check output; modules run #602 is queued and launcher run #225 passed.
+  Cross-host
   Windows and Intel-macOS checks are proposed in [#46](https://github.com/Personed/xnulinux/pull/46); its run #79
   built the guest image, then failed the XNU source build in `kclink` on the same file-backed `__TEXT_EXEC`/`__KLD`
   overlap. Guest preparation and host boots were skipped. It is based on the pre-relocation, pre-pin head and gives
-  no host acceptance result. PR #58 adds pre-boot guest image/initramfs hash verification and host-only reports for early failures; its
-  run #90 is building the guest image. Follow-up tests cover hash mismatch blocking the QEMU command, document that
-  the Python RAM sample precedes artifact hash validation, and preserve raw-byte SHA-256 for malformed UTF-8
+  no host acceptance result. PR #58 adds pre-boot guest image/initramfs hash verification and host-only reports
+  for early failures; [run #90](https://github.com/Personed/xnulinux/actions/runs/45861350689) is in progress,
+  modules run #597 is queued, and launcher run #222 passed. Follow-up tests cover hash mismatch blocking the
+  QEMU command, document that the Python RAM sample precedes artifact hash validation, and preserve raw-byte
+  SHA-256 for malformed UTF-8
   manifests. Review still asks for coverage of the macOS `vm_stat` unavailable-pages case.
-  After these changes are synchronized, repeat the
-  console/halt flow and host matrix with matching guest input hashes. An earlier Windows job (#71) started QEMU 11.1.0 but hit an
+  PR #62 reports a local Linux 6.8 cross-build and console/halt run. Its current modules run #613 passed the
+  Linux 6.12 build and ARM64 smoke jobs, while the x86-64 FKI, SPDX, and QEMU matrix jobs were cancelled. Treat
+  this as supporting local evidence only; it does not replace an integrated #36/#46 run. After these changes
+  are synchronized, repeat the console/halt flow and host matrix with matching guest input hashes. An earlier
+  Windows job (#71) started QEMU 11.1.0 but hit an
   ARM64 write-permission fault in `macho_copy` while loading `xnu.ko` with the older #44 kernel layout; it did not
   reach a Darwin marker, so this is not a Windows host pass or a Windows host limitation. PR #50 proposes relocating
   The proposed public runners have 16 GB (Windows) and 14 GB (Intel macOS), below guest allocation
@@ -163,9 +171,10 @@ ARM64 Linux guest and a clean QEMU exit.
 Repo commit(s) / PR(s):
 Profile (x86-64 TCG/PureDarwin, native ARM64, ARM64 hosted macOS desktop, or separate x86_64 Tahoe/KVM experiment):
 Outer machine + CPU model/core count / OS + version:
-Host physical RAM total / available RAM before the guest:
-Host RAM measurement phase (native preflight before downloads/setup / Python runner before artifact hash checks and QEMU / final report):
-20 GiB / 4 GiB capacity screen result and any limiting reason:
+Required initial capacity screen, measured before artifact preparation:
+  Host physical RAM total / available RAM / measurement timestamp:
+  Result against 20 GiB total and 4 GiB available / limiting reason:
+Supplementary host RAM measurements (optional; record phase and values separately):
 Runtime + version / accelerator:
 TCG Linux stage and result (if applicable; do not label as a macOS result):
 

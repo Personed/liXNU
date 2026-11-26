@@ -14,7 +14,7 @@ SCRIPT = ROOT / "scripts/free-kc/build.sh"
 
 
 class FreeKernelCollectionPathTest(unittest.TestCase):
-    def test_relative_dvm_is_canonicalized_before_build_commands(self):
+    def test_relative_dvm_and_workspace_paths_with_spaces_are_preserved(self):
         source = SCRIPT.read_text(encoding="utf-8")
         pd_revision = re.search(r"\bPD_REV=([0-9a-f]+)", source).group(1)
         mbedtls_revision = re.search(
@@ -26,10 +26,10 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             launch = root / "launch"
-            vm = root / "vm"
+            vm = root / "vm with spaces"
             fake_bin = root / "bin"
             poc_target = root / "repo with spaces"
-            poc_link = root / "poc"
+            poc_link = root / "poc with spaces"
             launch.mkdir()
             fake_bin.mkdir()
             (poc_target / "kexts/free/corecrypto").mkdir(parents=True)
@@ -63,7 +63,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             python = fake_bin / "python3"
             python.write_text(
                 "#!/bin/sh\n"
-                "printf '%s\\n%s\\n' \"$DVM\" \"$1\" > \"$DVM_CAPTURE\"\n"
+                "printf '%s\\0' \"$DVM\" \"$@\" > \"$DVM_CAPTURE\"\n"
                 "exit 73\n",
                 encoding="utf-8",
             )
@@ -73,13 +73,13 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             env = os.environ.copy()
             env.update(
                 {
-                    "DVM": "../vm",
+                    "DVM": "../vm with spaces",
                     "DVM_CAPTURE": str(capture),
                     "FAKE_PD_REV": pd_revision,
                     "FAKE_MBEDTLS_REV": mbedtls_revision,
-                    "FREE_KC_WORK": str(root / "free-kc-work"),
-                    "OUT": str(root / "kc-free.bin"),
-                    "POC": "../poc",
+                    "FREE_KC_WORK": str(root / "free kc work"),
+                    "OUT": str(root / "kc free.bin"),
+                    "POC": "../poc with spaces",
                     "PATH": str(fake_bin) + os.pathsep + env["PATH"],
                 }
             )
@@ -94,10 +94,13 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 73, result.stdout)
-            self.assertEqual(
-                capture.read_text(encoding="utf-8").splitlines(),
-                [str(vm.resolve()), str(poc_link.absolute() / "scripts/free-kc/kcc.py")],
-            )
+            arguments = [value.decode() for value in capture.read_bytes().split(b"\0") if value]
+            self.assertEqual(arguments[0], str(vm.resolve()))
+            self.assertEqual(arguments[1], str(poc_link.absolute() / "scripts/free-kc/kcc.py"))
+            self.assertEqual(arguments[2], "--macos")
+            self.assertEqual(arguments[3], str(root / "free kc work/obj/corecrypto"))
+            self.assertEqual(arguments[4:6], ["-I", str(poc_link.absolute() / "kexts/free/corecrypto")])
+            self.assertEqual(arguments[6:8], ["-I", str(root / "free kc work/src/mbedtls/include")])
 
     def test_default_poc_ignores_competing_cdpath_checkout(self):
         source = SCRIPT.read_text(encoding="utf-8")

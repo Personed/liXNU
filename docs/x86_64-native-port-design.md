@@ -31,4 +31,3 @@ The pinned XNU source tag used by the current build scripts contains `osfmk/i386
 6. **Validate the Tahoe desktop on hardware.** Boot a user-provided x86_64 Tahoe disk through the native module path on physical Intel and AMD Linux PCs separately. Record CPU model/features, Linux kernel/config, RAM, source and disk hashes, display/input/network/disk results, clean shutdown, and Linux host-integrity checks. Keep the ARM64 macOS 27 build and runtime smoke as a regression requirement.
 
 A gate passes only with its named evidence. Until the native XNU boot and host-integrity gates pass, describe x86_64 as in development and keep `fki_caps()` at zero. No Apple macOS image, firmware, or locally supplied SMC key belongs in this repository or its logs.
-

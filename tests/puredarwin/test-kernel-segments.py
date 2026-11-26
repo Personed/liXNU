@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
 """Regression tests for the free-collection kernel segment layout and writes."""
+from contextlib import redirect_stdout
+import io
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts' / 'free-kc'))
 sys.path.insert(0, str(ROOT / 'scripts' / 'kclink'))
 
+import fit_kernel_segments  # noqa: E402
 from fit_kernel_segments import fit_offsets, parse_link_offsets, relink_needed, render_link_offsets  # noqa: E402
 from macho import Segment  # noqa: E402
 
@@ -56,10 +61,41 @@ class KernelSegmentTests(unittest.TestCase):
         fitted = fit_offsets(segments, header, {'__KLD': 0x3854000, '__LAST': 0x3860000})
         self.assertEqual(fitted, {'__KLD': 0x38d4000, '__LAST': 0x38d8000})
 
-    def test_missing_last_segment_is_rejected(self):
+    def test_missing_last_marker_requests_relink_and_final_check_rejects_it(self):
         header, segments = self.kernel_segments(kld_size=0x4000, include_last=False)
-        with self.assertRaisesRegex(ValueError, r'kernel is missing required segments: .*__LAST'):
-            fit_offsets(segments, header, {'__KLD': 0x3854000, '__LAST': 0x3860000})
+        segments[0].vmaddr += 0x4000  # main() subtracts 0x4000 to get the kernel header.
+        with tempfile.TemporaryDirectory() as temporary:
+            temp = Path(temporary)
+            kernel_path = temp / 'kernel.macho'
+            segaddrs_path = temp / 'segaddrs.sh'
+            kernel_path.write_bytes(b'fake kernel')
+            segaddrs_path.write_text('a __KLD 0x38d4000; a __LAST 0x38d8000;\n', encoding='utf-8')
+
+            class FakeImage:
+                def __init__(self, _data):
+                    self.segments = segments
+
+                def segment(self, name):
+                    return next((segment for segment in segments if segment.name == name), None)
+
+            output = io.StringIO()
+            main_argv = ['fit_kernel_segments.py', str(kernel_path), str(segaddrs_path)]
+            with mock.patch.object(fit_kernel_segments, 'Image', FakeImage), \
+                    mock.patch.object(sys, 'argv', main_argv), \
+                    redirect_stdout(output):
+                fit_kernel_segments.main()
+            self.assertIn('relink kernel:', output.getvalue())
+            self.assertEqual(
+                parse_link_offsets(segaddrs_path.read_text(encoding='utf-8')),
+                {'__KLD': 0x38d4000, '__LAST': 0x38d8000},
+            )
+            self.assertTrue(relink_needed(segments, header, {'__KLD': 0x38d4000, '__LAST': 0x38d8000}))
+
+            with mock.patch.object(fit_kernel_segments, 'Image', FakeImage), \
+                    mock.patch.object(sys, 'argv', [*main_argv, '--check']), \
+                    redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(SystemExit, 'missing required __LAST Mach-O segment after relink'):
+                    fit_kernel_segments.main()
 
     def test_updated_linker_script_with_stale_kernel_requests_relink(self):
         header, segments = self.kernel_segments(kld_size=0x4000, last_size=0)
@@ -79,12 +115,6 @@ class KernelSegmentTests(unittest.TestCase):
 
         segments[-1].vmaddr = header + fitted['__LAST']
         self.assertFalse(relink_needed(segments, header, fitted))
-
-    def test_missing_last_marker_requests_relink(self):
-        header, segments = self.kernel_segments(kld_size=0x4000, include_last=False)
-        fitted = {'__KLD': 0x38d4000, '__LAST': 0x38d8000}
-        segments[2].vmaddr = header + fitted['__KLD']
-        self.assertTrue(relink_needed(segments, header, fitted))
 
     def test_final_kernel_slot_check_output_is_appended_to_fit_log(self):
         rebuild = (ROOT / 'scripts' / 'vm-xnu-rebuild.sh').read_text(encoding='utf-8')

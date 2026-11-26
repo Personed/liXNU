@@ -24,9 +24,9 @@ def fit_offsets(segments, kernel_header, offsets):
         if segment.name in by_name:
             raise ValueError(f'kernel has duplicate {segment.name} segments')
         by_name[segment.name] = segment
-    # __LAST may be zero-sized, but XNU still needs its address in the linked
-    # Mach-O, so the linker marker must be present even when it carries no bytes.
-    missing = [name for name in ('__TEXT', '__TEXT_EXEC', '__KLD', '__LAST', '__KLDDATA') if name not in by_name]
+    # A missing __LAST makes the current Mach-O stale; the final --check
+    # requires the linker to emit it, even when the marker has no bytes.
+    missing = [name for name in ('__TEXT', '__TEXT_EXEC', '__KLD', '__KLDDATA') if name not in by_name]
     if missing:
         raise ValueError(f'kernel is missing required segments: {", ".join(missing)}')
 
@@ -60,8 +60,8 @@ def fit_offsets(segments, kernel_header, offsets):
             raise ValueError(f'kernel segments {name} ({start:#x}-{end:#x}) and '
                              f'{next_name} ({next_start:#x}-{next_end:#x}) overlap after relink placement')
 
-    last = by_name['__LAST']
-    last_end = result['__LAST'] + last.vmsize
+    last = by_name.get('__LAST')
+    last_end = result['__LAST'] + (last.vmsize if last else 0)
     klddata_start = by_name['__KLDDATA'].vmaddr - kernel_header
     if last_end > klddata_start:
         raise ValueError(f'kernel __LAST ends at {last_end:#x}, beyond __KLDDATA at {klddata_start:#x}')
@@ -131,6 +131,8 @@ def main():
     fitted = fit_offsets(kernel.segments, kernel_header, offsets)
     stale_kernel = relink_needed(kernel.segments, kernel_header, fitted)
     if args.check:
+        if '__LAST' not in {segment.name for segment in kernel.segments}:
+            raise SystemExit('kernel is missing required __LAST Mach-O segment after relink')
         if fitted != offsets or stale_kernel:
             raise SystemExit('kernel linker addresses still need adjustment or relinking')
         print('kernel segment ranges are disjoint and __LAST ends before __KLDDATA')

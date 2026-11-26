@@ -90,8 +90,10 @@ Report the profile alongside the stage:
   `XNULINUX_USERLAND_OK`, `XNULINUX_E2E_GUEST_HALT_OK`, `XNULINUX_E2E_XNU_UNLOADED`, and
   Linux `reboot: Power down`. The [run-tcg-e2e.py script at head `5570fae`](https://github.com/Personed/xnulinux/blob/5570faef5f457eb9426a00102db4d73062de5c64/tests/puredarwin/run-tcg-e2e.py)
   requires QEMU's return code to be 0, and the boot job passed. It does not check or emit a
-  separate FKI-unload marker, so FKI unload is not verified by this run; the retained log
-  also has no standalone QEMU exit-status line. Run [#95](https://github.com/Personed/xnulinux/actions/runs/45867603529)
+  separate FKI-unload marker. The guest-init script at `5570fae` runs `rmmod xnu`, checks
+  it is absent, then runs `rmmod fki` and checks the host-call device is gone before emitting
+  `XNULINUX_E2E_XNU_UNLOADED`; the successful workflow therefore verifies both unload commands.
+  The retained log has no standalone QEMU exit-status line, but the harness requires QEMU return code 0. Run [#95](https://github.com/Personed/xnulinux/actions/runs/45867603529)
   validates that synchronized #52/#64 branch on this virtual runner only. PR #64 merged into the #52
   branch as `c360e99`; this is not main-integrated or cross-host matrix acceptance. These
   stacked results do not replace a current #36/#46 console/halt run with the same manifest.

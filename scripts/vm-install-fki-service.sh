@@ -36,37 +36,46 @@ fi
 
 # nokaslr: arm64's EFI stub randomises the Linux kernel's physical load address across all EFI memory before mem=
 # takes effect, which otherwise places the kernel image inside the carve-out on some boots (fki then refuses to map it).
-G=/etc/default/grub.d/99-xnulinux.cfg
-GRUB_DEFAULT=/etc/default/grub
-BLS_ENTRIES=/boot/loader/entries
+GRUB_DEFAULT="${XNULINUX_GRUB_DEFAULT:-/etc/default/grub}"
+GRUB_DEFAULT_DIR="${XNULINUX_GRUB_DEFAULT_DIR:-/etc/default/grub.d}"
+G="${XNULINUX_GRUB_CMDLINE_FILE:-$GRUB_DEFAULT_DIR/99-xnulinux.cfg}"
+BLS_ENTRIES="${XNULINUX_BLS_ENTRIES:-/boot/loader/entries}"
 if [ -f "$GRUB_DEFAULT" ]; then
-  sudo mkdir -p /etc/default/grub.d
+  sudo mkdir -p "$GRUB_DEFAULT_DIR"
   echo "GRUB_CMDLINE_LINUX=\"\$GRUB_CMDLINE_LINUX $CMDLINE_ARGS\"" | sudo tee "$G" >/dev/null
 
   if [ -d "$BLS_ENTRIES" ]; then
     GRUBBY_BIN=$(resolve_command grubby)
-    if [ -n "$GRUBBY_BIN" ]; then
-      sudo "$GRUBBY_BIN" --update-kernel=ALL --args="$CMDLINE_ARGS"
-    else
-      GRUB2_MKCONFIG_BIN=$(resolve_command grub2-mkconfig)
-      if [ -z "$GRUB2_MKCONFIG_BIN" ]; then
-        echo "error: BLS boot entries found, but neither grubby nor grub2-mkconfig is available to apply '$CMDLINE_ARGS'" >&2
+    if [ -z "$GRUBBY_BIN" ]; then
+      echo "error: BLS boot entries found, but grubby is required to apply and verify '$CMDLINE_ARGS'" >&2
+      exit 1
+    fi
+    sudo "$GRUBBY_BIN" --update-kernel=ALL --args="$CMDLINE_ARGS"
+    BLS_ENTRY_COUNT=0
+    for entry in "$BLS_ENTRIES"/*.conf; do
+      [ -f "$entry" ] || continue
+      BLS_ENTRY_COUNT=$((BLS_ENTRY_COUNT + 1))
+      if ! awk -v expected="mem=$LINUX_MEM" '
+        $1 == "options" {
+          option_lines++
+          count = 0
+          for (i = 2; i <= NF; i++) {
+            if ($i ~ /^mem=/) {
+              count++
+              if ($i != expected) wrong = 1
+            }
+          }
+          if (count != 1) wrong = 1
+        }
+        END { exit (wrong || option_lines != 1) }
+      ' "$entry"; then
+        echo "error: BLS entry does not contain exactly one effective mem=$LINUX_MEM argument: $entry" >&2
         exit 1
       fi
-      GRUB2_MKCONFIG_HELP="$("$GRUB2_MKCONFIG_BIN" --help 2>&1 || true)"
-      if ! grep -q -- '--update-bls-cmdline' <<<"$GRUB2_MKCONFIG_HELP"; then
-        echo "error: BLS boot entries found, but neither grubby nor grub2-mkconfig --update-bls-cmdline is available to apply '$CMDLINE_ARGS'" >&2
-        exit 1
-      fi
-      GRUB_CFG=
-      for cfg in /boot/grub2/grub.cfg /boot/efi/EFI/*/grub.cfg; do
-        if [ -e "$cfg" ]; then GRUB_CFG=$cfg; break; fi
-      done
-      if [ -z "$GRUB_CFG" ]; then
-        echo "error: BLS boot entries found, but no GRUB configuration file was found" >&2
-        exit 1
-      fi
-      sudo "$GRUB2_MKCONFIG_BIN" --update-bls-cmdline -o "$GRUB_CFG" >/dev/null 2>&1
+    done
+    if [ "$BLS_ENTRY_COUNT" -eq 0 ]; then
+      echo "error: BLS boot entries directory contains no kernel entries: $BLS_ENTRIES" >&2
+      exit 1
     fi
   elif UPDATE_GRUB_BIN=$(resolve_command update-grub) && [ -n "$UPDATE_GRUB_BIN" ]; then
     sudo "$UPDATE_GRUB_BIN" >/dev/null 2>&1
@@ -87,8 +96,10 @@ else
   echo "note: GRUB not found; add '$CMDLINE_ARGS' to your bootloader's kernel command line manually" >&2
 fi
 
-if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-  sudo tee /etc/systemd/system/xnulinux-fki.service >/dev/null <<UNIT
+SYSTEMD_RUNTIME_DIR="${XNULINUX_SYSTEMD_RUNTIME_DIR:-/run/systemd/system}"
+SYSTEMD_UNIT_FILE="${XNULINUX_SYSTEMD_UNIT_FILE:-/etc/systemd/system/xnulinux-fki.service}"
+if command -v systemctl >/dev/null 2>&1 && [ -d "$SYSTEMD_RUNTIME_DIR" ]; then
+  sudo tee "$SYSTEMD_UNIT_FILE" >/dev/null <<UNIT
 [Unit]
 Description=xnulinux: fki.ko with the hosted kernel's DRAM reserved
 DefaultDependencies=no

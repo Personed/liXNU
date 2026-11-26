@@ -73,7 +73,8 @@ PATH="$TEST_PATH" "$ROOT_DIR/scripts/vm-net-up.sh" >"$FIXTURE_DIR/with-route.out
   exit 1
 }
 grep -q -- '-t nat -A POSTROUTING' "$IPTABLES_LOG"
-grep -q -- '-I FORWARD' "$IPTABLES_LOG"
+grep -Fqx -- '-I FORWARD -i xnu0 -j ACCEPT' "$IPTABLES_LOG"
+grep -Fqx -- '-I FORWARD -o xnu0 -m state --state RELATED,ESTABLISHED -j ACCEPT' "$IPTABLES_LOG"
 grep -q -- '-t mangle -A FORWARD' "$IPTABLES_LOG"
 
 : >"$IPTABLES_LOG"

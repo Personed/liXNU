@@ -14,7 +14,8 @@ U=$(id -un)
 CPUS=${CPUS:-2}		# its CPUs (the Linux CPUs from 0 up; Linux keeps the rest and its device interrupts)
 RAM_MB=${RAM_MB:-7900}	# its memory, within fki's carve-out
 #DISK=/var/tmp/mac.img
-GPU=${GPU:-auto}	# auto: the host GPU when the VM has a render node; off: CPU rendering only
+GPU=${GPU:-auto}	# auto: start the GPU bridge when possible, with CPU rendering as the fallback
+#GPU_RENDER_NODE=/dev/dri/renderD128
 #XNU_ARGS="model=VirtualMac2,1"
 #BOOTARGS="amfi_get_out_of_my_way=1 lp-sip0=2050 bt-transport-override=10"
 CONF

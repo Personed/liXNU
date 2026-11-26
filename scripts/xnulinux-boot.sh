@@ -15,6 +15,7 @@
 #   DISK (/var/tmp/mac.img)  RAM_MB (7900)  BOOTARGS  CONSOLE_IN (/var/tmp/console-in)  INPUT_IN (/var/tmp/xnu-input)
 #   FB_DUMP (/var/tmp/xnu-fb.raw)  KEYSTORE (/var/tmp/xnu-keystore.bin)  TRUSTCACHE (xnu/trustcache-mac.bin; empty: none)
 #   IMAGE (xnu/kc.bin: the kernel collection under /lib/firmware)  GPU (auto|off)  CPUS (1: the hosted system's CPUs, 32 at most)  XNU_ARGS (more xnu.ko parameters)
+#   GPU_RENDER_NODE (/dev/dri/renderD128: the Linux render node used by xnudrmd)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [ "${1:-}" = stop ]; then	# end the running hosted system (its disk synced first) and remove xnu.ko
@@ -101,22 +102,25 @@ done
 # insmod kills live DRM/Venus clients out from under WindowServer. Never restart xnudrmd while XNU runs.
 sudo systemctl stop xnudrmd 2>/dev/null || true
 sudo systemctl reset-failed xnudrmd 2>/dev/null || true
-if [ "$GPU" != off ] && [ -e /dev/dri/renderD128 ]; then
-  make -s -C gpu/xnu-drm >/dev/null
-  # off XNU's CPUs, the render server it starts too: a thread woken on a CPU that XNU holds runs when XNU next calls the host
-  sudo systemd-run -q --unit xnudrmd --collect ${HOSTCPUS:+-p CPUAffinity="$HOSTCPUS"} "$PWD/gpu/xnu-drm/xnudrmd"
+GPU_RENDER_NODE=${GPU_RENDER_NODE:-/dev/dri/renderD128}
+if [ "$GPU" != off ] && [ -e "$GPU_RENDER_NODE" ]; then
   DRM_READY=0
-  DRM_INV=$(systemctl show -p InvocationID --value xnudrmd 2>/dev/null || true)
-  for _ in $(seq 1 100); do
-    if [ -n "$DRM_INV" ] && sudo journalctl _SYSTEMD_INVOCATION_ID="$DRM_INV" -q --no-pager 2>/dev/null | grep "xnudrmd: serving" >/dev/null; then
-      DRM_READY=1; break
-    fi
-    DRM_STATE=$(systemctl show -p ActiveState --value xnudrmd 2>/dev/null || true)
-    [ "$DRM_STATE" = active ] || [ "$DRM_STATE" = activating ] || break
-    sleep 0.1
-  done
+  # Keep the bridge and its render server off XNU's CPUs. If the optional bridge cannot build or start, still boot XNU.
+  if make -s -C gpu/xnu-drm >/dev/null &&
+    sudo systemd-run -q --unit xnudrmd --collect ${HOSTCPUS:+-p CPUAffinity="$HOSTCPUS"} \
+      "$PWD/gpu/xnu-drm/xnudrmd" "$GPU_RENDER_NODE"; then
+    DRM_INV=$(systemctl show -p InvocationID --value xnudrmd 2>/dev/null || true)
+    for _ in $(seq 1 100); do
+      if [ -n "$DRM_INV" ] && sudo journalctl _SYSTEMD_INVOCATION_ID="$DRM_INV" -q --no-pager 2>/dev/null | grep "xnudrmd: serving" >/dev/null; then
+        DRM_READY=1; break
+      fi
+      DRM_STATE=$(systemctl show -p ActiveState --value xnudrmd 2>/dev/null || true)
+      [ "$DRM_STATE" = active ] || [ "$DRM_STATE" = activating ] || break
+      sleep 0.1
+    done
+  fi
   if [ "$DRM_READY" = 1 ]; then
-    echo "gpu: xnudrmd ready on /dev/dri/renderD128 (journalctl -u xnudrmd)"
+    echo "gpu: xnudrmd ready on $GPU_RENDER_NODE (journalctl -u xnudrmd)"
     # The virglrenderer backend's shared memory is Linux's 4 KB pages, wherever they are: XnuDrm cannot map them into a
     # task whose VM pages are 16 KB (xnu.ko's default), so the hosted system gets 4 KB VM pages (override: XNU_ARGS)
     if sudo journalctl _SYSTEMD_INVOCATION_ID="$DRM_INV" -q --no-pager 2>/dev/null | grep "serving virglrenderer" >/dev/null; then
@@ -125,7 +129,7 @@ if [ "$GPU" != off ] && [ -e /dev/dri/renderD128 ]; then
     # GPU name for System Information (override: GPU_MODEL=)
     GPU_MODEL=${GPU_MODEL:-$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)}
   else
-    echo "gpu: xnudrmd did not become ready within 10 s (journalctl -u xnudrmd); continuing with GPU=off" >&2
+    echo "gpu: xnudrmd did not start or become ready on $GPU_RENDER_NODE (journalctl -u xnudrmd); continuing with GPU=off" >&2
     sudo systemctl stop xnudrmd 2>/dev/null || true
   fi
 fi

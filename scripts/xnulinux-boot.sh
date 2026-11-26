@@ -12,7 +12,7 @@
 #
 # Configuration: /etc/xnulinux.conf, then $MAC_CONF (/var/tmp/mac.conf, written by mk-macvm-disk.sh: ROOT_UUID, BOOT_UUID), then the
 # environment:
-#   DISK (/var/tmp/mac.img)  RAM_MB (7900)  BOOTARGS  CONSOLE_IN (/var/tmp/console-in)  INPUT_IN (/var/tmp/xnu-input)
+#   DISK (/var/tmp/mac.img)  RAM_MB (auto: fit the fki carve-out)  BOOTARGS  CONSOLE_IN (/var/tmp/console-in)  INPUT_IN (/var/tmp/xnu-input)
 #   FB_DUMP (/var/tmp/xnu-fb.raw)  KEYSTORE (/var/tmp/xnu-keystore.bin)  TRUSTCACHE (xnu/trustcache-mac.bin; empty: none)
 #   IMAGE (xnu/kc.bin: the kernel collection under /lib/firmware)  GPU (auto|off)  CPUS (1: the hosted system's CPUs, 32 at most)  XNU_ARGS (more xnu.ko parameters)
 set -euo pipefail
@@ -36,7 +36,7 @@ WAIT=0; [ "${1:-}" = --wait ] && WAIT=1
 [ -f /etc/xnulinux.conf ] && . /etc/xnulinux.conf
 MAC_CONF=${MAC_CONF:-/var/tmp/mac.conf}	# the disk's UUIDs: mk-macvm-disk.sh's, or mk-puredarwin-disk.sh's output
 [ -f "$MAC_CONF" ] && . "$MAC_CONF"
-DISK=${DISK:-/var/tmp/mac.img}; RAM_MB=${RAM_MB:-7900}; GPU=${GPU:-auto}; CPUS=${CPUS:-1}
+DISK=${DISK:-/var/tmp/mac.img}; RAM_MB=${RAM_MB:-auto}; GPU=${GPU:-auto}; CPUS=${CPUS:-1}
 CONSOLE_IN=${CONSOLE_IN:-/var/tmp/console-in}; INPUT_IN=${INPUT_IN:-/var/tmp/xnu-input}; FB_DUMP=${FB_DUMP:-/var/tmp/xnu-fb.raw}
 KEYSTORE=${KEYSTORE:-/var/tmp/xnu-keystore.bin}; TRUSTCACHE=${TRUSTCACHE-xnu/trustcache-mac.bin}; IMAGE=${IMAGE:-xnu/kc.bin}
 BOOTARGS=${BOOTARGS:-amfi_get_out_of_my_way=1 lp-sip0=2050 bt-transport-override=10}
@@ -54,7 +54,28 @@ build xnu-ko "KBUILD_EXTRA_SYMBOLS=$PWD/fki-ko/Module.symvers"
 sudo dmesg -n "${CONLEVEL:-1}"
 # fki has the hosted kernel's DRAM from its load at boot (scripts/vm-install-fki-service.sh): reload it only when it changed,
 # with the same carve-out
-CARVE="carve_base=$(cat /sys/module/fki/parameters/carve_base 2>/dev/null || echo 0x200000000) carve_mb=$(cat /sys/module/fki/parameters/carve_mb 2>/dev/null || echo 8156)"
+CARVE_BASE=$(cat /sys/module/fki/parameters/carve_base 2>/dev/null || echo 0x200000000)
+CARVE_MB=$(cat /sys/module/fki/parameters/carve_mb 2>/dev/null || echo 8156)
+CARVE_MB=${CARVE_MB:-8156}
+if ! [[ "$CARVE_MB" =~ ^[0-9]+$ ]]; then
+  echo "fki reports an invalid carve_mb value: $CARVE_MB" >&2
+  exit 1
+fi
+if [ "$RAM_MB" = auto ]; then
+  RAM_OVERHEAD_MB=128
+  [ "$CARVE_MB" -lt 4096 ] || RAM_OVERHEAD_MB=256
+  if [ "$CARVE_MB" -gt 0 ]; then
+    if [ "$CARVE_MB" -le "$RAM_OVERHEAD_MB" ]; then
+      echo "fki carve-out is too small to choose automatic XNU RAM (${CARVE_MB} MiB). Set RAM_MB manually or increase CARVE_MB." >&2
+      exit 1
+    fi
+    RAM_MB=$((CARVE_MB - RAM_OVERHEAD_MB))
+  else
+    RAM_MB=7900
+  fi
+fi
+RAM_MB=${RAM_MB:-7900}
+CARVE="carve_base=$CARVE_BASE carve_mb=$CARVE_MB"
 # (an fki.ko from before cpu_list has none: set -e must not stop here)
 CPULIST=$(tr -d '\n' 2>/dev/null < /sys/module/fki/parameters/cpu_list || true); [ -z "$CPULIST" ] || CARVE="$CARVE cpu_list=$CPULIST"
 if [ "$(cat /sys/module/fki/srcversion 2>/dev/null)" != "$(modinfo -F srcversion fki-ko/fki.ko)" ]; then

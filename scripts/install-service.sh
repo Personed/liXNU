@@ -12,7 +12,7 @@ U=$(id -un)
 # The hosted macOS (scripts/xnulinux-boot.sh reads this, then /var/tmp/mac.conf for the disk's UUIDs); the environment
 # overrides what is written as ${NAME:-default}
 CPUS=${CPUS:-2}		# its CPUs (the Linux CPUs from 0 up; Linux keeps the rest and its device interrupts)
-RAM_MB=${RAM_MB:-7900}	# its memory, within fki's carve-out
+RAM_MB=${RAM_MB:-auto}	# auto: size it from fki's carve-out; or set a value in MiB
 #DISK=/var/tmp/mac.img
 GPU=${GPU:-auto}	# auto: the host GPU when the VM has a render node; off: CPU rendering only
 #XNU_ARGS="model=VirtualMac2,1"

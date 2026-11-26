@@ -11,9 +11,10 @@
 # Nothing of Apple's is read: the collection is linked into an empty one that mk-template.py makes from layout numbers
 # (layout.json) and XNU's own pseudo-extensions.
 set -euo pipefail
-POC=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd -P)
+POC=${POC:-$(dirname "$0")/../..}
+POC=$(cd -- "$POC" >/dev/null && pwd -L)
 DVM=${DVM:-$HOME/w/dvm}; W=${FREE_KC_WORK:-$HOME/w/free-kc}; OUT=${OUT:-/lib/firmware/xnu/kc-free.bin}
-DVM=$(CDPATH= cd -- "$DVM" && pwd -P)
+DVM=$(cd -- "$DVM" >/dev/null && pwd -P)
 PD_URL=https://github.com/AFK-surf/PureDarwin PD_REV=b3b4b2812fdd1c5c251dc3089b5a1a9e00d29970
 MBEDTLS_URL=https://github.com/Mbed-TLS/mbedtls MBEDTLS_REV=$(sed -n 's/^MBEDTLS_REV=//p' $POC/kexts/free/corecrypto/mbedtls.rev)
 export DVM NETINC=${NETINC:-$POC/build/netinc}

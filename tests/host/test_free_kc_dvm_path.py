@@ -28,8 +28,18 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             launch = root / "launch"
             vm = root / "vm"
             fake_bin = root / "bin"
+            poc_target = root / "repo with spaces"
+            poc_link = root / "poc"
             launch.mkdir()
             fake_bin.mkdir()
+            (poc_target / "kexts/free/corecrypto").mkdir(parents=True)
+            (poc_target / "scripts/free-kc").mkdir(parents=True)
+            (poc_target / "kexts/free/corecrypto/mbedtls.rev").write_text(
+                (ROOT / "kexts/free/corecrypto/mbedtls.rev").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            (poc_target / "scripts/free-kc/kcc.py").touch()
+            poc_link.symlink_to(poc_target, target_is_directory=True)
             kernel_framework = (
                 vm
                 / "out/x12377/build/xnu/k27h-dst/System/Library/Frameworks/Kernel.framework/Versions/A"
@@ -53,7 +63,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             python = fake_bin / "python3"
             python.write_text(
                 "#!/bin/sh\n"
-                "printf '%s\\n' \"$DVM\" > \"$DVM_CAPTURE\"\n"
+                "printf '%s\\n%s\\n' \"$DVM\" \"$POC\" > \"$DVM_CAPTURE\"\n"
                 "exit 73\n",
                 encoding="utf-8",
             )
@@ -69,6 +79,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                     "FAKE_MBEDTLS_REV": mbedtls_revision,
                     "FREE_KC_WORK": str(root / "free-kc-work"),
                     "OUT": str(root / "kc-free.bin"),
+                    "POC": str(poc_link),
                     "PATH": str(fake_bin) + os.pathsep + env["PATH"],
                 }
             )
@@ -83,7 +94,10 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 73, result.stdout)
-            self.assertEqual(capture.read_text(encoding="utf-8").strip(), str(vm.resolve()))
+            self.assertEqual(
+                capture.read_text(encoding="utf-8").splitlines(),
+                [str(vm.resolve()), str(poc_link.absolute())],
+            )
 
     def test_xnu_rebuild_resolves_symlink_with_cdpath_set(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -96,9 +110,9 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             fake_bin.mkdir()
             (launch / "vm-link").symlink_to(vm, target_is_directory=True)
             (root / "vm-link").symlink_to(alternate_vm, target_is_directory=True)
-            (vm / "out/k27/xnu").mkdir(parents=True)
+            (alternate_vm / "out/k27/xnu").mkdir(parents=True)
 
-            builder = vm / "k27/build-kernel27.sh"
+            builder = alternate_vm / "k27/build-kernel27.sh"
             builder.parent.mkdir(parents=True)
             builder.write_text(
                 "#!/bin/sh\n"
@@ -141,7 +155,10 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 73, result.stdout)
-            self.assertEqual(capture.read_text(encoding="utf-8").splitlines(), [str(vm.resolve())] * 2)
+            self.assertEqual(
+                capture.read_text(encoding="utf-8").splitlines(),
+                [str(alternate_vm.resolve())] * 2,
+            )
 
 
 if __name__ == "__main__":

@@ -56,5 +56,9 @@ if [[ "$QEMU_STATUS" == 124 || "$QEMU_STATUS" == 137 ]]; then
 fi
 [[ "$QEMU_STATUS" == 0 ]] || fail "QEMU exited with status $QEMU_STATUS"
 grep -Fq 'XNU_LINUX_TCG_BOOTED' "$SERIAL_LOG" || fail 'guest did not print XNU_LINUX_TCG_BOOTED'
+if grep -Fq 'Restarting system' "$SERIAL_LOG"; then
+  fail 'guest attempted to reboot instead of powering down'
+fi
+grep -Fq 'reboot: Power down' "$SERIAL_LOG" || fail 'guest did not power down cleanly'
 
 printf 'TCG smoke: disposable Linux guest printed XNU_LINUX_TCG_BOOTED. This is not a macOS, KVM, Intel, AMD, or performance result.\n'

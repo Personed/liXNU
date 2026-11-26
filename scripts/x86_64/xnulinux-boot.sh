@@ -80,7 +80,7 @@ APPLE_SMC_OSK_BYTES="$(printf '%s' "$APPLE_SMC_OSK" | wc -c | tr -d '[:space:]')
 QEMU="${QEMU:-qemu-system-x86_64}"
 QEMU_PATH="$(command -v -- "$QEMU" 2>/dev/null || true)"
 [[ -n "$QEMU_PATH" && -x "$QEMU_PATH" ]] || fail "QEMU executable not found: $QEMU"
-if ! QEMU_VERSION="$($QEMU_PATH --version 2>&1 | sed -nE '1s/^QEMU emulator version ([0-9]+)(\.|$).*/\1/p')"; then
+if ! QEMU_VERSION="$("$QEMU_PATH" --version 2>&1 | sed -nE '1s/^QEMU emulator version ([0-9]+)(\.|$).*/\1/p')"; then
   fail 'could not run QEMU --version'
 fi
 [[ -n "$QEMU_VERSION" ]] || fail 'could not determine QEMU version'
@@ -158,8 +158,10 @@ fi
 
 QEMU_DISPLAY="${QEMU_DISPLAY:-gtk}"
 VARS_FILE="$STATE_DIR/OVMF_VARS.fd"
-DISK_ID="$(printf '%s\0%s\0' "$DISK_PATH" "$(stat -Lc '%d:%i:%s:%Y' -- "$DISK_PATH")" | sha256sum | awk '{print substr($1, 1, 20)}')"
+DISK_STAT="$(stat -Lc '%d:%i:%s:%y:%z' -- "$DISK_PATH")" || fail 'could not inspect DISK metadata'
+DISK_ID="$(printf '%s\0' "$DISK_PATH" | sha256sum | awk '{print substr($1, 1, 20)}')"
 DISK_OVERLAY="$STATE_DIR/disk-$DISK_ID.qcow2"
+DISK_BASE_META="$STATE_DIR/disk-$DISK_ID.base"
 
 printf 'xnulinux x86_64: Preflight OK (QEMU %s, accel=%s, cpu=%s).\n' "$QEMU_VERSION" "$ACCEL" "$CPU_MODEL"
 if [[ "$ACCEL" == tcg ]]; then
@@ -175,6 +177,73 @@ if ! exec 9>"$STATE_DIR/.lock"; then
   fail "could not open STATE_DIR lock file: $STATE_DIR/.lock"
 fi
 "$FLOCK_PATH" -n 9 || fail "STATE_DIR is already in use by another QEMU process: $STATE_DIR"
+
+# Earlier launcher versions included inode/mtime in the overlay name. Refuse
+# to silently start a fresh overlay when one of those legacy states is present.
+LEGACY_DISK_ID="$(printf '%s\0%s\0' "$DISK_PATH" "$(stat -Lc '%d:%i:%s:%Y' -- "$DISK_PATH")" | sha256sum | awk '{print substr($1, 1, 20)}')"
+LEGACY_DISK_OVERLAY="$STATE_DIR/disk-$LEGACY_DISK_ID.qcow2"
+if [[ "$LEGACY_DISK_ID" != "$DISK_ID" && -e "$LEGACY_DISK_OVERLAY" ]]; then
+  fail "legacy overlay exists without base identity metadata: $LEGACY_DISK_OVERLAY (back it up and migrate deliberately before continuing)"
+fi
+
+write_disk_base_metadata() {
+  local disk_stat="$1" disk_sha256="$2" metadata_tmp
+  metadata_tmp="$(mktemp "$STATE_DIR/.disk-$DISK_ID.base.XXXXXX")" || fail 'could not create temporary base metadata'
+  if ! printf 'version=1\nformat=%s\nstat=%s\nsha256=%s\n' \
+    "$DISK_FORMAT" "$disk_stat" "$disk_sha256" >"$metadata_tmp"; then
+    rm -f -- "$metadata_tmp"
+    fail 'could not write disk base metadata'
+  fi
+  chmod 600 -- "$metadata_tmp" || {
+    rm -f -- "$metadata_tmp"
+    fail 'could not secure disk base metadata'
+  }
+  if ! mv -f -- "$metadata_tmp" "$DISK_BASE_META"; then
+    rm -f -- "$metadata_tmp"
+    fail 'could not install disk base metadata'
+  fi
+}
+
+if [[ -L "$DISK_BASE_META" || ( -e "$DISK_BASE_META" && ! -f "$DISK_BASE_META" ) ]]; then
+  fail "disk base metadata is not a regular file: $DISK_BASE_META"
+fi
+if [[ -e "$DISK_OVERLAY" && ! -e "$DISK_BASE_META" ]]; then
+  fail "existing overlay has no base identity metadata: $DISK_OVERLAY (back it up and migrate deliberately before continuing)"
+fi
+
+if [[ -e "$DISK_BASE_META" ]]; then
+  [[ -r "$DISK_BASE_META" ]] || fail "disk base metadata is not readable: $DISK_BASE_META"
+  BASE_META_VERSION=''
+  BASE_META_FORMAT=''
+  BASE_META_STAT=''
+  BASE_META_SHA256=''
+  while IFS='=' read -r metadata_key metadata_value; do
+    case "$metadata_key" in
+      version) BASE_META_VERSION="$metadata_value" ;;
+      format) BASE_META_FORMAT="$metadata_value" ;;
+      stat) BASE_META_STAT="$metadata_value" ;;
+      sha256) BASE_META_SHA256="$metadata_value" ;;
+    esac
+  done <"$DISK_BASE_META"
+  [[ "$BASE_META_VERSION" == 1 && "$BASE_META_FORMAT" == "$DISK_FORMAT" && -n "$BASE_META_STAT" && "$BASE_META_SHA256" =~ ^[a-f0-9]{64}$ ]] \
+    || fail "disk base metadata is invalid or does not match DISK_FORMAT: $DISK_BASE_META"
+  if [[ "$DISK_STAT" != "$BASE_META_STAT" ]]; then
+    if ! CURRENT_DISK_SHA256="$(sha256sum -- "$DISK_PATH" | awk '{print $1}')"; then
+      fail 'could not verify the restored DISK image'
+    fi
+    [[ "$CURRENT_DISK_SHA256" =~ ^[a-f0-9]{64}$ ]] || fail 'could not calculate a valid DISK checksum'
+    [[ "$CURRENT_DISK_SHA256" == "$BASE_META_SHA256" ]] \
+      || fail "DISK contents changed for the existing overlay: $DISK_OVERLAY (restore the matching base image or use a new STATE_DIR to start fresh)"
+    write_disk_base_metadata "$DISK_STAT" "$BASE_META_SHA256"
+  fi
+else
+  if ! BASE_DISK_SHA256="$(sha256sum -- "$DISK_PATH" | awk '{print $1}')"; then
+    fail 'could not calculate the DISK checksum'
+  fi
+  [[ "$BASE_DISK_SHA256" =~ ^[a-f0-9]{64}$ ]] || fail 'could not calculate a valid DISK checksum'
+  write_disk_base_metadata "$DISK_STAT" "$BASE_DISK_SHA256"
+fi
+
 if [[ ! -e "$VARS_FILE" ]]; then
   VARS_TMP="$VARS_FILE.tmp.$$"
   install -m 600 -- "$OVMF_VARS_TEMPLATE" "$VARS_TMP" || {
@@ -200,6 +269,20 @@ if [[ ! -e "$DISK_OVERLAY" ]]; then
   rm -f -- "$OVERLAY_TMP"
 fi
 
+SMC_CONFIG="$(mktemp "$STATE_DIR/qemu-smc.XXXXXX")" || fail 'could not create temporary Apple SMC configuration'
+SMC_OSK_CONFIG="${APPLE_SMC_OSK//\\/\\\\}"
+SMC_OSK_CONFIG="${SMC_OSK_CONFIG//\"/\\\"}"
+if ! printf '[device "xnulinux-applesmc"]\n  driver = "isa-applesmc"\n  osk = "%s"\n' "$SMC_OSK_CONFIG" >"$SMC_CONFIG"; then
+  rm -f -- "$SMC_CONFIG"
+  fail 'could not write temporary Apple SMC configuration'
+fi
+chmod 600 -- "$SMC_CONFIG" || {
+  rm -f -- "$SMC_CONFIG"
+  fail 'could not secure temporary Apple SMC configuration'
+}
+unset APPLE_SMC_OSK SMC_OSK_CONFIG
+trap 'rm -f -- "$SMC_CONFIG"' EXIT
+
 QEMU_ARGS=(
   -name xnulinux-tahoe26
   -machine q35
@@ -209,7 +292,7 @@ QEMU_ARGS=(
   -m "$RAM_MB"
   -drive "file=${OVMF_CODE//,/,,},if=pflash,format=raw,readonly=on"
   -drive "file=${VARS_FILE//,/,,},if=pflash,format=raw"
-  -device "isa-applesmc,osk=${APPLE_SMC_OSK//,/,,}"
+  -readconfig "$SMC_CONFIG"
   -device ich9-ahci,id=sata
   -drive "file=${DISK_OVERLAY//,/,,},format=qcow2,if=none,id=disk0"
   -device ide-hd,drive=disk0,bus=sata.2
@@ -224,4 +307,4 @@ QEMU_ARGS=(
   -serial stdio
 )
 
-exec "$QEMU_PATH" "${QEMU_ARGS[@]}"
+"$QEMU_PATH" "${QEMU_ARGS[@]}"

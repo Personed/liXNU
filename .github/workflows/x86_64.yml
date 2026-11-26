@@ -12,7 +12,10 @@ jobs:
         with:
           fetch-depth: 0
       - name: Shell syntax
-        run: bash -n scripts/x86_64/xnulinux-boot.sh tests/x86_64/test-launcher.sh tests/x86_64/tcg-smoke.sh tests/x86_64/test-tcg-smoke.sh
+        run: |
+          for script in scripts/x86_64/xnulinux-boot.sh tests/x86_64/test-launcher.sh tests/x86_64/tcg-smoke.sh tests/x86_64/test-tcg-smoke.sh; do
+            bash -n "$script"
+          done
       - name: Launcher contract tests
         run: bash tests/x86_64/test-launcher.sh
       - name: TCG smoke harness tests

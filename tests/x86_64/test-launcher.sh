@@ -21,7 +21,7 @@ assert_contains() {
 }
 
 FIXTURE_DIR="$TMP_DIR/fixture with,comma"
-BIN_DIR="$TMP_DIR/bin"
+BIN_DIR="$TMP_DIR/bin path,comma"
 mkdir -p -- "$FIXTURE_DIR" "$BIN_DIR"
 
 FAKE_QEMU="$BIN_DIR/qemu-system-x86_64"
@@ -34,6 +34,22 @@ if [[ "${1-}" == "--version" ]]; then
   exit 0
 fi
 printf '%s\0' "$@" >"$QEMU_LOG"
+SMC_CONFIG=''
+for ((index = 1; index <= $#; index++)); do
+  if [[ "${!index}" == -readconfig ]]; then
+    next=$((index + 1))
+    SMC_CONFIG="${!next}"
+    break
+  fi
+done
+[[ -n "$SMC_CONFIG" && -r "$SMC_CONFIG" ]] || { printf 'QEMU SMC config missing\n' >&2; exit 3; }
+cat -- "$SMC_CONFIG" >"$QEMU_SMC_CONFIG_LOG"
+stat -c '%a' -- "$SMC_CONFIG" >"$QEMU_SMC_CONFIG_MODE"
+if [[ -v APPLE_SMC_OSK ]]; then
+  printf 'present\n' >"$QEMU_OSK_ENV_LOG"
+else
+  printf 'absent\n' >"$QEMU_OSK_ENV_LOG"
+fi
 printf 'fake qemu invoked\n'
 if [[ "${QEMU_HOLD_SECONDS:-0}" =~ ^[1-9][0-9]*$ ]]; then
   sleep "$QEMU_HOLD_SECONDS"
@@ -71,6 +87,11 @@ STATE_DIR="$TMP_DIR/vm state,comma"
 QEMU_LOG="$TMP_DIR/qemu args.bin"
 QEMU_IMG_LOG="$TMP_DIR/qemu-img args.txt"
 QEMU_IMG_COUNT="$TMP_DIR/qemu-img count"
+QEMU_SMC_CONFIG_LOG="$TMP_DIR/qemu smc config.log"
+QEMU_SMC_CONFIG_MODE="$TMP_DIR/qemu smc mode.log"
+QEMU_OSK_ENV_LOG="$TMP_DIR/qemu osk environment.log"
+KVM_STATE_DIR="$TMP_DIR/kvm vm state"
+KVM_QEMU_IMG_COUNT="$TMP_DIR/kvm qemu-img count"
 SMC_KEY='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 
 printf 'immutable source disk\0with binary-like bytes\n' >"$DISK"
@@ -91,6 +112,9 @@ BASE_ENV=(
   "QEMU_LOG=$QEMU_LOG"
   "QEMU_IMG_LOG=$QEMU_IMG_LOG"
   "QEMU_IMG_COUNT=$QEMU_IMG_COUNT"
+  "QEMU_SMC_CONFIG_LOG=$QEMU_SMC_CONFIG_LOG"
+  "QEMU_SMC_CONFIG_MODE=$QEMU_SMC_CONFIG_MODE"
+  "QEMU_OSK_ENV_LOG=$QEMU_OSK_ENV_LOG"
   "DISK=$DISK"
   "DISK_FORMAT=raw"
   "OVMF_CODE=$OVMF_CODE"
@@ -203,7 +227,8 @@ assert value_after("-machine") == "q35"
 assert value_after("-accel") == "tcg"
 assert value_after("-cpu") == "max"
 assert value_after("-display") == "gtk,show-cursor=on with-space"
-assert f"isa-applesmc,osk={smc_key}" in args
+assert "-readconfig" in args
+assert smc_key not in " ".join(args)
 assert any(arg.startswith("file=") and "/disk-" in arg and arg.endswith(".qcow2,format=qcow2,if=none,id=disk0") for arg in args)
 assert any(arg.startswith("file=") and "fixture with,,comma/OVMF code.fd" in arg and "if=pflash" in arg for arg in args)
 assert any(arg.startswith("file=") and f"{escaped_state_dir}/OVMF_VARS.fd" in arg and "if=pflash" in arg for arg in args)
@@ -214,6 +239,11 @@ assert value_after("-vga") == "std"
 assert "qcow2" in img_args and "raw" in img_args
 print("fake QEMU argument contract passed")
 PY
+
+grep -Fq "osk = \"$SMC_KEY\"" "$QEMU_SMC_CONFIG_LOG" || fail 'temporary SMC config did not contain the configured key'
+[[ "$(<"$QEMU_SMC_CONFIG_MODE")" == 600 ]] || fail 'temporary SMC config permissions were not 0600'
+[[ "$(<"$QEMU_OSK_ENV_LOG")" == absent ]] || fail 'Apple SMC key was inherited by the QEMU process environment'
+! compgen -G "$STATE_DIR/qemu-smc.*" >/dev/null || fail 'temporary SMC config was not removed after QEMU exited'
 
 [[ "$SOURCE_BEFORE" == "$(sha256sum -- "$DISK" | awk '{print $1}')" ]] || fail 'source disk was modified'
 
@@ -251,4 +281,44 @@ env "${BASE_ENV[@]}" ACCEL=tcg "$LAUNCHER" >"$TMP_DIR/launch-second.out" 2>&1 ||
 [[ "$(<"$QEMU_IMG_COUNT")" == 1 ]] || fail 'existing overlay was recreated on the second launch'
 [[ "$(<"$LAUNCH_OUTPUT")" != *"$SMC_KEY"* ]] || fail 'launcher printed the Apple SMC key'
 
-printf 'PASS: launcher preflight, argument construction, and persistent image isolation\n'
+# Replacing the source file with byte-identical content must retain the same
+# persistent overlay even though the restored file has a different inode.
+RESTORED_DISK="$TMP_DIR/restored disk.raw"
+cp -p -- "$DISK" "$RESTORED_DISK"
+mv -f -- "$RESTORED_DISK" "$DISK"
+env "${BASE_ENV[@]}" ACCEL=tcg "$LAUNCHER" >"$TMP_DIR/launch-restored-base.out" 2>&1 || {
+  cat "$TMP_DIR/launch-restored-base.out" >&2
+  fail 'byte-identical restored base image was not accepted'
+}
+[[ "$(<"$QEMU_IMG_COUNT")" == 1 ]] || fail 'byte-identical restored base caused a new overlay to be created'
+
+# KVM gets an actual argument-construction check with injected, readable
+# fixtures; this does not claim hardware virtualization support.
+KVM_OUTPUT="$TMP_DIR/kvm-launch.out"
+env "${BASE_ENV[@]}" ACCEL=kvm STATE_DIR="$KVM_STATE_DIR" QEMU_IMG_COUNT="$KVM_QEMU_IMG_COUNT" "$LAUNCHER" >"$KVM_OUTPUT" 2>&1 || {
+  cat "$KVM_OUTPUT" >&2
+  fail 'valid KVM launcher argument construction failed'
+}
+python3 - "$QEMU_LOG" <<'PY'
+from pathlib import Path
+import sys
+
+args = [arg.decode() for arg in Path(sys.argv[1]).read_bytes().split(b"\0") if arg]
+assert args[args.index("-accel") + 1] == "kvm,device=/dev/null"
+assert args[args.index("-cpu") + 1] == "host"
+print("fake KVM argument contract passed")
+PY
+
+# A changed base is a hard error before the guest starts, preserving the
+# existing overlay and making the recovery choice explicit.
+printf 'changed base image content\n' >"$DISK"
+QEMU_LOG_BEFORE_CHANGED_BASE="$(sha256sum -- "$QEMU_LOG" | awk '{print $1}')"
+CHANGED_BASE_OUTPUT="$TMP_DIR/changed-base.out"
+if env "${BASE_ENV[@]}" ACCEL=tcg "$LAUNCHER" >"$CHANGED_BASE_OUTPUT" 2>&1; then
+  fail 'changed base image unexpectedly reused the existing overlay'
+fi
+assert_contains "$CHANGED_BASE_OUTPUT" 'DISK contents changed for the existing overlay'
+[[ "$(sha256sum -- "$QEMU_LOG" | awk '{print $1}')" == "$QEMU_LOG_BEFORE_CHANGED_BASE" ]] || fail 'changed base reached QEMU'
+[[ "$(<"$QEMU_IMG_COUNT")" == 1 ]] || fail 'changed base created an additional overlay'
+
+printf 'PASS: launcher preflight, TCG/KVM arguments, protected SMC handling, and persistent disk identity\n'

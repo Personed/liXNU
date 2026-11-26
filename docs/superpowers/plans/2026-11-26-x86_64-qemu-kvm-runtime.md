@@ -40,12 +40,12 @@
 - Consumes environment: `DISK`, `DISK_FORMAT` (`qcow2` by default; `raw` or `qcow2`), `ACCEL` (`kvm` by default or explicit `tcg`), `CPU_MODEL`, `CPUS`, `RAM_MB`, `OVMF_CODE`, `OVMF_VARS_TEMPLATE`, `STATE_DIR`, `QEMU_DISPLAY`, `APPLE_SMC_OSK` (64 bytes), `QEMU`, `QEMU_IMG`, `FLOCK`, `KVM_DEVICE`, `CPUINFO_FILE`.
 - `scripts/x86_64/xnulinux-boot.sh [--check]` validates inputs and host capabilities. Without `--check`, it execs QEMU; errors exit nonzero before QEMU starts.
 - KVM profile defaults to QEMU's `host` passthrough CPU. TCG defaults to QEMU's `max` CPU profile. User overrides use `CPU_MODEL`.
-- The script creates a persistent writable OVMF vars copy and persistent qcow2 disk overlay in `STATE_DIR` only if they do not exist; it never modifies the template or source disk. `qemu-img` creates the overlay atomically, and a `flock` lock allows only one running QEMU instance per state directory.
+- The script creates a persistent writable OVMF vars copy and persistent qcow2 disk overlay in `STATE_DIR` only if they do not exist; it never modifies the template or source disk. `qemu-img` creates the overlay atomically, and a `flock` lock allows only one running QEMU instance per state directory. A SHA-256 sidecar verifies same-content source-image restoration and rejects changed base contents instead of silently switching overlays. The Apple SMC key is passed through a mode-0600 temporary config, not QEMU's process arguments or environment, and the file is removed on exit.
 
 - [x] Write failing launcher tests for missing disk, missing firmware, missing SMC key/length, invalid disk format, missing `qemu-img`/`flock`, unavailable KVM, unsupported host CPU flags, wrong host architecture, unusable state directory, partial overlay cleanup, concurrent state locking, source-image preservation, persistent overlay reuse, and a valid TCG launch.
 - [x] Run `bash tests/x86_64/test-launcher.sh` and confirm the expected failures and argument checks.
 - [x] Implement the launcher with strict shell mode, explicit preflight checks, Q35/OVMF pflash, Apple SMC, AHCI disk backed by a qcow2 overlay, E1000 network, USB input and VGA display.
-- [x] Run the test script and confirm the fake QEMU receives the expected arguments, source images remain untouched, overlay/state files persist, and the SMC value is not printed by the launcher.
+- [x] Run the test script and confirm fake QEMU argument construction, source-image preservation, stable overlay identity after byte-identical restoration, rejection of changed base contents, mode-0600 SMC config cleanup, and absence of the key from QEMU's argv/environment and launcher output.
 
 ### Task 2: Exercise the QEMU TCG development path
 

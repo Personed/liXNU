@@ -125,7 +125,7 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
   override `OVMF_CODE` and `OVMF_VARS_TEMPLATE` when needed.
 - A user-prepared bootable macOS Tahoe 26 x86_64 raw or qcow2 image with a working EFI/OpenCore setup. AMD images must
   include matching OpenCore AMD kernel patches. No Apple system image is provided here.
-- The 64-byte Apple SMC OSK value supplied locally through `APPLE_SMC_OSK`; do not commit it or paste it into logs.
+- The 64-byte Apple SMC OSK value supplied locally through `APPLE_SMC_OSK`; do not commit it or paste it into logs. The launcher writes it to a mode-0600 temporary QEMU config, keeps it out of QEMU's argv and environment, and removes the config when QEMU exits.
 - Enough physical RAM for the configured guest allocation plus Linux/QEMU overhead. The default guest allocation is
   8 GiB and can be changed with `RAM_MB`.
 
@@ -156,7 +156,11 @@ This path requires a bootable image prepared separately by the user. QEMU writes
 overlay under `$XDG_STATE_HOME/xnulinux/x86_64` when `XDG_STATE_HOME` is set, or `~/.local/state/xnulinux/x86_64`
 otherwise; OVMF variable state is stored there too. Only one QEMU process can use a state directory at a time; set a
 different `STATE_DIR` for another VM. The source image and firmware templates stay untouched. The overlay grows as the
-guest writes data.
+guest writes data. Overlay identity is tied to the canonical source path, format, and a SHA-256 sidecar. If the source
+file metadata changes, the launcher hashes it: identical restored bytes keep the existing overlay, while changed bytes
+fail before QEMU starts. The initial launch and any metadata change can require reading the full source image to hash it;
+later launches with unchanged metadata skip that read. Restore the matching source image or choose a new `STATE_DIR` to
+start a fresh VM state.
 
 Set the disk, source format, and local Apple SMC OSK value, then preflight the host:
 

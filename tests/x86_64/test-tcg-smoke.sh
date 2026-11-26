@@ -23,8 +23,9 @@ cat >"$FAKE_QEMU" <<'FAKE_QEMU'
 set -Eeuo pipefail
 printf '%s\0' "$@" >"$QEMU_ARGS_LOG"
 case "${FAKE_QEMU_MODE:-marker}" in
-  marker) printf 'XNU_LINUX_TCG_BOOTED\n' ;;
+  marker) printf 'XNU_LINUX_TCG_BOOTED\nreboot: Power down\n' ;;
   no-marker) printf 'guest started without the completion marker\n' ;;
+  reboot) printf 'XNU_LINUX_TCG_BOOTED\nRestarting system\n' ;;
   hang) sleep 10 ;;
 esac
 FAKE_QEMU
@@ -54,6 +55,7 @@ QEMU="$FAKE_QEMU" QEMU_ARGS_LOG="$ARGS_LOG" "$SMOKE" "$KERNEL" "$INITRD" >"$SUCC
   fail 'marker-producing guest was not accepted'
 }
 grep -Fq 'XNU_LINUX_TCG_BOOTED' "$SUCCESS_OUTPUT" || fail 'success output lost the guest marker'
+grep -Fq 'reboot: Power down' "$SUCCESS_OUTPUT" || fail 'success output lost the shutdown marker'
 
 python3 - "$ARGS_LOG" "$KERNEL" "$INITRD" <<'PY'
 from pathlib import Path
@@ -72,6 +74,12 @@ if QEMU="$FAKE_QEMU" QEMU_ARGS_LOG="$ARGS_LOG" FAKE_QEMU_MODE=no-marker "$SMOKE"
   fail 'guest without completion marker unexpectedly passed'
 fi
 grep -Fq 'did not print XNU_LINUX_TCG_BOOTED' "$NO_MARKER_OUTPUT" || fail 'missing marker failure is unclear'
+
+REBOOT_OUTPUT="$TMP_DIR/reboot.out"
+if QEMU="$FAKE_QEMU" QEMU_ARGS_LOG="$ARGS_LOG" FAKE_QEMU_MODE=reboot "$SMOKE" "$KERNEL" "$INITRD" >"$REBOOT_OUTPUT" 2>&1; then
+  fail 'rebooting guest unexpectedly passed the shutdown check'
+fi
+grep -Fq 'attempted to reboot instead of powering down' "$REBOOT_OUTPUT" || fail 'guest reboot failure is unclear'
 
 TIMEOUT_OUTPUT="$TMP_DIR/timeout.out"
 if QEMU="$FAKE_QEMU" QEMU_ARGS_LOG="$ARGS_LOG" FAKE_QEMU_MODE=hang TIMEOUT_SECONDS=1 "$SMOKE" "$KERNEL" "$INITRD" >"$TIMEOUT_OUTPUT" 2>&1; then

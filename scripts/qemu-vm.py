@@ -99,6 +99,9 @@ def build_command(args):
             "-device", "usb-kbd",
             "-device", "usb-tablet",
         ]
+        window_title = getattr(args, "window_title", None)
+        if window_title:
+            command += ["-name", window_title]
     else:
         command += ["-display", "none"]
     return command
@@ -115,8 +118,11 @@ def main():
     parser.add_argument("--cpus", type=positive_int, default=4, help="guest CPUs (default: 4)")
     parser.add_argument("--ssh-port", type=positive_int, help="forward this host loopback port to guest TCP port 22")
     parser.add_argument("--graphical", action="store_true", help="enable a QEMU window and virtual display")
+    parser.add_argument("--window-title", help="set the QEMU window title (requires --graphical)")
     parser.add_argument("--qemu", default="qemu-system-aarch64", help="path to the QEMU executable")
     args = parser.parse_args()
+    if args.window_title and not args.graphical:
+        parser.error("--window-title requires --graphical")
     if args.ssh_port is not None and args.ssh_port > 65535:
         parser.error("--ssh-port must be between 1 and 65535")
 

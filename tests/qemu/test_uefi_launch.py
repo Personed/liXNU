@@ -71,7 +71,7 @@ class UefiLaunchTest(unittest.TestCase):
                     return code, variables
         self.fail("could not find matching AArch64 UEFI images; see `qemu-system-aarch64 -L help`")
 
-    def wait_for_qemu_window(self, qemu):
+    def wait_for_qemu_window(self, qemu, expected_title):
         deadline = time.monotonic() + 15
         tree_output = ""
         title_pattern = re.compile(r'^\s*(0x[0-9a-fA-F]+)\s+"([^\"]+)"')
@@ -88,7 +88,7 @@ class UefiLaunchTest(unittest.TestCase):
                 tree_output = tree.stdout or ""
                 for line in tree_output.splitlines():
                     match = title_pattern.match(line)
-                    if not match or not re.match(r"^QEMU(?:\b|\s)", match.group(2), re.IGNORECASE):
+                    if not match or match.group(2) != expected_title:
                         continue
                     detail = subprocess.run(
                         ["xwininfo", "-id", match.group(1)],
@@ -153,15 +153,16 @@ class UefiLaunchTest(unittest.TestCase):
                 "--memory", "1024",
                 "--cpus", "1",
             ]
+            window_title = "xnulinux-uefi-window-test"
             if graphical:
-                command.append("--graphical")
+                command += ["--graphical", "--window-title", window_title]
             qemu = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             window_found = False
             window_output = ""
             timed_out = False
             try:
                 if graphical:
-                    window_found, window_output = self.wait_for_qemu_window(qemu)
+                    window_found, window_output = self.wait_for_qemu_window(qemu, window_title)
                 try:
                     qemu.wait(timeout=30)
                 except subprocess.TimeoutExpired:

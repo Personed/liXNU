@@ -208,6 +208,11 @@ def save_report(report: dict, serial_log: Path, *, write_summary: bool = True) -
         f"{available_before_artifacts / (1024 ** 3):.1f} GiB"
         if available_before_artifacts is not None else "unavailable"
     )
+    available_at_runner_start = host["memory_available_at_runner_start_bytes"]
+    available_at_runner_start_text = (
+        f"{available_at_runner_start / (1024 ** 3):.1f} GiB"
+        if available_at_runner_start is not None else "unavailable"
+    )
     available_before_qemu = host["memory_available_before_qemu_bytes"]
     available_before_qemu_text = (
         f"{available_before_qemu / (1024 ** 3):.1f} GiB"
@@ -227,7 +232,8 @@ def save_report(report: dict, serial_log: Path, *, write_summary: bool = True) -
         f"- Host CPU: {host['processor']}",
         f"- Host resources: {host['logical_cpus']} logical CPUs / {memory_text} total RAM",
         f"- Available RAM snapshots: {available_before_artifacts_text} before artifact preparation / "
-        f"{available_before_qemu_text} before QEMU / {available_after_qemu_text} after QEMU attempt",
+        f"{available_at_runner_start_text} at Python runner start / {available_before_qemu_text} before QEMU / "
+        f"{available_after_qemu_text} after QEMU attempt",
         f"- RAM capacity screen: {'passed' if report['ram_capacity']['capacity_screen_passed'] else 'capacity-limited'}",
         f"- QEMU: {report['qemu_version']}",
         f"- Profile: {report['profile']}",
@@ -296,6 +302,7 @@ def main() -> int:
     report_host.pop("memory_available_bytes", None)
     report_host.update({
         "memory_available_before_artifact_preparation_bytes": memory_available_before_artifacts,
+        "memory_available_at_runner_start_bytes": host["memory_available_bytes"],
         "memory_available_before_qemu_bytes": None,
         "memory_available_after_qemu_attempt_bytes": None,
     })

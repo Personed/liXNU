@@ -5,6 +5,7 @@
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import subprocess
 import sys
@@ -17,6 +18,7 @@ INIT_REPORT = ROOT / "tests" / "puredarwin" / "init-host-report.sh"
 
 
 def input_files(directory: Path, *, with_disk: bool) -> tuple[Path, Path, Path, Path]:
+    directory.mkdir(parents=True, exist_ok=True)
     inputs = directory / "inputs"
     inputs.mkdir()
     kernel = inputs / "Image"
@@ -41,28 +43,41 @@ def input_files(directory: Path, *, with_disk: bool) -> tuple[Path, Path, Path, 
     return kernel, initramfs, disk, inputs
 
 
-def environment_for(temp: Path) -> dict[str, str]:
+def environment_for(temp: Path, *, write_preflight: bool = True) -> dict[str, str]:
     runner_temp = temp / "runner-temp"
     runner_temp.mkdir()
     env = os.environ.copy()
+    runner_os = {"Linux": "Linux", "Darwin": "macOS"}.get(platform.system(), "Linux")
     env.update({
         "RUNNER_TEMP": str(runner_temp),
-        "RUNNER_OS": "Linux",
+        "RUNNER_OS": runner_os,
         "XNULINUX_RUNNER_LABEL": "report-test",
         "GITHUB_STEP_SUMMARY": str(temp / "summary.md"),
     })
-    (runner_temp / "puredarwin-tcg-boot-report.json").write_text(
-        json.dumps({"host": {"memory_available_before_artifact_preparation_bytes": 9_876_543_210}}),
+    if write_preflight:
+        (runner_temp / "puredarwin-tcg-boot-report.json").write_text(
+            json.dumps({"host": {"memory_available_before_artifact_preparation_bytes": 9_876_543_210}}),
+            encoding="utf-8",
+        )
+    return env
+
+
+def fake_qemu(path: Path) -> Path:
+    path.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = --version ]; then echo 'QEMU emulator version report-test'; exit 0; fi\n"
+        "exit 0\n",
         encoding="utf-8",
     )
-    return env
+    path.chmod(0o755)
+    return path
 
 
 class TcgE2eReportTests(unittest.TestCase):
     def test_posix_preflight_reports_decimal_byte_counts_and_phase(self):
         with tempfile.TemporaryDirectory() as temporary:
             temp = Path(temporary)
-            env = environment_for(temp)
+            env = environment_for(temp, write_preflight=False)
             subprocess.run(["bash", str(INIT_REPORT)], env=env, check=True, capture_output=True, text=True)
 
             report_path = Path(env["RUNNER_TEMP"]) / "puredarwin-tcg-boot-report.json"
@@ -73,6 +88,27 @@ class TcgE2eReportTests(unittest.TestCase):
             self.assertIsInstance(host["memory_available_before_artifact_preparation_bytes"], int)
             self.assertNotIn("memory_available_at_report_bytes", host)
             self.assertIn("before artifact preparation", report["preparation_steps"]["status"])
+
+            # Pass the actual POSIX producer output through the runner before it overwrites the report.
+            kernel, initramfs, disk, _ = input_files(temp / "artifacts", with_disk=True)
+            qemu = fake_qemu(temp / "qemu-system-aarch64")
+            result = subprocess.run(
+                [sys.executable, str(RUNNER), str(kernel), str(initramfs), str(disk), str(temp / "serial.log"),
+                 "--timeout-seconds", "5", "--qemu", str(qemu)],
+                env=env, capture_output=True, text=True, check=False,
+            )
+            final_report = json.loads(report_path.read_text(encoding="utf-8"))
+            summary = Path(env["GITHUB_STEP_SUMMARY"]).read_text(encoding="utf-8")
+            final_host = final_report["host"]
+            self.assertEqual(result.returncode, 1)  # The fake QEMU emits no guest markers.
+            self.assertEqual(
+                final_host["memory_available_before_artifact_preparation_bytes"],
+                host["memory_available_before_artifact_preparation_bytes"],
+            )
+            self.assertIsInstance(final_host["memory_available_at_runner_start_bytes"], int)
+            self.assertIsInstance(final_host["memory_available_before_qemu_bytes"], int)
+            self.assertIsInstance(final_host["memory_available_after_qemu_attempt_bytes"], int)
+            self.assertIn("at Python runner start", summary)
 
     def test_missing_disk_hash_records_failure_instead_of_raising(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -93,26 +129,25 @@ class TcgE2eReportTests(unittest.TestCase):
             self.assertNotIn("Traceback", result.stderr)
             self.assertIn("could not be computed", " ".join(report["result"]["errors"]))
             self.assertEqual(report["host"]["memory_available_before_artifact_preparation_bytes"], 9_876_543_210)
+            self.assertIsInstance(report["host"]["memory_available_at_runner_start_bytes"], int)
+            expected_capacity = (
+                report["host"]["memory_total_bytes"] >= 20 * 1024 ** 3
+                and report["host"]["memory_available_at_runner_start_bytes"] >= 4 * 1024 ** 3
+            )
+            self.assertEqual(report["ram_capacity"]["capacity_screen_passed"], expected_capacity)
             self.assertIsNone(report["host"]["memory_available_before_qemu_bytes"])
             self.assertIsNone(report["host"]["memory_available_after_qemu_attempt_bytes"])
 
     def test_report_labels_memory_before_and_after_qemu_attempt(self):
         with tempfile.TemporaryDirectory() as temporary:
             temp = Path(temporary)
-            kernel, initramfs, disk, inputs = input_files(temp, with_disk=True)
+            kernel, initramfs, disk, _ = input_files(temp, with_disk=True)
             env = environment_for(temp)
-            fake_qemu = temp / "qemu-system-aarch64"
-            fake_qemu.write_text(
-                "#!/bin/sh\n"
-                "if [ \"$1\" = --version ]; then echo 'QEMU emulator version report-test'; exit 0; fi\n"
-                "exit 0\n",
-                encoding="utf-8",
-            )
-            fake_qemu.chmod(0o755)
+            qemu = fake_qemu(temp / "qemu-system-aarch64")
             serial_log = temp / "serial.log"
             result = subprocess.run(
                 [sys.executable, str(RUNNER), str(kernel), str(initramfs), str(disk), str(serial_log),
-                 "--timeout-seconds", "5", "--qemu", str(fake_qemu)],
+                 "--timeout-seconds", "5", "--qemu", str(qemu)],
                 env=env, capture_output=True, text=True, check=False,
             )
 
@@ -123,9 +158,11 @@ class TcgE2eReportTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)  # The fake QEMU emits no guest markers.
             self.assertEqual(report["qemu_version"], "QEMU emulator version report-test")
             self.assertEqual(report["host"]["memory_available_before_artifact_preparation_bytes"], 9_876_543_210)
+            self.assertIsInstance(report["host"]["memory_available_at_runner_start_bytes"], int)
             self.assertIsInstance(report["host"]["memory_available_before_qemu_bytes"], int)
             self.assertIsInstance(report["host"]["memory_available_after_qemu_attempt_bytes"], int)
             self.assertIn("before artifact preparation", summary)
+            self.assertIn("at Python runner start", summary)
             self.assertIn("before QEMU", summary)
             self.assertIn("after QEMU attempt", summary)
 

@@ -27,6 +27,26 @@ on:
 permissions:
   contents: read
 jobs:
+  host-report-tests:
+    name: Host report tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15-intel]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test POSIX preflight and Python report
+        if: runner.os != 'Windows'
+        run: python3 tests/puredarwin/test-tcg-e2e-report.py
+      - name: Test Windows preflight and Python report
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh -File tests/puredarwin/test-host-report.ps1
+
   image:
     name: Build pinned ARM64 guest image
     runs-on: ubuntu-24.04

@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -31,9 +32,22 @@ class UefiLaunchTest(unittest.TestCase):
                     )
                 except (OSError, subprocess.TimeoutExpired):
                     if qemu.poll() is None:
-                        qemu.kill()
+                        try:
+                            qemu.kill()
+                        except OSError:
+                            pass
         elif qemu.poll() is None:
             qemu.send_signal(signal.SIGTERM)
+
+    @mock.patch("os.name", "nt")
+    @mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired("taskkill", 10))
+    def test_windows_cleanup_kills_launcher_when_taskkill_times_out(self, run):
+        qemu = mock.Mock(pid=123, poll=mock.Mock(return_value=None))
+
+        UefiLaunchTest().terminate_qemu(qemu)
+
+        run.assert_called_once()
+        qemu.kill.assert_called_once_with()
 
     def firmware_pair(self):
         code_override = os.environ.get("QEMU_FIRMWARE_CODE")

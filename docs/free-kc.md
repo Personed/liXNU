@@ -44,7 +44,8 @@ kernel has; and a kext's load tag.
    binary cache, https://hydra.lab004.dev, has its toolchain and what the fork did not change; the images there are
    upstream's).
 2. `scripts/mk-puredarwin-disk.sh root.tar.gz pd.img > pd.conf` (Mac) makes the HFS+ disk and prints its UUIDs.
-3. In the VM, after `scripts/vm-xnu-rebuild.sh`: `scripts/free-kc/build.sh`, which writes `/lib/firmware/xnu/kc-free.bin`.
+3. In the VM, run `scripts/vm-xnu-rebuild.sh` to build XNU and the native kexts. Then run
+   `scripts/free-kc/build.sh` to link `/lib/firmware/xnu/kc-free.bin`. Both steps can run without Apple’s kernelcache.
 4. Boot it: `MAC_CONF=pd.conf DISK=pd.img IMAGE=xnu/kc-free.bin TRUSTCACHE= GPU=off scripts/xnulinux-boot.sh`. The console
    (`CONSOLE_IN`) is PureDarwin's zsh. Its `halt` and `reboot` end the run.
 

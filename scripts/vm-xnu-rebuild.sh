@@ -5,7 +5,7 @@
 # (k27/segaddrs.sh) follow the kernel's size: when kc27-layout.py moves them, the kernel is linked again.
 set -e -o pipefail	# a failed kernel build stops here: never repackage the previous kernel
 POC=${POC:-$(cd "$(dirname "$0")/.." && pwd)}	# this repository: its patches, kexts and linker
-cd ~/w/dvm
+cd "${DVM:-$HOME/w/dvm}"
 export PATH=$PATH:/usr/lib/llvm-21/bin
 T=out/k27/xnu
 # back to the tree's own sources: every file the patches touched last time (.linux64-patched) or touch now, then the
@@ -35,40 +35,66 @@ rm -rf $T/osfmk/corecrypto $T/osfmk/arm64/corecrypto
 mirror "$P"/corecrypto/include/corecrypto $T/EXTERNAL_HEADERS/corecrypto
 mirror "$P"/corecrypto/kernel $T/osfmk/xnulinux_crypto
 t=$SECONDS; JOBS=12 bash k27/build-kernel27.sh 2>&1 | tail -15; echo "kernel: $((SECONDS - t)) s"
-if [ -e out/kc/kc27.bin ]; then
+APPLE_KC=out/kc/kc27.bin
+have_apple_kc=false
+if [ -e "$APPLE_KC" ]; then
+  have_apple_kc=true
   cp k27/segaddrs.sh /tmp/segaddrs.before
-  python3 k27/kc27-layout.py out/kc/kc27.bin out/k27/kernel-k27.macho --write k27/segaddrs.sh | tail -2
+  python3 k27/kc27-layout.py "$APPLE_KC" out/k27/kernel-k27.macho --write k27/segaddrs.sh | tail -2
   if ! cmp -s /tmp/segaddrs.before k27/segaddrs.sh; then
     echo "kernel slots moved: linking the kernel again"
     JOBS=12 bash k27/build-kernel27.sh 2>&1 | tail -3
   fi
-  # xnulinux's own kexts (kexts/*/NAME.json + NAME.cpp), built against the k27 kernel's objects and linked into the collection
-  NATIVE=()
-  # IONetworkingFamily's kernel headers (IOKit/network/*.h) for XnuEthernet: Apple's open source IONetworkingFamily-188 (APSL,
-  # fetched here, not kept in the repository), whose __PRIVATE_SPI__ declarations name the reserved slots 2-5 the shipped family
-  # uses (the SDK's headers leave slot 5 a reserved stub the collection does not export)
-  NETINC="$POC/build/netinc"; NETSRC="$POC/build/IONetworkingFamily-188"; mkdir -p "$NETINC/IOKit"
+fi
+
+# Both collections need native kexts. Build the PureDarwin set even with no Apple kernelcache.
+NATIVE=()
+NETINC="$POC/build/netinc"
+mkdir -p "$NETINC/IOKit"
+if "$have_apple_kc"; then
+  KEXTS=("$POC"/kexts/*/*.json)
+  # XnuEthernet needs the private SPI declarations from the open-source IONetworkingFamily.
+  NETSRC="$POC/build/IONetworkingFamily-188"
   [ -e "$NETSRC/IOEthernetController.h" ] || git clone -q --depth 1 --branch IONetworkingFamily-188 https://github.com/apple-oss-distributions/IONetworkingFamily.git "$NETSRC"
   ln -sfn "$NETSRC" "$NETINC/IOKit/network"
-  # IOHIDFamily's kernel headers (IOKit/hid/*.h) for XnuInput and IOStorageFamily's (IOKit/storage/*.h) for XnuDisk: the SDK's
-  # Kernel.framework has them
-  for h in toolchains/sdks/*.sdk/System/Library/Frameworks/Kernel.framework/Headers/IOKit/hid; do
-    [ -e $h/IOHIDDevice.h ] && { ln -sfn $PWD/$h "$NETINC/IOKit/hid"; ln -sfn $PWD/$h/../hidsystem "$NETINC/IOKit/hidsystem"; ln -sfn $PWD/$h/../graphics "$NETINC/IOKit/graphics"; ln -sfn $PWD/$h/../storage "$NETINC/IOKit/storage"
-      ln -sfn $PWD/${h%%/System/*}/usr/include/TargetConditionals.h "$NETINC/TargetConditionals.h"
-      ln -sfn $PWD/$h/../../HIDDriverKit "$NETINC/HIDDriverKit"; break; }	# IOHIDDevice.h includes HIDDriverKit/IOHIDDevice.h
+else
+  KEXTS=("$POC/kexts/XnuCPU/XnuCPU.json" "$POC/kexts/XnuDisk/XnuDisk.json" "$POC/kexts/XnuDrm/XnuDrm.json")
+fi
+
+# XnuDisk needs the SDK's IOStorageFamily headers. The macOS collection also uses its HID headers.
+for sdk in "$PWD"/toolchains/sdks/*.sdk; do
+  headers="$sdk/System/Library/Frameworks/Kernel.framework/Headers"
+  [ -f "$headers/IOKit/storage/IOBlockStorageDevice.h" ] || continue
+  if "$have_apple_kc" && [ ! -f "$headers/IOKit/hid/IOHIDDevice.h" ]; then
+    continue
+  fi
+  for family in storage hid hidsystem graphics; do
+    ln -sfn "$headers/IOKit/$family" "$NETINC/IOKit/$family"
   done
-  for j in "$POC"/kexts/*/*.json; do
-    [ -e "$j" ] || continue
-    n=$(basename "$j" .json)
-    # a kext that does not build is left out of the collection (reported), not the whole rebuild
-    python3 scripts/build-native-kext.py $n "$(dirname "$j")/$n.cpp" -I "$NETINC" --obj ${KEXT_OBJ:-k27-obj} || { echo "kext $n failed to build: left out"; continue; }
-    NATIVE+=("$j")
-  done
-  printf '%s\n' "${NATIVE[@]}" > out/k27/natives.txt	# the kexts of ours in this collection, for scripts/apple-kc/package.sh
+  ln -sfn "$sdk/usr/include/TargetConditionals.h" "$NETINC/TargetConditionals.h"
+  ln -sfn "$headers/HIDDriverKit" "$NETINC/HIDDriverKit"
+  break
+done
+for j in "${KEXTS[@]}"; do
+  n=$(basename "$j" .json)
+  if ! python3 scripts/build-native-kext.py "$n" "$(dirname "$j")/$n.cpp" -I "$NETINC" --obj "${KEXT_OBJ:-k27-obj}"; then
+    if ! "$have_apple_kc"; then
+      echo "kext $n is required for the PureDarwin collection" >&2
+      exit 1
+    fi
+    echo "kext $n failed to build: left out"
+    continue
+  fi
+  NATIVE+=("$j")
+done
+
+sudo install -d /lib/firmware/xnu
+if "$have_apple_kc"; then
+  printf '%s\n' "${NATIVE[@]}" > out/k27/natives.txt
   # the collection (scripts/kclink): the kernel, xnulinux's kexts, and the Apple kexts of scripts/apple-kc/keep.txt from
   # macOS 27.2's kernelcache
   t=$SECONDS
-  python3 "$POC"/scripts/kclink/kclink.py out/kc/kc27.bin out/k27/kernel-k27.macho out/k27/kc-k27.bin \
+  python3 "$POC"/scripts/kclink/kclink.py "$APPLE_KC" out/k27/kernel-k27.macho out/k27/kc-k27.bin \
     --keep $(grep -v '^#' "$POC"/scripts/apple-kc/keep.txt) --native "${NATIVE[@]}" \
     --rebind $(grep -v '^#' "$POC"/scripts/apple-kc/rebind.txt) > out/k27/kclink.log 2>&1 ||
     { tail -5 out/k27/kclink.log; echo "kclink failed: out/k27/kclink.log"; exit 1; }

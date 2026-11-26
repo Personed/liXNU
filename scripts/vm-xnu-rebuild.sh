@@ -35,7 +35,23 @@ mirror() {	# mirror SRC DST: DST holds exactly SRC's files
 rm -rf $T/osfmk/corecrypto $T/osfmk/arm64/corecrypto
 mirror "$P"/corecrypto/include/corecrypto $T/EXTERNAL_HEADERS/corecrypto
 mirror "$P"/corecrypto/kernel $T/osfmk/xnulinux_crypto
-t=$SECONDS; JOBS="${JOBS:-12}" bash k27/build-kernel27.sh 2>&1 | tail -15; echo "kernel: $((SECONDS - t)) s"
+mkdir -p out/k27/obj
+t=$SECONDS
+set +e
+JOBS="${JOBS:-12}" bash k27/build-kernel27.sh 2>&1 | tee out/k27/xnulinux-rebuild.log | tail -15
+rc=${PIPESTATUS[0]}
+set -e
+if [ "$rc" -ne 0 ]; then
+  echo "kernel rebuild failed ($rc); showing the bounded build logs that explain missing compiler recipes"
+  for log in out/k27/obj/build-bootstrap.log out/k27/obj/build-raw.log; do
+    if [ -f "$log" ]; then
+      echo "===== $log (last 120 lines) ====="
+      tail -120 "$log"
+    fi
+  done
+  exit "$rc"
+fi
+echo "kernel: $((SECONDS - t)) s"
 sudo install -d -m 0755 /lib/firmware/xnu
 if [ -e out/kc/kc27.bin ]; then
   cp k27/segaddrs.sh /tmp/segaddrs.before

@@ -144,6 +144,24 @@ jobs:
             echo "xnu_kernel_sha256=$kernel_sha"
           } > "$RUNNER_TEMP/puredarwin-e2e-inputs/manifest.txt"
           cat "$RUNNER_TEMP/puredarwin-e2e-inputs/manifest.txt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Collect XNU build logs after failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          logs="$RUNNER_TEMP/puredarwin-xnu-build-diagnostics"
+          mkdir -p "$logs"
+          dvm="$HOME/w/dvm/out/k27"
+          for path in "$dvm/xnulinux-rebuild.log" "$dvm/obj/build-bootstrap.log" "$dvm/obj/build-raw.log"; do
+            [ -f "$path" ] && cp "$path" "$logs/"
+          done
+      - name: Retain XNU build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puredarwin-xnu-build-diagnostics
+          path: ${{ runner.temp }}/puredarwin-xnu-build-diagnostics/
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Retain the guest disk inputs
         uses: actions/upload-artifact@v4
         with:

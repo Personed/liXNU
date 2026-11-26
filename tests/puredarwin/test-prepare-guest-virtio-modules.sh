@@ -93,4 +93,4 @@ grep -Fq 'find "/lib/modules/$(uname -r)" -type f -name "$module.ko"' "$here/ini
   exit 1
 }
 
-echo 'VirtIO .ko, .ko.zst, and .ko.xz formats all stage as loadable .ko files; .ko.gz is rejected.'
+echo 'VirtIO .ko, .ko.zst, and .ko.xz formats all stage as uncompressed .ko files; .ko.gz is rejected.'

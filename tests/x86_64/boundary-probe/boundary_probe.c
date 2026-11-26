@@ -205,11 +205,17 @@ static long bp_run_on_cpu(void *arg)
 	ret = bp_snapshot(&before);
 	if (ret)
 		goto out_restore;
-	if (!before.irq_disabled || !before.preempt_count ||
+	if (!before.irq_disabled ||
 	    before.rsp < before.stack_page || before.rsp >= before.stack_end) {
 		ret = -EUCLEAN;
 		goto out_restore;
 	}
+#ifdef CONFIG_PREEMPT_COUNT
+	if (!before.preempt_count) {
+		ret = -EUCLEAN;
+		goto out_restore;
+	}
+#endif
 	x86_boundary_probe_switch_stack((void *)stack_top, &result,
 					work->request.mode);
 	ret = bp_snapshot(&after);
@@ -220,7 +226,7 @@ static long bp_run_on_cpu(void *arg)
 	    result.host_entry_rsp != result.host_return_rsp ||
 	    result.host_entry_rsp < before.stack_page ||
 	    result.host_entry_rsp >= before.stack_end ||
-	    (result.host_entry_rsp & 0xf) != 8 ||
+	    (result.host_entry_rsp & 0x7) != 0 ||
 	    result.alt_switch_rsp < stack_base + BP_STACK_GUARD_BYTES ||
 	    result.alt_switch_rsp >= stack_top ||
 	    result.alt_entry_rsp < stack_base + BP_STACK_GUARD_BYTES ||
@@ -255,10 +261,9 @@ out_restore:
 	if (ret)
 		return ret;
 	pr_info("x86-boundary-probe: cpu %u mode %u restored host state "
-		"host_entry_rsp_mod16=%lu shim_entry_rsp_mod16=%lu preempt_count=%u "
+		"shim_entry_rsp_mod16=%lu preempt_count=%u "
 		"irqs_disabled=%u xcr0=%#llx stack_canaries=ok\n",
-		work->request.cpu, work->request.mode, result.host_entry_rsp & 0xf,
-		result.alt_entry_rsp & 0xf,
+		work->request.cpu, work->request.mode, result.alt_entry_rsp & 0xf,
 		before.preempt_count, before.irq_disabled,
 		(unsigned long long)before.xcr0);
 	return result.status;

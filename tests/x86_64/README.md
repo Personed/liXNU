@@ -73,9 +73,13 @@ The boundary probe builds a separate test module and boots it only in a disposab
 assembly call on each requested online CPU via `work_on_cpu`, switches to a temporary stack with low/high canaries,
 deliberately clobbers callee-saved GPRs and RFLAGS, and checks normal and software-abort returns. Kernel snapshots
 compare task/CPU identity, task stack bounds/RSP, CR3 root plus PCID, FS/GS/KERNEL_GS bases, preemption/IRQ state and
-XCR0. Userspace captures and compares the full standard XSAVE image for all XCR0-enabled user components around the
-raw ioctl syscall, in addition to explicit YMM patterns, then checks Linux syscalls before and after each ioctl. The
-VM must unload both modules and power off cleanly. TCG runs on every CI attempt; the script adds a KVM run when
+XCR0. The preemption-count check is nonzero only when the kernel is built with `CONFIG_PREEMPT_COUNT`; all builds still
+compare its before/after value. The shim entry uses the SysV 16-byte stack rule; the Linux kernel call frame is checked
+for bounds and restoration without imposing that user ABI on internal kernel calls. Userspace captures and compares
+the full standard XSAVE image for all XCR0-enabled user components around the raw ioctl syscall. Only YMM0–YMM7 are
+deliberately seeded and clobbered; other enabled components have passive before/after comparison, not an active
+pattern test. The test also checks Linux syscalls before and after each ioctl. The VM must unload both modules and
+power off cleanly. TCG runs on every CI attempt; the script adds a KVM run when
 `/dev/kvm` and host XSAVE/AVX are available.
 
 This is a host-only call/return test. It does not enter XNU, change `fki.h`, enable FKI capabilities, change CR3 or GS,

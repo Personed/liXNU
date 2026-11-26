@@ -53,6 +53,9 @@ if [[ "${1-}" == --version ]]; then
   exit 0
 fi
 touch -- "$REAL_LAUNCH_QEMU_LOG"
+if [[ -n "${REAL_LAUNCH_QEMU_ARGS_LOG:-}" ]]; then
+  printf '%s\0' "$@" >"$REAL_LAUNCH_QEMU_ARGS_LOG"
+fi
 FAKE_QEMU
 chmod +x -- "$FAKE_QEMU"
 for overlay_base in "$OVERLAY" "$EXTERNAL_OVERLAY"; do
@@ -85,11 +88,15 @@ done
 # Without xnulinux's .base ownership sidecar, it remains a valid source image.
 USER_STATE_DIR="$TMP_DIR/user source state"
 USER_BASE="$USER_STATE_DIR/disk-aaaaaaaaaaaaaaaaaaaa.qcow2"
+USER_PARENT="$USER_STATE_DIR/user source parent.raw"
 USER_QEMU_LOG="$TMP_DIR/user-source-started-qemu"
+USER_QEMU_ARGS_LOG="$TMP_DIR/user-source-qemu-args.bin"
 mkdir -p -- "$USER_STATE_DIR"
-"$QEMU_IMG" create -q -f qcow2 "$USER_BASE" 1M
+truncate -s 1M -- "$USER_PARENT"
+"$QEMU_IMG" create -q -f qcow2 -F raw -b "$USER_PARENT" "$USER_BASE"
 [[ ! -e "${USER_BASE%.qcow2}.base" ]] || { printf 'user qcow2 fixture unexpectedly has an ownership sidecar\n' >&2; exit 1; }
 USER_BASE_SHA256_BEFORE="$(sha256sum -- "$USER_BASE" | awk '{print $1}')"
+USER_PARENT_SHA256_BEFORE="$(sha256sum -- "$USER_PARENT" | awk '{print $1}')"
 USER_LAUNCH_OUTPUT="$TMP_DIR/user-source-launch.out"
 env \
   "QEMU=$FAKE_QEMU" \
@@ -102,6 +109,7 @@ env \
   "APPLE_SMC_OSK=$SMC_KEY" \
   "ACCEL=tcg" \
   "REAL_LAUNCH_QEMU_LOG=$USER_QEMU_LOG" \
+  "REAL_LAUNCH_QEMU_ARGS_LOG=$USER_QEMU_ARGS_LOG" \
   "$LAUNCHER" >"$USER_LAUNCH_OUTPUT" 2>&1 || {
     cat "$USER_LAUNCH_OUTPUT" >&2
     printf 'launcher rejected an unowned user qcow2 base with the reserved filename shape\n' >&2
@@ -110,7 +118,18 @@ env \
 [[ -e "$USER_QEMU_LOG" ]] || { cat "$USER_LAUNCH_OUTPUT" >&2; printf 'launcher did not start QEMU for the user base\n' >&2; exit 1; }
 [[ "$(sha256sum -- "$USER_BASE" | awk '{print $1}')" == "$USER_BASE_SHA256_BEFORE" ]] \
   || { printf 'launcher changed the user qcow2 base\n' >&2; exit 1; }
-USER_DISK_ID="$(printf '%s\0' "$USER_BASE" | sha256sum | awk '{print substr($1, 1, 20)}')"
+[[ "$(sha256sum -- "$USER_PARENT" | awk '{print $1}')" == "$USER_PARENT_SHA256_BEFORE" ]] \
+  || { printf 'launcher changed the user qcow2 backing image\n' >&2; exit 1; }
+USER_DISK_PATH="$(realpath -e -- "$USER_BASE")"
+USER_DISK_ID="$(printf '%s\0' "$USER_DISK_PATH" | sha256sum | awk '{print substr($1, 1, 20)}')"
+USER_OVERLAY="$USER_STATE_DIR/disk-$USER_DISK_ID.qcow2"
+USER_OVERLAY_INFO="$("$QEMU_IMG" info -f qcow2 "$USER_OVERLAY")"
+grep -Fq "backing file: $USER_DISK_PATH" <<<"$USER_OVERLAY_INFO" \
+  || { printf 'launcher overlay does not point to the user qcow2 base\n%s\n' "$USER_OVERLAY_INFO" >&2; exit 1; }
+USER_OVERLAY_ARG="file=${USER_OVERLAY//,/,,},format=qcow2,if=none,id=disk0"
+mapfile -d '' -t USER_QEMU_ARGS <"$USER_QEMU_ARGS_LOG"
+[[ " ${USER_QEMU_ARGS[*]} " == *" $USER_OVERLAY_ARG "* ]] \
+  || { printf 'QEMU did not receive the expected overlay argument\n' >&2; exit 1; }
 [[ -f "$USER_STATE_DIR/disk-$USER_DISK_ID.base" ]] \
   || { printf 'launcher did not write an ownership sidecar for its new overlay\n' >&2; exit 1; }
 printf 'PASS: symlinked managed overlays are rejected; an unowned user qcow2 base with the reserved filename shape is accepted and remains unchanged\n'

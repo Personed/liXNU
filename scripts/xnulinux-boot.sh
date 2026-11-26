@@ -8,6 +8,7 @@
 # Usage: xnulinux-boot.sh            boot it and return once XNU runs
 #        xnulinux-boot.sh --wait     boot it and stay until the run ends (systemd: scripts/install-service.sh); the run's
 #                                    kernel log goes to /var/log/xnulinux/, the exit status says how it ended
+#        xnulinux-boot.sh --check    report host prerequisites without booting
 #        xnulinux-boot.sh stop       end it (the disk synced first)
 #
 # Configuration: /etc/xnulinux.conf, then $MAC_CONF (/var/tmp/mac.conf, written by mk-macvm-disk.sh: ROOT_UUID, BOOT_UUID), then the
@@ -32,6 +33,49 @@ if [ "${1:-}" = stop ]; then	# end the running hosted system (its disk synced fi
   echo "hosted system stopped"
   exit
 fi
+case "${1:-}" in
+  ""|--wait|--check) ;;
+  *) echo "usage: ${0##*/} [--wait|--check|stop]" >&2; exit 2 ;;
+esac
+
+check_host() {
+  local os arch page_size tool
+  os=$(uname -s)
+  arch=$(uname -m)
+  if [ "$os" != Linux ] || [ "$arch" != aarch64 ]; then
+    echo "xnulinux requires an ARM64 Linux host to load its kernel modules (detected $os $arch)." >&2
+    return 1
+  fi
+  page_size=$(getconf PAGESIZE) || return 1
+  if [ "$page_size" != 4096 ]; then
+    echo "xnulinux requires a Linux kernel with 4 KiB pages (detected $page_size bytes)." >&2
+    return 1
+  fi
+  if [ ! -f "$K/Makefile" ]; then
+    echo "Install the kernel headers for Linux $KERNEL_RELEASE (the build Makefile is missing at $K/Makefile)." >&2
+    return 1
+  fi
+  for tool in make modinfo; do
+    if ! command -v "$tool" >/dev/null; then
+      echo "xnulinux requires $tool to build or inspect its kernel modules." >&2
+      return 1
+    fi
+  done
+  # Linux's userspace feature list can differ from the FKI provider's capabilities.
+  if ! grep -qE '^Features[[:space:]]*:.*[[:space:]]paca([[:space:]]|$)' /proc/cpuinfo 2>/dev/null; then
+    echo "Warning: Linux does not advertise address pointer authentication (paca) in /proc/cpuinfo. A working FKI backend must provide PAC." >&2
+  fi
+}
+
+# Check before reading the disk configuration, building modules or changing host state.
+KERNEL_RELEASE=$(uname -r)
+K=/lib/modules/$KERNEL_RELEASE/build
+check_host
+if [ "${1:-}" = --check ]; then
+  echo "ARM64 Linux, 4 KiB pages, kernel headers for $KERNEL_RELEASE, and module tools found."
+  exit 0
+fi
+
 WAIT=0; [ "${1:-}" = --wait ] && WAIT=1
 [ -f /etc/xnulinux.conf ] && . /etc/xnulinux.conf
 MAC_CONF=${MAC_CONF:-/var/tmp/mac.conf}	# the disk's UUIDs: mk-macvm-disk.sh's, or mk-puredarwin-disk.sh's output
@@ -43,9 +87,13 @@ BOOTARGS=${BOOTARGS:-amfi_get_out_of_my_way=1 lp-sip0=2050 bt-transport-override
 : "${ROOT_UUID:?no ROOT_UUID (/var/tmp/mac.conf from mk-macvm-disk.sh)}" "${BOOT_UUID:?no BOOT_UUID}"
 [ -d /sys/module/xnu ] && { echo "xnu.ko is loaded: a hosted system is running (sudo rmmod xnu first)" >&2; exit 1; }
 
-K=/lib/modules/$(uname -r)/build
 build() {	# a module; its compiler errors on failure
-  local log; log=$(make -s -C "$K" M="$PWD/$1" ${2:-} modules 2>&1) || { echo "$log" | grep -E "error|Error" | head -20 >&2; exit 1; }
+  local module=$1 log
+  shift
+  if ! log=$(make -s -C "$K" M="$PWD/$module" "$@" modules 2>&1); then
+    printf 'Failed to build %s against Linux %s:\n%s\n' "$module" "$KERNEL_RELEASE" "$log" >&2
+    return 1
+  fi
 }
 build fki-ko
 build xnu-ko "KBUILD_EXTRA_SYMBOLS=$PWD/fki-ko/Module.symvers"

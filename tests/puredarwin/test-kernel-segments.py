@@ -68,6 +68,16 @@ class KernelSegmentTests(unittest.TestCase):
         self.assertTrue(relink_needed(segments, header, fitted))
 
         segments[2].vmaddr = header + fitted['__KLD']
+        segments[-1].vmaddr = header + fitted['__LAST']
+        self.assertFalse(relink_needed(segments, header, fitted))
+
+    def test_zero_size_last_at_stale_address_still_requests_relink(self):
+        header, segments = self.kernel_segments(kld_size=0x4000, last_size=0)
+        fitted = {'__KLD': 0x38d4000, '__LAST': 0x38d8000}
+        segments[2].vmaddr = header + fitted['__KLD']
+        self.assertTrue(relink_needed(segments, header, fitted))
+
+        segments[-1].vmaddr = header + fitted['__LAST']
         self.assertFalse(relink_needed(segments, header, fitted))
 
     def test_missing_last_does_not_make_already_relinked_kernel_stale(self):

@@ -73,8 +73,9 @@ def relink_needed(segments, kernel_header, fitted):
     by_name = {segment.name: segment for segment in segments}
     for name in MARKERS:
         segment = by_name.get(name)
-        # An absent or empty __LAST is a valid representation of its marker.
-        if name == '__LAST' and (segment is None or not segment.vmsize):
+        # An absent __LAST is a valid representation of its marker, but an
+        # emitted zero-sized segment still carries the address XNU consumes.
+        if name == '__LAST' and segment is None:
             continue
         if segment is None or segment.vmaddr - kernel_header != fitted[name]:
             return True

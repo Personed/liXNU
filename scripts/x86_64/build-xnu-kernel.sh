@@ -187,6 +187,76 @@ verify_firehose_header_closure() {
   fi
 }
 
+verify_firehose_compile_arguments() {
+  if ! python3 - "$LIBDISPATCH_LOG" "$LIBDISPATCH_BUILD_DIR/obj" "$SDK_DIR" <<'PY'
+import os
+import pathlib
+import re
+import shlex
+import sys
+
+log_path = pathlib.Path(sys.argv[1])
+objroot = pathlib.Path(sys.argv[2]).resolve()
+sdk_root = pathlib.Path(sys.argv[3]).resolve()
+if not log_path.is_file():
+    raise SystemExit(f"missing libdispatch build log: {log_path}")
+
+log_lines = log_path.read_text(errors="replace").splitlines()
+compile_lines = [
+    line for line in log_lines
+    if "firehose_buffer.c" in line and re.search(r"(?:^|/)clang(?:\s|$)", line)
+]
+if len(compile_lines) != 1:
+    raise SystemExit(
+        f"expected one logged clang command for firehose_buffer.c, found {len(compile_lines)}"
+    )
+
+response_paths = re.findall(r"@([^\s]+common-args\.resp)", compile_lines[0])
+if len(response_paths) != 1:
+    raise SystemExit("firehose_buffer.c clang command does not identify one response file")
+response_path = pathlib.Path(response_paths[0]).resolve()
+if os.path.commonpath((str(objroot), str(response_path))) != str(objroot):
+    raise SystemExit(f"Firehose compiler response file is outside libdispatch OBJROOT: {response_path}")
+if not response_path.is_file():
+    raise SystemExit(f"missing Firehose compiler response file: {response_path}")
+
+args = shlex.split(response_path.read_text(errors="replace"))
+sysroots = [
+    args[index + 1] for index, arg in enumerate(args[:-1])
+    if arg == "-isysroot"
+]
+if [pathlib.Path(path).resolve() for path in sysroots] != [sdk_root]:
+    raise SystemExit(f"Firehose compile uses SDKROOT {sysroots}; expected only {sdk_root}")
+
+include_paths = []
+index = 0
+while index < len(args):
+    arg = args[index]
+    if arg == "-I" and index + 1 < len(args):
+        include_paths.append(args[index + 1])
+        index += 1
+    elif arg.startswith("-I") and len(arg) > 2:
+        include_paths.append(arg[2:])
+    index += 1
+
+required = {
+    sdk_root / "usr/local/include",
+    sdk_root / "usr/local/include/os",
+    sdk_root / "usr/local/include/firehose",
+}
+resolved_includes = {pathlib.Path(path).resolve() for path in include_paths}
+missing = sorted(str(path) for path in required - resolved_includes)
+if missing:
+    raise SystemExit(f"Firehose compiler is missing staged SDK include paths: {missing}")
+
+print(f"Verified Firehose compiler response file: {response_path}")
+print(f"Verified Firehose SDKROOT and staged include paths: {sdk_root}")
+PY
+  then
+    fail 'Firehose compile command did not use the staged XNU SDK overlay'
+  fi
+}
+
 verify_sdk_version() {
   local sdk_root="$1"
   [[ -f "$sdk_root/SDKSettings.json" ]] || fail "missing macOS SDK settings at $sdk_root"
@@ -256,6 +326,7 @@ if (( CHECK_ONLY )); then
   xcrun --find cmake >/dev/null
   xcrun --find ninja >/dev/null
   verify_firehose_archive "$SDK_DIR/usr/local/lib/kernel/libfirehose_kernel.a"
+  verify_firehose_compile_arguments
   verify_firehose_header_closure
   printf 'int xnu_x86_64_target_probe;\n' |
     xcrun clang -target x86_64-apple-macosx26.0 -mkernel -ffreestanding -fsyntax-only -x c -
@@ -381,9 +452,9 @@ mkdir -p "$LIBDISPATCH_BUILD_DIR/obj" "$LIBDISPATCH_BUILD_DIR/sym" "$LIBDISPATCH
 printf 'Building libfirehose_kernel from %s for x86_64\n' "$LIBDISPATCH_TAG"
 if xcodebuild \
   -project "$LIBDISPATCH_SOURCE_DIR/libdispatch.xcodeproj" \
-  -target libfirehose_kernel -configuration Release -sdk macosx \
+  -target libfirehose_kernel -configuration Release -sdk "$SDK_DIR" \
   ARCHS=x86_64 VALID_ARCHS=x86_64 PRODUCT_NAME=firehose_kernel \
-  HEADER_SEARCH_PATHS='$(inherited) $(SDKROOT)/usr/local/include' \
+  HEADER_SEARCH_PATHS="\$(inherited) $SDK_DIR/usr/local/include $SDK_DIR/usr/local/include/os $SDK_DIR/usr/local/include/firehose" \
   SDKROOT="$SDK_DIR" \
   OBJROOT="$LIBDISPATCH_BUILD_DIR/obj" SYMROOT="$LIBDISPATCH_BUILD_DIR/sym" \
   DSTROOT="$LIBDISPATCH_DSTROOT" \
@@ -393,6 +464,7 @@ else
   tail -n 100 "$LIBDISPATCH_LOG" >&2
   fail "libdispatch firehose_kernel build failed; full log: $LIBDISPATCH_LOG"
 fi
+verify_firehose_compile_arguments
 verify_firehose_archive "$LIBDISPATCH_ARCHIVE"
 FIREHOSE_ARCHIVE_SHA256="$(shasum -a 256 "$LIBDISPATCH_ARCHIVE" | awk '{print $1}')"
 ditto "$LIBDISPATCH_DSTROOT/usr/local" "$SDK_DIR/usr/local"

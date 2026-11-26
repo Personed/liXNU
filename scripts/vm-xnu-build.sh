@@ -28,6 +28,13 @@ if a>0 and b>a:
     s=s[:a]+"    # (xnupoc) no Darling/AppleClang: native_compile builds the kernel with host LLVM\n"+s[b:]
     open(p,'w').write(s)
 s=open(p).read()
+# Linux libbsd declares strlcat in bsd/string.h; XNU host tools use it while the generated fragment includes only stdlib/unistd.
+needle="    text = text.replace(DEV_ROOT + '/toolchains/linux/host-deps', '').replace(DEV_ROOT, str(ROOT))\n"
+insert=needle+"    if '-include bsd/string.h' not in text:\n        text = text.replace('-include bsd/stdlib.h -include bsd/unistd.h', '-include bsd/stdlib.h -include bsd/unistd.h -include bsd/string.h')\n"
+if needle in s and insert not in s:
+    s=s.replace(needle, insert)
+    open(p,'w').write(s)
+s=open(p).read()
 # The committed gunyah-linux.mk names x86_64 multiarch paths; non-x86 build hosts substitute their own.
 multiarch=sys.argv[1]
 k="    (X / 'gunyah-linux.mk').write_text('\\n'.join(lines) + '\\n')"

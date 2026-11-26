@@ -4,7 +4,7 @@
 # table with one HFS+ volume (hfs.kext, Apple's or the free collection's, mounts it), and the ROOT_UUID xnu.ko boots it by.
 # The kernel mounts the root read-only; PureDarwin's own images use ext4, whose kext clears that, and its mount(8) has no
 # -uw for launchctl's remount, so /sbin/fsck (which launchctl runs first, on a read-only root) remounts it read-write as
-# PureDarwin's HFS images do. The disk is checked on the Linux side before each boot (fsck.hfsplus), not here.
+# PureDarwin's HFS images do.
 #   mk-puredarwin-disk.sh ROOT.tar.gz OUT.img [SIZE (1g)]   prints the disk's configuration for xnulinux-boot.sh (MAC_CONF):
 #   ROOT_UUID and BOOT_UUID, the partition's GUID
 set -euo pipefail
@@ -22,7 +22,7 @@ populate_root() {
   "${as_root[@]}" rm -f "$M/sbin/fsck"
   "${as_root[@]}" tee "$M/sbin/fsck" >/dev/null <<'FSCK'
 #!/bin/zsh
-# xnulinux: the disk was checked on the Linux host before boot (fsck.hfsplus); remount the HFS+ root read-write
+# xnulinux: remount the HFS+ root read-write. Check a dirty volume from Linux before boot.
 dev=$(/bin/df / | /bin/awk 'NR==2 {print $1}')
 /sbin/mount -t hfs -o update,rw "$dev" / && echo "xnulinux: root $dev remounted read-write"
 exit 0
@@ -33,6 +33,8 @@ FSCK
 
 make_linux_disk() {
   local tool
+  # Debian can leave administrative directories out of an unprivileged user's PATH.
+  export PATH="$PATH:/usr/sbin:/sbin"
   for tool in truncate sfdisk losetup mkfs.hfsplus mount umount "${as_root[@]}"; do
     if ! command -v "$tool" >/dev/null; then
       echo "PureDarwin disk creation on Linux requires $tool." >&2

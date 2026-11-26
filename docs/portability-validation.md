@@ -58,10 +58,18 @@ git branch codex/fki-arm64-va-guard refs/remotes/upstream/pr72
 git push origin codex/pin-arm64-guest-kernel codex/fki-arm64-va-guard
 ~~~
 
-Open a PR in the fork from `codex/fki-arm64-va-guard` to `codex/pin-arm64-guest-kernel`, with base SHA `8d41fa9299a63190235bbc9547b688ad9733cdb4` and head SHA `e61f578799257685b2c1741afd7fba43c947cf69`. Enable Actions and approve the workflow if GitHub prompts. The base branch carries the full artifact-producing workflow; do not use the image-only workflow on main. Verify the new run reports the same head SHA, then download `puredarwin-e2e-guest` and `puredarwin-e2e-disk` from that single run/attempt. Use that attempt's own manifests and hashes; do not mix artifacts or assume their digests match run #140.
+Open a PR in the fork from `codex/fki-arm64-va-guard` to `codex/pin-arm64-guest-kernel`, with base SHA `8d41fa9299a63190235bbc9547b688ad9733cdb4` and head SHA `e61f578799257685b2c1741afd7fba43c947cf69`. Enable Actions and approve the workflow if GitHub prompts. The base branch carries the full artifact-producing workflow; do not use the image-only workflow on main.
+Find the new run ID in the fork and verify its source ref:
+
+~~~sh
+TCG_REPO=your-login/xnulinux
+gh run list --repo "$TCG_REPO" --workflow "PureDarwin ARM64 image" --branch codex/fki-arm64-va-guard --limit 5
+~~~
+
+Use the new run ID and the fork repo for both `gh run view` and `gh run download`; confirm head SHA `e61f578799257685b2c1741afd7fba43c947cf69`, then download `puredarwin-e2e-guest` and `puredarwin-e2e-disk` from that same run/attempt. Use its own manifests and hashes; do not mix artifacts or assume their digests match run #140.
   - **Historical 16 GiB profile:** PR #36's older reference assigned 16 GiB to the guest and screened for 20 GiB total runner-OS RAM and 4 GiB available before artifact preparation. This is an operational screen for that profile, not a physical-host minimum. Run #72 on old #36 head `5312b29` emitted boot markers but failed later byte inspection because file-backed `__TEXT_EXEC` and `__KLD` overlapped at `0x3854000-0x3858000`. Run #74 on then-current #36 head `97727ac` failed before boot on the same overlap.
   - PR #50 workflow run #89 passed a 16 GiB TCG route on its earlier #36-plus-relocation source line using a nested KVM-backed Intel runner; the `#50` relocation is now in current #36 source at `93e3cf4`, but run #89 predates that head and no current-head rerun is recorded. PR #52 run #91 reached console/halt on a Microsoft-hypervisor Ubuntu runner reporting AMD EPYC 9V45. PR #64 run #95 is a separate 16 GiB run on AWS-hosted Ubuntu with 4 vCPUs; its CPU model is not attributed here. Merged PR #62 records local console/halt and XNU/FKI-unload runs with a locally relocated collection. These results use older commits or different artifacts and are not physical-host validation or substitutes for run #140's paired artifacts.
-  - **Integration and host matrix status, checked 2026-11-26 22:27 UTC:** PR #75 run #143 passed the 6 GiB guest preparation and TCG boot and is merged into #52 at `24e4a9c`. PR #36 head `93e3cf4` still has no current-head full-boot result; PR #50 run #89 predates the relocation's integration there. Cross-host PR #89 is synchronized to #83 head `07d08c5` over #52 head `24e4a9c`, with current head `3fbfa6a`. Its launcher #476 passed, modules #945 has QEMU smoke jobs in progress/queued, and PureDarwin run #151 is still building the pinned guest image; no full cross-host console/halt result exists on that head yet. The matrix targets Ubuntu, Windows Server 2025, and Intel macOS 15. Bare-metal Intel/AMD acceptance remains pending.
+  - **Integration and host matrix status, checked 2026-11-26 22:33 UTC:** PR #75 run #143 passed the 6 GiB guest preparation and TCG boot and is merged into #52 at `24e4a9c`. PR #36 head `93e3cf4` still has no current-head full-boot result; PR #50 run #89 predates the relocation's integration there. Cross-host PR #89 is synchronized to #83 head `07d08c5` over #52 head `24e4a9c`, with current head `3fbfa6a`. Launcher #476 passed. Modules run #945 passed build, SPDX, Linux 6.12, and its macOS/Windows QEMU smoke jobs; Ubuntu QEMU smoke is queued. PureDarwin run #151 is building the pinned image; the disk, guest-preparation and full TCG boot jobs have not produced a result on this head. The matrix targets Ubuntu, Windows Server 2025, and Intel macOS 15. Bare-metal Intel/AMD acceptance remains pending.
   - The 6 GiB number is guest RAM for a demonstrated profile, not a measured host-RAM floor. Virtualized-runner results do not prove physical-PC compatibility, outer-host memory overhead, or practical performance; record physical hosts separately.
 
 - **Separate native x86-64 hosted-XNU/Tahoe experiment:** this is not the active PC
@@ -94,7 +102,11 @@ cd xnulinux
 git fetch origin refs/pull/72/head
 git checkout e61f578799257685b2c1741afd7fba43c947cf69
 mkdir -p work/tcg-run-140
-gh run download 45891917494 --name puredarwin-e2e-guest --name puredarwin-e2e-disk --dir work/tcg-run-140
+TCG_REPO=Personed/xnulinux
+TCG_RUN_ID=45891917494
+# For a fork run, set TCG_REPO to your fork and TCG_RUN_ID to its new run ID.
+gh run view "$TCG_RUN_ID" --repo "$TCG_REPO" --json headBranch,headSha,attempt,status,conclusion
+gh run download "$TCG_RUN_ID" --repo "$TCG_REPO" --name puredarwin-e2e-guest --name puredarwin-e2e-disk --dir work/tcg-run-140
 cp work/tcg-run-140/puredarwin-e2e-disk/pd.img work/tcg-run-140/pd-writable.img
 cat work/tcg-run-140/puredarwin-e2e-guest/guest-manifest.txt
 cat work/tcg-run-140/puredarwin-e2e-guest/build-manifest.txt

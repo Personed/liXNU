@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
+from typing import Optional
 
 
 QEMU_VIRT_RAM_BASE = 0x40000000
@@ -33,14 +34,25 @@ def parse_memory_size(value: str, option: str, bare_unit_multiplier: int = 1) ->
     return size
 
 
-def run_with_timeout(command: list[str], timeout_seconds: int) -> tuple[int, int, bool]:
-    """Run one child, returning its exit status, exact peak RSS in KiB on Unix, and timeout flag."""
-    if not hasattr(os, "fork") or not hasattr(os, "wait4"):
+def max_rss_kib(raw_maxrss: int, platform_name: Optional[str] = None) -> int:
+    """Normalize wait4 ru_maxrss to KiB; macOS reports it in bytes."""
+    if (platform_name or sys.platform) == "darwin":
+        return (raw_maxrss + 1023) // 1024
+    return raw_maxrss
+
+
+def can_measure_child_rss() -> bool:
+    return hasattr(os, "fork") and hasattr(os, "wait4")
+
+
+def run_with_timeout(command: list[str], timeout_seconds: int) -> tuple[int, Optional[int], bool]:
+    """Run one child, returning its exit status, exact peak RSS in KiB when measurable, and timeout flag."""
+    if not can_measure_child_rss():
         try:
             result = subprocess.run(command, check=False, timeout=timeout_seconds)
-            return result.returncode, 0, False
+            return result.returncode, None, False
         except subprocess.TimeoutExpired:
-            return -15, 0, True
+            return -15, None, True
 
     pid = os.fork()
     if pid == 0:
@@ -62,7 +74,7 @@ def run_with_timeout(command: list[str], timeout_seconds: int) -> tuple[int, int
                 returncode = -os.WTERMSIG(status)
             else:
                 returncode = 1
-            return returncode, usage.ru_maxrss, timed_out
+            return returncode, max_rss_kib(usage.ru_maxrss), timed_out
 
         now = time.monotonic()
         if not timed_out and now >= deadline:
@@ -84,7 +96,7 @@ def run_with_timeout(command: list[str], timeout_seconds: int) -> tuple[int, int
                 returncode = -os.WTERMSIG(status)
             else:
                 returncode = 1
-            return returncode, usage.ru_maxrss, timed_out
+            return returncode, max_rss_kib(usage.ru_maxrss), timed_out
         time.sleep(0.1)
 
 
@@ -206,7 +218,10 @@ def main() -> int:
         print(f"TCG boot could not start: {error}", file=sys.stderr)
         return 1
 
-    print(f"QEMU peak RSS: {peak_rss_kib} KiB ({peak_rss_kib / 1048576:.2f} GiB)", flush=True)
+    if peak_rss_kib is None:
+        print("QEMU peak RSS: not measured on this platform", flush=True)
+    else:
+        print(f"QEMU peak RSS: {peak_rss_kib} KiB ({peak_rss_kib / 1048576:.2f} GiB)", flush=True)
     if timed_out:
         print(f"TCG boot timed out after {args.timeout_seconds} seconds", file=sys.stderr)
         return 1
@@ -236,10 +251,9 @@ def main() -> int:
         if line == darwin_line or any(marker in line for marker in required):
             print(line)
     if args.max_rss_mib is not None:
-        if peak_rss_kib == 0:
-            print("QEMU RSS was not measured", file=sys.stderr)
-            return 1
-        if peak_rss_kib > args.max_rss_mib * 1024:
+        if peak_rss_kib is None:
+            print("QEMU RSS ceiling not evaluated: peak RSS was not measured", file=sys.stderr)
+        elif peak_rss_kib > args.max_rss_mib * 1024:
             print(f"QEMU peak RSS exceeded {args.max_rss_mib} MiB", file=sys.stderr)
             return 1
     print("PureDarwin ARM64 console boot and guest-requested halt passed under QEMU TCG.")

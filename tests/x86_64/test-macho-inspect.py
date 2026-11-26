@@ -112,19 +112,23 @@ def run_case(
     binary, name, data, expected_status, check_report=None, relative_name="kernel.development"
 ):
     with tempfile.TemporaryDirectory(prefix="xnu-macho-inspect-") as tmp:
-        path = pathlib.Path(tmp) / relative_name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-        before = hashlib.sha256(path.read_bytes()).digest()
+        path = os.fsencode(tmp) + b"/" + relative_name.encode("utf-8")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as image_file:
+            image_file.write(data)
+        with open(path, "rb") as image_file:
+            before = hashlib.sha256(image_file.read()).digest()
         result = subprocess.run(
-            [binary, str(path)], check=False, capture_output=True, text=True
+            [os.fsencode(binary), path], check=False, capture_output=True, text=False
         )
         if result.returncode != expected_status:
             raise AssertionError(
                 f"{name}: exit {result.returncode}, expected {expected_status}; "
                 f"stderr={result.stderr!r}"
             )
-        if hashlib.sha256(path.read_bytes()).digest() != before:
+        with open(path, "rb") as image_file:
+            after = hashlib.sha256(image_file.read()).digest()
+        if after != before:
             raise AssertionError(f"{name}: inspector modified the input file")
         if check_report is None:
             if result.stdout:
@@ -133,7 +137,7 @@ def run_case(
                 raise AssertionError(f"{name}: rejected input had no diagnostic")
             return
         report = json.loads(result.stdout)
-        if report.get("file") != str(path):
+        if report.get("file") != path.decode("utf-8"):
             raise AssertionError(f"{name}: report path does not round-trip: {report.get('file')!r}")
         if report.get("file_path_encoding") != "UTF-8":
             raise AssertionError(f"{name}: valid UTF-8 path was mislabeled")
@@ -270,7 +274,10 @@ def expect_ambiguous_display_bytes_preserve_originals(binary):
             path = pathlib.Path(tmp) / ("segment-" + str(len(segment_reports)))
             path.write_bytes(data)
             result = subprocess.run(
-                [binary, str(path)], check=False, capture_output=True, text=True
+                [binary, str(path)],
+                check=False,
+                capture_output=True,
+                env={**os.environ, "LC_ALL": "C", "PYTHONUTF8": "0"},
             )
             if result.returncode != 0:
                 raise AssertionError(f"ambiguous segment name failed: {result.stderr!r}")

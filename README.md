@@ -194,17 +194,20 @@ result. For AMD, OpenCore must already contain AMD kernel patches. The current x
 ### Testing the Linux host layer in QEMU
 
 GitHub Actions uses QEMU's software emulation (TCG) on x86-64 Linux, x86-64 Windows, and ARM64 macOS
-to boot ARM64 Ubuntu with pointer authentication, load `fki.ko`, and verify that `xnu.ko` reaches its
-firmware loader. On Linux, run the same check with QEMU, GNU cpio, Python 3 and zstd:
+to boot ARM64 Ubuntu with pointer authentication, load `fki.ko`, reserve memory outside Linux's RAM map,
+allocate and free the same 16 MiB carve-out twice, and verify that `xnu.ko` reaches its firmware loader.
+On Linux, build the probe against the supplied ARM64 kernel headers and run the check with QEMU, GNU cpio,
+Python 3 and zstd:
 
 ```sh
-tests/qemu/run.sh /path/to/arm64/vmlinuz /path/to/arm64/static-busybox /path/to/fki.ko /path/to/xnu.ko
+make -C "$KDIR" M="$PWD/tests/qemu" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
+tests/qemu/run.sh /path/to/arm64/vmlinuz /path/to/arm64/static-busybox /path/to/fki.ko /path/to/xnu.ko tests/qemu/fki-carve-probe.ko
 ```
 
 Build the modules against the supplied ARM64 kernel's headers. To run the check on a different host, prepare
-the kernel and initramfs on Linux with `tests/qemu/prepare.sh` (pass an output directory as the fifth
-argument). Copy those files to the host and run `python3 tests/qemu/boot.py OUTPUT_DIR` with
-`qemu-system-aarch64` on its PATH. The check stops at the firmware loader before booting PureDarwin or macOS.
+the kernel and initramfs on Linux with `tests/qemu/prepare.sh KERNEL BUSYBOX FKI_KO XNU_KO PROBE_KO OUTPUT_DIR`.
+Copy those files to the host and run `python3 tests/qemu/boot.py OUTPUT_DIR` with `qemu-system-aarch64` on its
+PATH. The check stops at the firmware loader before booting PureDarwin or macOS.
 
 ## Repository layout and licenses
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-"""Boot a prepared ARM64 module smoke test with QEMU TCG."""
+"""Boot the ARM64 module and FKI carve-out smoke test with QEMU TCG."""
 
 import argparse
 from pathlib import Path
@@ -35,7 +35,7 @@ def main():
             "-no-reboot",
             "-kernel", str(kernel),
             "-initrd", str(initramfs),
-            "-append", "console=ttyAMA0 rdinit=/init panic=1 loglevel=4",
+            "-append", "console=ttyAMA0 rdinit=/init panic=1 loglevel=4 mem=768M",
         ]
         try:
             result = subprocess.run(command, timeout=180)

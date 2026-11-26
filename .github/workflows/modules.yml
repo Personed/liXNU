@@ -23,6 +23,8 @@ jobs:
         run: make -C "$KDIR" M="$PWD/fki-ko" modules
       - name: xnu.ko
         run: make -C "$KDIR" M="$PWD/xnu-ko" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
+      - name: FKI carve-out probe
+        run: make -C "$KDIR" M="$PWD/tests/qemu" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
       - name: Module licenses
         run: |
           test "$(modinfo -F license fki-ko/fki.ko)" = GPL
@@ -40,7 +42,8 @@ jobs:
             dpkg-deb -x busybox-static_*.deb busybox
           )
           tests/qemu/prepare.sh "$stage/kernel/boot/vmlinuz-$KERNEL_RELEASE" \
-            "$(find "$stage/busybox" -type f -name busybox)" fki-ko/fki.ko xnu-ko/xnu.ko "$RUNNER_TEMP/qemu-guest"
+            "$(find "$stage/busybox" -type f -name busybox)" fki-ko/fki.ko xnu-ko/xnu.ko \
+            tests/qemu/fki-carve-probe.ko "$RUNNER_TEMP/qemu-guest"
       - uses: actions/upload-artifact@v4
         with:
           name: qemu-arm64-guest

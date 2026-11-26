@@ -23,6 +23,12 @@ Use [Calamares](https://calamares.io/docs/install/) as the first graphical insta
 
 Expose **Install xnulinux** separately from the default live entry. Require an explicit target, show a summary of planned disk changes, and require confirmation before writes. Start on a blank test disk in UEFI mode; validate cancel/no writes and first reboot without USB before supporting dual boot, encryption, or Secure Boot. The installer is a proposal and ships only after the selected runtime and installation path are validated.
 
+## Desktop and installer design
+
+For a validated setup using a separately supplied compatible macOS system, the macOS desktop itself is the intended default session, not a Linux imitation. The redistributable Live USB cannot assume that macOS is present: its default session must be separately labeled and must reflect what its bundled components can actually start. PureDarwin console alone is not the macOS desktop and does not satisfy the full Live USB milestone.
+
+Keep Calamares as the installer engine on the Linux side. Give the installer a macOS-inspired visual language with original xnulinux branding and assets: a quiet layout, clear type hierarchy, one decision per screen, visible Back and Continue controls, and a progress screen with readable status. Keep target disk selection, the review of pending changes, and destructive confirmation explicit. Test legibility, keyboard navigation, and contrast. Do not present it as Apple's installer.
+
 ## Release acceptance
 
 - Build the ISO reproducibly from pinned inputs and publish the SHA-256 and build manifest. Test the image written to a physical USB drive, not just attached as a virtual optical disc.

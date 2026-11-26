@@ -5,6 +5,7 @@ set -euo pipefail
 script_dir=$(cd "$(dirname "$0")/.." && pwd)
 . "$script_dir/scripts/lib/publish-file-no-replace.sh"
 work=$(mktemp -d)
+work=$(cd "$work" && pwd -P)
 trap 'rm -rf "$work"' EXIT
 
 regular="$work/existing.img"

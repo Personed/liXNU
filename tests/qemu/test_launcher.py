@@ -72,6 +72,16 @@ class QemuLauncherTest(unittest.TestCase):
             ):
                 qemu_vm.build_command(self.args)
 
+    def test_windows_without_sdl_gets_actionable_graphics_error(self):
+        self.args.display_backend = "sdl"
+        with mock.patch.object(qemu_vm.platform, "system", return_value="Windows"), \
+             mock.patch.object(qemu_vm.subprocess, "run", return_value=mock.Mock(stdout="gtk\n")):
+            with self.assertRaisesRegex(
+                ValueError,
+                "Windows graphical mode requires SDL; install QEMU with SDL support or omit --graphical",
+            ):
+                qemu_vm.build_command(self.args)
+
     def test_display_backend_requires_graphical_mode(self):
         argv = [
             "qemu-vm.py", str(self.disk),

@@ -74,12 +74,19 @@ Report the profile alongside the stage:
    of the collection and pristine disk. Use the disk's matching UUID file.
    [#4], [#5] and [#7] track work on build and image preparation; a fixture disk
    used to test extraction or partitioning is not a bootable test image.
-4. In one Linux terminal, capture the complete live kernel log from the boot attempt.
-   Keep this unfiltered log so the XNU DRAM interval and execution messages are not
-   discarded; the `fki: darwin console:` lines are included in the same capture.
+4. Immediately before starting one manual boot invocation, begin capturing the complete
+   live kernel log. Keep this unfiltered log so the XNU DRAM interval and execution
+   messages are not discarded; the `fki: darwin console:` lines are included in the
+   same capture.
    ```sh
    sudo journalctl -kf -n 0 -o cat | tee /var/tmp/xnulinux-kernel.log
    ```
+   The launcher may retry a failed contiguous allocation; each such attempt records
+   `xnu: contiguous allocation failed, err`. Match the DRAM interval and XNU execution
+   evidence that follow the last allocation-failure record in this captured stream.
+   After allocation succeeds, the launcher does not start another retry. Its archived
+   `--wait` log can contain multiple allocation attempts from the same invocation, so
+   use this ordering to associate the interval with the attempt that entered XNU.
    In a second terminal at the checkout, point the boot script to the absolute
    paths for your disk and UUID file. Set `RAM_MB` to a tested value that fits
    your carve-out; 7900 MiB is the existing example for an 8 GiB carve-out.

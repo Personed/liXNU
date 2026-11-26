@@ -133,8 +133,8 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 
 Run `scripts/xnulinux-boot.sh --check` on the Linux host (inside the Linux VM if you use one). It checks the
 architecture, page size, headers for the running kernel, and the compiler selected by Kbuild before you prepare a disk. It also
-reports when Linux does not advertise address pointer authentication. Booting XNU also depends on the FKI
-backend and its memory setup.
+reports when Linux does not advertise address pointer authentication. Use the [host-preparation guide](docs/hosted-service.md#3-operator-preparing-a-host)
+for FKI carve-out setup; booting XNU also depends on the FKI backend and its memory setup.
 
 - An arm64 Linux host with PAC (`FEAT_PAuth`), 4K pages, and at least 16 GB of RAM (8 GB reserved for the hosted
   kernel). Tested on:
@@ -150,6 +150,13 @@ backend and its memory setup.
 - Linux on an Intel or AMD x86_64 PC. Kernel versions, CPU features, RAM, and page-size requirements are being established by the port.
 - User-provided macOS Tahoe 26 x86_64 artifacts that match the selected XNU build. No Apple system image or binary is provided here.
 - The x86_64 FKI host-backend build merged in [#48](https://github.com/Personed/xnulinux/pull/48), and the fail-closed x86_64 XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Neither milestone provides native XNU execution. The QEMU/KVM launcher below is a separate optional guest experiment.
+
+### Experimental Intel/AMD PC route via an ARM64 Linux VM (QEMU TCG)
+
+This route is under validation: QEMU TCG boots ARM64 Linux on the x86-64 host, then the hosted-XNU modules run inside
+that guest. It does not require VT-x or AMD-V and is separate from the native x86_64 hosted-XNU target above. CI has
+started ARM64 Linux guests, but complete PureDarwin boot on this profile is not yet validated. See the
+[QEMU guide](docs/qemu.md) for host requirements and installation steps.
 
 ## Building and running
 

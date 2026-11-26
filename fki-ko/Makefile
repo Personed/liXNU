@@ -5,4 +5,5 @@ ifeq ($(CONFIG_L4H),y)
 fki-y += fki_l4h.o
 else
 fki-$(CONFIG_ARM64) += fki_arm64.o
+fki-$(CONFIG_X86_64) += fki_x86_64.o fki_x86_64_stack.o
 endif

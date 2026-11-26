@@ -1,8 +1,17 @@
-# Experimental x86_64 QEMU/KVM guest launcher
+# x86_64 PC support
 
-This optional launcher runs a user-prepared macOS Tahoe 26 guest through QEMU/KVM. It does not build or load the
-architecture-matched `xnu.ko` and `fki.ko` required by the native x86_64 hosted-XNU target. It remains useful as a
-separate guest experiment; it does not establish native x86_64 support. The ARM64 direct-kernel path remains unchanged.
+The native x86_64 hosted-XNU port is in progress. The FKI Linux host backend now builds on x86_64 and preserves the
+existing ARM64 backend, but it reports no XNU execution capabilities. The current XNU implementation in `xnu_main.c`
+and `world.S` is AArch64-only and requires the FKI PAC capability. The x86_64 fail-closed XNU stub is tracked
+separately in PR #47; it is not part of this FKI change and does not execute XNU. The architecture-specific XNU entry,
+context switch, address-space and fault paths remain to be implemented and verified before macOS can run natively on
+x86_64.
+
+## Supplemental QEMU/KVM guest path
+
+The optional x86_64 launcher runs a user-prepared macOS Tahoe 26 guest through QEMU/KVM. This guest path complements
+the native port and does not build or load the project's `xnu.ko`. Intel and AMD remain separate acceptance targets;
+neither is marked supported until tested on physical hardware.
 
 ## Host prerequisites
 
@@ -59,9 +68,10 @@ tests/x86_64/tcg-smoke.sh /path/to/x86_64/vmlinuz /path/to/initrd.cpio.gz
 The smoke initramfs must print `XNU_LINUX_TCG_BOOTED` on its serial console and shut down before the timeout. TCG boots
 only a disposable Linux guest; it does not demonstrate macOS boot, KVM, Intel/AMD compatibility or useful performance.
 
-The native-port probes `build-fki.sh KDIR` and `build-xnu-main.sh KDIR` currently expose missing FKI architecture
-hooks and AArch64-only XNU assembly on an x86_64 kernel tree. These failures document incomplete port work; they are not
-an accepted x86_64 build result. The QEMU/KVM launcher below remains independent of that port.
+`build-fki.sh KDIR` now builds the x86_64 FKI host backend. `build-xnu-main.sh KDIR` remains a diagnostic probe and
+currently exposes AArch64-specific assumptions in `xnu_main.c`; it is not yet an x86_64 pass condition. The native
+port must keep XNU execution capability disabled until its context switch, memory isolation and exception paths are
+implemented.
 
 ## Evidence and limits
 
@@ -78,22 +88,18 @@ an accepted x86_64 build result. The QEMU/KVM launcher below remains independent
   `XNU_LINUX_TCG_BOOTED` and powered off cleanly.
 - The actual QEMU 10.0.13 launcher passed `--check` with real `qemu-img`, and a paused TCG invocation accepted its Q35,
   OVMF, AppleSMC, AHCI, E1000, USB and VGA arguments. This checked command/device setup only.
-- An initial direct x86 FKI build, before the native backend work, failed modpost because architecture hooks were
-  missing. The host-side FKI backend build in [PR #48](https://github.com/Personed/xnulinux/pull/48) passes against
-  Debian 6.12.118 x86_64 headers. Its capability mask is zero. [PR #47](https://github.com/Personed/xnulinux/pull/47)
-  adds a fail-closed x86_64 XNU module target; neither change enters XNU. `xnu_main.c` and `world.S` still contain
-  AArch64-only code, and the x86_64 XNU entry, world switch, address-space and fault paths remain unimplemented. The
-  optional QEMU/KVM launcher is a separate guest experiment and is not a substitute for that work.
+- The x86_64 FKI module now builds against Debian 6.12.118 x86_64 headers. It reports zero execution capabilities,
+  and the current XNU startup requires `FKI_CAP_PAC`. `xnu_main.c` and `world.S` still contain AArch64-only code;
+  native macOS execution is not implemented. PR #47 tracks a separate x86_64 fail-closed stub; it does not validate
+  native execution.
 - ARM64 `fki.ko` and `xnu.ko` cross-compiled against Debian 6.12.118 ARM64 headers. This is a build check, not an ARM64
   runtime smoke test.
-- This environment has no `/dev/kvm`, no Tahoe disk and no physical Intel/AMD/ARM hardware. No native hosted-XNU boot,
-  QEMU/KVM macOS guest run, or hardware-integrity acceptance has been recorded.
+- This environment has no `/dev/kvm`, no Tahoe disk and no physical Intel/AMD/ARM hardware. No macOS boot, native KVM
+  run or hardware-integrity acceptance has been recorded.
 
-## Native x86_64 acceptance evidence still required
+## Acceptance evidence still required
 
-- Build architecture-matched XNU, machine-layer, kext, and collection outputs for x86_64, extending the existing FKI
-  host-backend build, while retaining ARM64 builds.
-- Verify entry/return, fault recovery, Linux register/FPU/memory state, host syscalls, disk, input, network, display, and clean shutdown.
-- Boot Tahoe 26 to the desktop through the native hosted-XNU path on physical Intel and AMD PCs separately. Record CPU model/features, Linux kernel, RAM, page size, matching system build, host-integrity checks, and results.
+- Boot Tahoe 26 to the desktop on physical Intel and AMD PCs separately. Record CPU model/features, Linux kernel,
+  RAM, guest build, display/input/network/disk results, shutdown and host-integrity checks.
 - Re-run the documented macOS 27 ARM64 desktop smoke on supported ARM64 hardware and record the result.
 - Keep support rows separate and claim only combinations with complete logs and passing results.

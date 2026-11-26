@@ -33,6 +33,18 @@ mirror() {	# mirror SRC DST: DST holds exactly SRC's files
   for f in $(ls -A "$1"); do cmp -s "$1/$f" "$2/$f" || cp "$1/$f" "$2/$f"; done
 }
 rm -rf $T/osfmk/corecrypto $T/osfmk/arm64/corecrypto
+# The pinned XNU tree's x86-specific sanitizer denylists name two source files
+# under corecrypto/. They are removed above because Apple's corecrypto sources
+# are excluded from xnulinux's build, but XNU validates every exact denylist
+# path even when the target is ARM64. Remove only those stale entries; the
+# wildcard exclusions remain harmless and the ARM64 denylists are unchanged.
+for denylist in "$T/san/memory/kasan-denylist-x86_64" "$T/san/coverage/kcov-denylist-x86_64"; do
+  [ -f "$denylist" ] || continue
+  sed -i \
+    -e '/^src:\.\/osfmk\/corecrypto\/cc_clear\.c$/d' \
+    -e '/^src:\.\/osfmk\/corecrypto\/ccdrbg_nisthmac\.c$/d' \
+    "$denylist"
+done
 mirror "$P"/corecrypto/include/corecrypto $T/EXTERNAL_HEADERS/corecrypto
 mirror "$P"/corecrypto/kernel $T/osfmk/xnulinux_crypto
 mkdir -p out/k27/obj

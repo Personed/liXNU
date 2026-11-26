@@ -265,23 +265,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # All hosts boot the exact same guest kernel/initramfs and PureDarwin disk artifacts.
+      - name: Initialize host report before artifact preparation (POSIX)
+        if: runner.os != 'Windows'
+        run: python3 tests/puredarwin/run-tcg-e2e.py --initialize-host-report
+      - name: Initialize host report before artifact preparation (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python tests/puredarwin/run-tcg-e2e.py --initialize-host-report
       - name: Download the ARM64 Linux guest inputs
+        id: guest_artifact
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: puredarwin-e2e-guest
           path: ${{ runner.temp }}/puredarwin-e2e-guest
       - name: Download the PureDarwin system disk
+        id: disk_artifact
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: puredarwin-e2e-disk
           path: ${{ runner.temp }}/puredarwin-e2e-disk
       - name: Install QEMU ARM system emulation on Linux
+        id: install_qemu_linux
         if: runner.os == 'Linux'
         continue-on-error: true
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq qemu-system-arm
       - name: Install QEMU ARM system emulation on Windows
+        id: install_qemu_windows
         if: runner.os == 'Windows'
         continue-on-error: true
         shell: pwsh
@@ -290,14 +303,24 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Join-Path $env:ProgramFiles 'qemu' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install QEMU ARM system emulation on macOS
+        id: install_qemu_macos
         if: runner.os == 'macOS'
         continue-on-error: true
         run: brew install qemu
       - uses: actions/setup-python@v5
+        id: setup_python
+        continue-on-error: true
         with:
           python-version: "3.12"
       - name: Boot PureDarwin and require the console command plus clean halt (POSIX)
         if: runner.os != 'Windows'
+        env:
+          XNULINUX_GUEST_ARTIFACT_OUTCOME: ${{ steps.guest_artifact.outcome }}
+          XNULINUX_DISK_ARTIFACT_OUTCOME: ${{ steps.disk_artifact.outcome }}
+          XNULINUX_QEMU_LINUX_OUTCOME: ${{ steps.install_qemu_linux.outcome }}
+          XNULINUX_QEMU_WINDOWS_OUTCOME: ${{ steps.install_qemu_windows.outcome }}
+          XNULINUX_QEMU_MACOS_OUTCOME: ${{ steps.install_qemu_macos.outcome }}
+          XNULINUX_PYTHON_SETUP_OUTCOME: ${{ steps.setup_python.outcome }}
         run: |
           python3 tests/puredarwin/run-tcg-e2e.py \
             "$RUNNER_TEMP/puredarwin-e2e-guest/Image" \
@@ -306,6 +329,13 @@ jobs:
             "$RUNNER_TEMP/puredarwin-tcg-serial.log"
       - name: Boot PureDarwin and require the console command plus clean halt (Windows)
         if: runner.os == 'Windows'
+        env:
+          XNULINUX_GUEST_ARTIFACT_OUTCOME: ${{ steps.guest_artifact.outcome }}
+          XNULINUX_DISK_ARTIFACT_OUTCOME: ${{ steps.disk_artifact.outcome }}
+          XNULINUX_QEMU_LINUX_OUTCOME: ${{ steps.install_qemu_linux.outcome }}
+          XNULINUX_QEMU_WINDOWS_OUTCOME: ${{ steps.install_qemu_windows.outcome }}
+          XNULINUX_QEMU_MACOS_OUTCOME: ${{ steps.install_qemu_macos.outcome }}
+          XNULINUX_PYTHON_SETUP_OUTCOME: ${{ steps.setup_python.outcome }}
         shell: pwsh
         run: |
           python tests/puredarwin/run-tcg-e2e.py "$env:RUNNER_TEMP\puredarwin-e2e-guest\Image" "$env:RUNNER_TEMP\puredarwin-e2e-guest\initramfs.cpio.gz" "$env:RUNNER_TEMP\puredarwin-e2e-disk\pd.img" "$env:RUNNER_TEMP\puredarwin-tcg-serial.log"

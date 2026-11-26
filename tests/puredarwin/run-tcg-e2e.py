@@ -44,13 +44,15 @@ def host_facts() -> dict:
     system = info.system
     processor = platform.processor()
     memory_bytes = None
+    memory_available_bytes = None
 
     if system == "Linux":
         try:
             for line in Path("/proc/meminfo").read_text().splitlines():
                 if line.startswith("MemTotal:"):
                     memory_bytes = int(line.split()[1]) * 1024
-                    break
+                elif line.startswith("MemAvailable:"):
+                    memory_available_bytes = int(line.split()[1]) * 1024
             for line in Path("/proc/cpuinfo").read_text(errors="replace").splitlines():
                 if line.lower().startswith(("model name", "hardware")):
                     processor = line.split(":", 1)[-1].strip()
@@ -62,6 +64,16 @@ def host_facts() -> dict:
         raw_memory = command_output(["sysctl", "-n", "hw.memsize"])
         if raw_memory.isdigit():
             memory_bytes = int(raw_memory)
+        vm_stat = command_output(["vm_stat"])
+        page_size_match = re.search(r"page size of (\d+) bytes", vm_stat)
+        if page_size_match:
+            page_size = int(page_size_match.group(1))
+            available_pages = 0
+            for label in ("Pages free", "Pages inactive", "Pages speculative", "Pages purgeable"):
+                match = re.search(rf"^{re.escape(label)}:\s*([\d.]+)", vm_stat, re.MULTILINE)
+                if match:
+                    available_pages += int(float(match.group(1)))
+            memory_available_bytes = available_pages * page_size
         processor = command_output(["sysctl", "-n", "machdep.cpu.brand_string"]) or processor
     elif system == "Windows":
         class MEMORYSTATUSEX(ctypes.Structure):
@@ -81,6 +93,7 @@ def host_facts() -> dict:
         status.dwLength = ctypes.sizeof(status)
         if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
             memory_bytes = status.ullTotalPhys
+            memory_available_bytes = status.ullAvailPhys
 
     return {
         "system": system,
@@ -90,7 +103,12 @@ def host_facts() -> dict:
         "processor": processor or "unknown",
         "logical_cpus": os.cpu_count(),
         "memory_total_bytes": memory_bytes,
+        "memory_available_bytes": memory_available_bytes,
     }
+
+
+def available_memory_bytes() -> int | None:
+    return host_facts()["memory_available_bytes"]
 
 
 def qemu_path(path: Path) -> str:
@@ -142,18 +160,25 @@ def output_tail(value) -> str:
     return "\n".join((value or "").splitlines()[-80:])
 
 
-def save_report(report: dict, serial_log: Path) -> None:
+def save_report(report: dict, serial_log: Path, *, write_summary: bool = True) -> None:
+    report["host"]["memory_available_at_report_bytes"] = available_memory_bytes()
     temp_dir = Path(os.environ.get("RUNNER_TEMP", str(serial_log.parent)))
     report_path = temp_dir / "puredarwin-tcg-boot-report.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-    if not summary_path:
+    if not summary_path or not write_summary:
         return
 
     host = report["host"]
     memory = host["memory_total_bytes"]
     memory_text = f"{memory / (1024 ** 3):.1f} GiB" if memory else "unavailable"
+    available = host["memory_available_bytes"]
+    available_text = f"{available / (1024 ** 3):.1f} GiB" if available is not None else "unavailable"
+    available_at_report = host["memory_available_at_report_bytes"]
+    available_at_report_text = (
+        f"{available_at_report / (1024 ** 3):.1f} GiB" if available_at_report is not None else "unavailable"
+    )
     result = report["result"]
     lines = [
         "## x86-64 host to PureDarwin ARM64 console",
@@ -161,15 +186,20 @@ def save_report(report: dict, serial_log: Path) -> None:
         f"- Runner: {report['runner_label']}",
         f"- Host OS: {host['system']} {host['release']} ({host['architecture']})",
         f"- Host CPU: {host['processor']}",
-        f"- Host resources: {host['logical_cpus']} logical CPUs / {memory_text}",
+        f"- Host resources: {host['logical_cpus']} logical CPUs / {memory_text} total RAM",
+        f"- Available RAM snapshots: {available_text} before QEMU / {available_at_report_text} when report was written",
         f"- QEMU: {report['qemu_version']}",
         f"- Profile: {report['profile']}",
         f"- Result: {'passed' if result['passed'] else 'failed'}",
         "- Same downloaded guest inputs (SHA-256):",
-        f"  - ARM64 Linux kernel: {report['inputs']['kernel_sha256']}",
-        f"  - initramfs: {report['inputs']['initramfs_sha256']}",
-        f"  - PureDarwin disk: {report['inputs']['disk_sha256']}",
+        f"  - ARM64 Linux kernel: {report['inputs']['kernel_sha256'] or 'unavailable'}",
+        f"  - initramfs: {report['inputs']['initramfs_sha256'] or 'unavailable'}",
+        f"  - PureDarwin disk: {report['inputs']['disk_sha256'] or 'unavailable'}",
     ]
+    if report.get("preparation_steps"):
+        lines.append("- Preparation step outcomes: " + ", ".join(
+            f"{name}={outcome}" for name, outcome in report["preparation_steps"].items()
+        ))
     for name, manifest in report["manifests"].items():
         lines.extend([
             f"- {name} manifest SHA-256: {manifest['sha256'] or 'unavailable'}",
@@ -191,25 +221,53 @@ def save_report(report: dict, serial_log: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("kernel", type=Path)
-    parser.add_argument("initramfs", type=Path)
-    parser.add_argument("disk", type=Path)
-    parser.add_argument("serial_log", type=Path)
+    parser.add_argument("kernel", type=Path, nargs="?")
+    parser.add_argument("initramfs", type=Path, nargs="?")
+    parser.add_argument("disk", type=Path, nargs="?")
+    parser.add_argument("serial_log", type=Path, nargs="?")
     parser.add_argument("--timeout-seconds", type=int, default=14400)
     parser.add_argument("--qemu", default="qemu-system-aarch64")
+    parser.add_argument("--initialize-host-report", action="store_true")
     args = parser.parse_args()
+
+    if args.initialize_host_report:
+        temp_dir = Path(os.environ.get("RUNNER_TEMP", "."))
+        report = {
+            "runner_label": os.environ.get("XNULINUX_RUNNER_LABEL", "local"),
+            "host": host_facts(),
+            "qemu_version": "not checked",
+            "profile": PROFILE,
+            "inputs": {"kernel_sha256": None, "initramfs_sha256": None, "disk_sha256": None},
+            "manifests": {
+                "build": {"path": "build-manifest.txt", "sha256": None, "contents": None},
+                "guest": {"path": "guest-manifest.txt", "sha256": None, "contents": None},
+            },
+            "preparation_steps": {"status": "preflight only; boot has not started"},
+            "result": {
+                "passed": False,
+                "returncode": None,
+                "missing_markers": list(REQUIRED),
+                "error": "The boot runner did not complete; see the job step outcomes and logs.",
+            },
+        }
+        save_report(report, temp_dir / "puredarwin-tcg-serial.log", write_summary=False)
+        return 0
+
+    if any(path is None for path in (args.kernel, args.initramfs, args.disk, args.serial_log)):
+        parser.error("kernel, initramfs, disk, and serial_log are required unless --initialize-host-report is used")
+    missing_inputs = []
     for path in (args.kernel, args.initramfs, args.disk):
         if not path.is_file():
-            parser.error(f"missing input: {path}")
+            missing_inputs.append(path)
     if args.timeout_seconds < 1:
         parser.error("--timeout-seconds must be positive")
 
     host = host_facts()
     args.serial_log.parent.mkdir(parents=True, exist_ok=True)
     input_hashes = {
-        "kernel_sha256": sha256_file(args.kernel),
-        "initramfs_sha256": sha256_file(args.initramfs),
-        "disk_sha256": sha256_file(args.disk),
+        "kernel_sha256": sha256_file(args.kernel) if args.kernel.is_file() else None,
+        "initramfs_sha256": sha256_file(args.initramfs) if args.initramfs.is_file() else None,
+        "disk_sha256": sha256_file(args.disk) if args.disk.is_file() else None,
     }
     build_manifest_path = args.kernel.parent / "build-manifest.txt"
     guest_manifest_path = args.kernel.parent / "guest-manifest.txt"
@@ -221,6 +279,14 @@ def main() -> int:
         "qemu_version": "unavailable",
         "profile": PROFILE,
         "inputs": input_hashes,
+        "preparation_steps": {
+            "guest_artifact_download": os.environ.get("XNULINUX_GUEST_ARTIFACT_OUTCOME", "not-recorded"),
+            "disk_artifact_download": os.environ.get("XNULINUX_DISK_ARTIFACT_OUTCOME", "not-recorded"),
+            "qemu_install_linux": os.environ.get("XNULINUX_QEMU_LINUX_OUTCOME", "not-applicable"),
+            "qemu_install_windows": os.environ.get("XNULINUX_QEMU_WINDOWS_OUTCOME", "not-applicable"),
+            "qemu_install_macos": os.environ.get("XNULINUX_QEMU_MACOS_OUTCOME", "not-applicable"),
+            "python_setup": os.environ.get("XNULINUX_PYTHON_SETUP_OUTCOME", "not-recorded"),
+        },
         "manifests": {
             "build": {
                 "path": build_manifest_path.name,
@@ -248,6 +314,7 @@ def main() -> int:
             report["qemu_version"] = f"unavailable ({error})"
 
     manifest_errors = []
+    manifest_errors.extend(f"missing input file: {path}" for path in missing_inputs)
     expected_disk_sha = build_manifest.get("puredarwin_disk_sha256")
     if not build_manifest_text:
         manifest_errors.append("build-manifest.txt is missing")
@@ -272,6 +339,9 @@ def main() -> int:
     if not qemu:
         host_errors.append(f"QEMU executable not found: {args.qemu}")
     if manifest_errors or host_errors:
+        for name, outcome in report["preparation_steps"].items():
+            if outcome not in ("success", "skipped", "not-recorded", "not-applicable"):
+                host_errors.append(f"preparation step {name} outcome: {outcome}")
         report["result"] = {
             "passed": False,
             "returncode": None,

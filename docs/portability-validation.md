@@ -45,15 +45,20 @@ Report the profile alongside the stage:
 The full-run job in the [PureDarwin ARM64 image workflow](../.github/workflows/puredarwin-arm64-image.yml) builds the
 pinned image and kernel collection, creates the HFS+ disk on Linux, and boots an ARM64 Linux guest with QEMU TCG on an
 x86-64 runner. It requires the real PureDarwin console to run `uname -s` and print `XNULINUX_USERLAND_OK`, then requires
-the guest's own `halt`, XNU module unload, and Linux power-off. Each host report records OS, CPU, available RAM, QEMU
-version, guest input hashes, the build and guest manifests, missing boot markers, and the serial log tail; reports and
-the two source manifests are retained for 30 days.
+the guest's own `halt`, XNU module unload, and Linux power-off. Each host report records OS, CPU, total and available
+RAM snapshots before QEMU and when the report is written, QEMU version, guest input hashes, the build and guest
+manifests, preparation step outcomes, missing boot markers, and serial/QEMU output tails; reports and the two source
+manifests are retained for 30 days. Artifact-download and Python/QEMU setup failures continue to the report step so
+missing inputs or tools can be recorded for that host.
 
 ### Host matrix status
 
 Only a full boot to the Darwin marker followed by the guest-requested halt, XNU unload, and Linux power-off counts as
 success. Failed or skipped runs must retain their detected host RAM and reason. The job always requests the same fixed
-16 GiB guest profile; it does not lower the RAM requirement to make a runner pass.
+16 GiB QEMU guest-memory setting; it does not lower the RAM requirement to make a runner pass. Available-RAM values
+are snapshots, not a peak measurement. A successful boot shows that the configured profile completed on that runner;
+it does not prove that all 16 GiB stayed resident, that the host avoided swap/overcommit, or that other PCs will have
+enough physical memory for the same workload.
 
 | x86-64 host | Hosted runner RAM | Full-console status |
 | --- | ---: | --- |

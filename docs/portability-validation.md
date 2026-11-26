@@ -68,16 +68,17 @@ Report the profile alongside the stage:
   head `97727ac` adds a file-backed range check; run #74 failed in `kclink` before boot because file-backed
   `__TEXT_EXEC` and `__KLD` overlap at `0x3854000-0x3858000`, so run #72 does not validate that changed head. PR #50
   proposes relocating `__KLD`/`__LAST` and relinking; current head is `eb01aba` and run #89 is in progress. PR #52
-  pins the guest inputs but still targets older #50 head `cfc4406`; run #87 is in progress and needs a rebase onto
-  `eb01aba` before it validates the relink. PR #57 retains the final post-relink segment-check output but still
-  targets older #50 head `3dfcc0e`. Cross-host
+  pins the guest inputs and is rebased onto `eb01aba`; run #91 is queued. It uses an immutable Ubuntu snapshot,
+  but fixed expected hashes for downloaded packages and package-availability validation are still pending. PR #57
+  is also rebased onto `eb01aba`; run #92 is queued to validate retention of the final post-relink segment-check
+  output. Cross-host
   Windows and Intel-macOS checks are proposed in [#46](https://github.com/Personed/xnulinux/pull/46); its run #79
   built the guest image, then failed the XNU source build in `kclink` on the same file-backed `__TEXT_EXEC`/`__KLD`
   overlap. Guest preparation and host boots were skipped. It is based on the pre-relocation, pre-pin head and gives
   no host acceptance result. PR #58 adds pre-boot guest image/initramfs hash verification and host-only reports for early failures; its
-  run #88 is building the guest image. Follow-up tests cover hash mismatch blocking the QEMU command and document
-  that the Python RAM sample precedes artifact hash validation. Review still asks for coverage of the macOS
-  `vm_stat` unavailable-pages case and for the report to preserve the raw-byte SHA-256 of malformed UTF-8 manifests.
+  run #90 is building the guest image. Follow-up tests cover hash mismatch blocking the QEMU command, document that
+  the Python RAM sample precedes artifact hash validation, and preserve raw-byte SHA-256 for malformed UTF-8
+  manifests. Review still asks for coverage of the macOS `vm_stat` unavailable-pages case.
   After these changes are synchronized, repeat the
   console/halt flow and host matrix with matching guest input hashes. An earlier Windows job (#71) started QEMU 11.1.0 but hit an
   ARM64 write-permission fault in `macho_copy` while loading `xnu.ko` with the older #44 kernel layout; it did not

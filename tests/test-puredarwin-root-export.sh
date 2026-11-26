@@ -113,7 +113,7 @@ case "$last" in
       if [ "$EUID" -eq 0 ]; then
         "@REAL_CHOWN@" 65534:65534 "$last" "$last/sentinel"
       else
-        "@SUDO_BIN@" -n "@REAL_CHOWN@" 65534:65534 "$last" "$last/sentinel"
+        "@SUDO_BIN@" "@REAL_CHOWN@" 65534:65534 "$last" "$last/sentinel"
       fi
       printf '%s\n' "$last" >"@STAGE_MARKER@"
     } >>"@TRACE_PATH@" 2>&1
@@ -139,6 +139,11 @@ foreign_replacement=$(cat "$foreign_stage_marker")
 if [ ! -d "$foreign_replacement" ] || [ -L "$foreign_replacement" ]; then
   cat "$replacement_log" >&2
   echo 'Foreign-owner replacement is missing or is not a real directory.' >&2
+  exit 1
+fi
+if ! grep -F 'Refusing an unsafe private staging directory:' "$replacement_log" >/dev/null; then
+  cat "$replacement_log" >&2
+  echo 'Exporter did not reject the replacement during its staging-owner check.' >&2
   exit 1
 fi
 foreign_owner=$(run_as_root stat -c '%u' -- "$foreign_replacement")

@@ -258,7 +258,7 @@ def resolve_response_file(args, objroot):
 with tempfile.TemporaryDirectory() as fixture_dir:
     fixture_objroot = pathlib.Path(fixture_dir).resolve()
     fixture_response = fixture_objroot / "b52759a1-common-args.resp"
-    fixture_response.write_text(r"-isysroot /tmp/sdk\ path with spaces" + "\n")
+    fixture_response.write_text(r"-isysroot /tmp/sdk\ path\ with\ spaces" + "\n")
     fixture = (
         r"/Applications/Xcode\ 26.1.1.app/Contents/Developer/Toolchains/"
         r"XcodeDefault.xctoolchain/usr/bin/clang @"

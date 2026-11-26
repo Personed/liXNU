@@ -71,8 +71,10 @@ kernel has; and a kext's load tag.
    scripts/mk-puredarwin-disk.sh root.tar.gz pd.img > pd.conf.new && mv pd.conf.new pd.conf
    ```
 
-   On Linux, install `hfsprogs` and `sfdisk` (the `fdisk` package on Debian and Ubuntu). The Linux kernel needs loop devices
-   and writable HFS+ support. The script uses root privileges for those operations and writes a non-journaled volume. After
+   Use a new output filename; the script refuses to replace an existing file, symlink, device or other destination. It
+   publishes the completed image with a hard link, so the output directory's filesystem must support hard links. On Linux,
+   install `hfsprogs` and `sfdisk` (the `fdisk` package on Debian and Ubuntu). The Linux kernel needs loop devices and
+   writable HFS+ support. The script uses root privileges for those operations and writes a non-journaled volume. After
    an unclean shutdown, check the HFS+ partition on Linux before booting again.
 
    ```sh

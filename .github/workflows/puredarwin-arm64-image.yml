@@ -351,11 +351,17 @@ jobs:
             runner: macos-15-intel
             job_name: Boot PureDarwin under x86-64 QEMU TCG (macos-15-intel)
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 360
+    timeout-minutes: 120
     env:
       XNULINUX_RUNNER_LABEL: ${{ matrix.label }}
     steps:
       - uses: actions/checkout@v4
+      - name: Record host memory before artifact downloads (POSIX)
+        if: runner.os != 'Windows'
+        run: python3 tests/puredarwin/record-tcg-host.py
+      - name: Record host memory before artifact downloads (Windows)
+        if: runner.os == 'Windows'
+        run: python tests/puredarwin/record-tcg-host.py
       - name: Download the ARM64 Linux guest inputs
         uses: actions/download-artifact@v4
         with:
@@ -434,5 +440,6 @@ jobs:
             ${{ runner.temp }}/puredarwin-tcg-serial.log
             ${{ runner.temp }}/puredarwin-tcg-output.log
             ${{ runner.temp }}/puredarwin-tcg-boot-report.json
+            ${{ runner.temp }}/puredarwin-tcg-host-memory.txt
           if-no-files-found: ignore
           retention-days: 30

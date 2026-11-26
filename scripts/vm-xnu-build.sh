@@ -74,6 +74,16 @@ rm -f out/x12377/build/xnu/hdrs-obj/SETUP/decomment/decomment
 P=out/k27/xnu/bsd/net/pfvar.h
 sed -i 's|^#error$|#error "PF_MD5_DIGEST_LENGTH != MD5_DIGEST_LENGTH"|' $P
 grep -q '^#error "PF_MD5_DIGEST_LENGTH != MD5_DIGEST_LENGTH"' $P || { echo "pfvar.h: no diagnostic #error after the patch" >&2; exit 1; }
+# The same unifdef rejects control lines whose trailing comment continues onto the next line.
+python3 - <<'PYEOF'
+p = 'out/k27/xnu/libkern/libkern/c++/OSEndianTypes.h'
+s = open(p).read()
+for name in ('__cplusplus', '! _OS_OSENDIANHELPER_H'):
+    s = s.replace(f'#endif /* {name}\n        */', f'#endif /* {name} */')
+open(p, 'w').write(s)
+if '#endif /* __cplusplus */' not in s or '#endif /* ! _OS_OSENDIANHELPER_H */' not in s:
+    raise SystemExit('OSEndianTypes.h: multiline directive comments remain')
+PYEOF
 python3 scripts/setup-env.py x12377 --jobs 12
 # the first kernel build is the rebuild's: xnu-patches and xnulinux's corecrypto go into the tree before anything of it
 # is compiled (XNU's own corecrypto never is)

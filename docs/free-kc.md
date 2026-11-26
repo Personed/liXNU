@@ -51,8 +51,9 @@ kernel has; and a kext's load tag.
    back to `/tmp`, allowing the output directory itself to be on root-squashed NFS. Set `TMPDIR` to a local filesystem
    if neither path is accessible to the mount helper. The output path must be new, its parent directory must exist,
    and that filesystem
-   must support hard links. The archive
-   is published without replacing an existing file or symlink and has mode `0644`. The exporter refuses output paths
+   must support hard links. CI simulates root-squash permission checks on local storage; it does not validate a real NFS server
+   or export. Before relying on an NFS destination, verify that the export allows hard links and preserves the expected UID
+   ownership. The archive is published without replacing an existing file or symlink and has mode `0644`. The exporter refuses output paths
    with an ancestor controlled by another account or writable by a group or other user outside a sticky directory;
    use a private directory or a root-owned sticky shared directory such as `/tmp`.
    Build the input image with

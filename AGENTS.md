@@ -6,13 +6,13 @@ Run xnulinux on common x86-64 PCs through QEMU TCG by booting an ARM64 Linux gue
 
 - **x86-64 PC via QEMU TCG:** boot ARM64 Linux and run the ARM64-only `fki.ko` and `xnu.ko` modules inside that guest. The target for this goal is a real PureDarwin console command and guest-issued clean halt. TCG does not require VT-x/AMD-V, but memory needs and speed vary by PC; report the exact tested profile and do not claim every PC from one CI run.
 - **Native ARM64 Linux:** preserve the existing direct XNU-in-Linux runtime using `fki.ko` and `xnu.ko`, including its build and runtime behavior.
+- **Separate native x86_64 prototype:** PRs #47/#48/#49 explore an x86_64 FKI backend and fail-closed XNU stub. They do not execute XNU and are not the active acceptance route; keep x86_64 and ARM64 kernel header trees separate.
 - **Separate x86-64 macOS/KVM experiment:** a user-prepared Tahoe guest is a distinct experiment. The project modules remain ARM64-only; do not present them as an x86 runtime or add unsafe no-op x86 hooks. A Linux TCG boot is not evidence of a macOS/KVM boot.
-- **Separate native x86_64 prototype:** #48 builds an x86_64 FKI backend and #47 provides a fail-closed XNU stub. Neither executes XNU on x86_64, and neither replaces the active TCG/PureDarwin goal. Use matching kernel headers for each architecture; do not reuse one `KDIR` for both. The x86_64 XNU runtime remains unimplemented.
 
 ## x86-64 QEMU TCG guest
 
 - Use QEMU TCG on the x86-64 PC to boot ARM64 Linux; build and load `fki.ko` and `xnu.ko` inside the guest. Firmware, Linux userspace, FKI allocation, XNU execution, the PureDarwin console, and guest shutdown are separate evidence stages.
-- The full PureDarwin acceptance profile in #36 uses 16 GiB of ARM64 guest RAM plus host overhead. Record the host CPU, RAM, OS, QEMU version, guest kernel/config, carve-out and console result. Do not claim practical TCG speed or compatibility with lower-memory PCs until those profiles are tested.
+- The full PureDarwin acceptance profile in #36 uses 16 GiB of ARM64 guest RAM plus host overhead. Before preparing artifacts, require at least 20 GiB total physical host RAM and 4 GiB currently available; record both measurements and their phase. This is a capacity screen for the reference profile, not a measured universal minimum. Record the host CPU, RAM, OS, QEMU version, guest kernel/config, carve-out and console result. Do not claim practical TCG speed or compatibility with lower-memory PCs until those profiles are tested.
 - TCG acceptance does not establish a desktop, GPU, networking, KVM, macOS, or universal hardware support.
 
 ## Separate x86-64 macOS/KVM experiment
@@ -52,22 +52,6 @@ git diff --check
 ```
 
 When a disposable x86_64 Linux kernel and initramfs are available, run `tests/x86_64/tcg-smoke.sh KERNEL INITRD` and report that it is a TCG-only Linux smoke test. Preserve the ARM64 module CI in `.github/workflows/modules.yml`; run its build steps or equivalent ARM64 cross-build after shared kernel-module changes.
-
-For the separate x86_64 backend prototype, keep x86_64 and ARM64 kernel header trees separate. Run x86_64 commands on an x86_64 Linux host with matching headers; run ARM64 commands on an ARM64 Linux host with matching headers. Pass `ARCH` explicitly to direct Kbuild commands. The x86_64 FKI helper runs on its matching x86_64 host/header tree and uses native Kbuild architecture. The x86_64 FKI build compiles only its host backend; the x86_64 XNU target is a refusal stub, not a runtime implementation. Its stub-load script starts a disposable VM and taints only that guest kernel. On Debian/Ubuntu, builds need `build-essential` and matching headers; the stub VM test also needs `qemu-system-x86`, `busybox-static`, `cpio`, `kmod`, `sudo`, and APT access to the matching `linux-image-unsigned-$KERNEL_RELEASE` package. CI covers the x86_64 FKI build, x86_64 fail-closed XNU test, and ARM64 module build.
-
-```sh
-X86_KDIR=/path/to/x86_64/kernel-headers
-ARM64_KDIR=/path/to/arm64/kernel-headers
-
-tests/x86_64/build-fki.sh "$X86_KDIR"
-make -C "$X86_KDIR" ARCH=x86_64 M="$PWD/xnu-ko" modules
-tests/x86_64/test-xnu-stub-vm.sh "$X86_KDIR"  # run on x86_64 host; script boots the disposable VM
-
-make -C "$ARM64_KDIR" ARCH=arm64 M="$PWD/fki-ko" modules
-make -C "$ARM64_KDIR" ARCH=arm64 M="$PWD/xnu-ko" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
-```
-
-For the active PureDarwin route, use the focused layout/copy checks and the full #36/#46 workflow; a Linux TCG smoke alone does not establish XNU or console boot.
 
 ## Blockers and evidence
 

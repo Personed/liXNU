@@ -10,7 +10,7 @@ Task 1: Ruling: Bind a persistent overlay to a source-image SHA-256 recorded in 
 
 Task 1: Ruling: Pass the local Apple SMC OSK through a mode-0600 temporary QEMU config instead of process arguments or environment — this reduces exposure through process listings and environment inspection — cost if wrong: QEMU must support `-readconfig` for the Apple SMC device configuration.
 
-Project workflow ruling: No merge or auto-merge is authorized without an explicit user instruction. This optional QEMU/KVM guest path is separate from the active x86-64 TCG → ARM64 Linux → PureDarwin acceptance route.
+Project workflow ruling: The active target is x86-64 PC → QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin console. Required checks must pass, and no merge or auto-merge is authorized without an explicit user instruction.
 
 Pre-flight: Task 1 produces launcher flags and disk/state paths consumed by Task 3 documentation; Task 2 produces the TCG smoke invocation and evidence consumed by Task 3. No direct code interfaces are shared by Tasks 1 and 2. Task 4 consumes Task 3's evidence matrix and real hardware requirements.
 
@@ -18,6 +18,6 @@ Task 1: complete — fake-QEMU tests cover preflight errors, CPU/KVM gating, TCG
 
 Task 2: complete — fake harness tests pass; the disposable Debian 6.12.118 guest booted with QEMU 10.0.13 TCG. This is Linux-only development evidence.
 
-Task 3: in progress — documentation identifies the QEMU TCG → ARM64 Linux → PureDarwin route as the active target, preserves direct ARM64 hosting, and labels the Tahoe/KVM guest and native x86_64 port as separate experiments.
+Task 3: in progress — documentation records the active x86-64 TCG/ARM64 Linux/PureDarwin route, keeps native ARM64 support, and labels macOS/KVM as a separate experiment. On #36 head `5312b29`, run #72 passed the PureDarwin console command, guest halt, XNU unload, Linux power-off, and QEMU exit checks on Ubuntu x86-64. Inspection later found overlapping `__TEXT_EXEC`/`__KLD` file-backed ranges; current head `97727ac` adds a checker and run #74 is pending, with PR #50 proposing safe `__KLD`/`__LAST` relocation. An earlier Windows run on the old #44 layout started QEMU but faulted while loading XNU before reaching Darwin; it is not a Windows host result. PR #46's run #75 is still building the guest image. The Ubuntu guest-kernel package remains unpinned. No merge authorization is recorded.
 
-Task 4: pending physical Intel and AMD acceptance for this optional guest launcher. These results remain separate from the active TCG/PureDarwin acceptance.
+Task 4: pending broader x86-64 PC profiles, including lower-memory machines and practical TCG performance. The separate macOS/KVM experiment still requires its own user-prepared image and physical-hardware validation.

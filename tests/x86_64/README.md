@@ -92,11 +92,11 @@ The QEMU/KVM launcher below remains a separate guest experiment.
 - This environment has no `/dev/kvm`, no Tahoe disk and no physical Intel/AMD/ARM hardware. No native hosted-XNU boot,
   QEMU/KVM macOS guest run, or hardware-integrity acceptance has been recorded.
 
-## Native x86_64 acceptance evidence still required
+## Separate QEMU/KVM guest acceptance evidence still required
 
-- Build architecture-matched XNU, machine-layer, kext, and collection outputs for x86_64, extending the existing FKI
-  host-backend build, while retaining ARM64 builds.
-- Verify entry/return, fault recovery, Linux register/FPU/memory state, host syscalls, disk, input, network, display, and clean shutdown.
-- Boot Tahoe 26 to the desktop through the native hosted-XNU path on physical Intel and AMD PCs separately. Record CPU model/features, Linux kernel, RAM, page size, matching system build, host-integrity checks, and results.
-- Re-run the documented macOS 27 ARM64 desktop smoke on supported ARM64 hardware and record the result.
-- Keep support rows separate and claim only combinations with complete logs and passing results.
+- Boot a user-prepared Tahoe 26 x86_64 disk to the desktop through this launcher on physical Intel and AMD Linux hosts
+  separately. Record CPU model/features, Linux kernel, QEMU version, KVM use, RAM, and the guest's OpenCore setup.
+- Verify guest-initiated clean shutdown and host integrity before and after each run. A TCG Linux smoke or a paused
+  QEMU invocation does not establish this guest acceptance.
+- Keep results for this optional macOS guest separate from the active x86-64 TCG → ARM64 Linux → PureDarwin route.
+  The stage-specific evidence template is in [`docs/portability-validation.md`](../../docs/portability-validation.md).

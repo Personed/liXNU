@@ -1,13 +1,9 @@
 <!-- SPDX-License-Identifier: GPL-2.0-only -->
 # Portability validation
 
-Record the **host, runtime, and furthest verified stage** for each result. Booting an
+Record the **host, runtime, and furthest verified stage** for each result. Booting the
 ARM64 Linux VM does not mean that XNU ran. Building or probing a module does not mean
 Darwin userspace ran. A PureDarwin shell does not establish macOS compatibility.
-
-The active x86-64 target is QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin console. The
-separate native x86-64 Tahoe port and the QEMU/KVM macOS guest launcher do not replace
-or establish this acceptance route.
 
 | Stage | What counts as evidence |
 | --- | --- |
@@ -17,10 +13,10 @@ or establish this acceptance route.
 | FKI carve-out allocation | A probe requests a known size and verifies the returned physical interval `[pa, pa + size)` is fully inside the configured carve-out `[carve_base, carve_base + (carve_mb << 20))`. It then frees and repeats the allocation without reloading FKI, verifying the interval is reused. Record the request, returned interval, and configured bounds. This validates allocation and reuse for the tested profile only. |
 | XNU module probe | `xnu.ko` resolves its FKI dependencies and reaches the expected missing-image error. This checks the module and loader path without a real collection; it does not show that XNU allocated from the carve-out. |
 | XNU uses the carve-out | With a compatible collection loaded, capture `xnu: contiguous DRAM at phys` and `xnu: contiguous DRAM size` from the host log. Mark this stage only when that complete returned interval lies inside the configured carve-out. The separate FKI probe above does not establish this stage. |
-| PureDarwin userspace | The real, paired PureDarwin disk and free kernel collection boot; execute a command on the Darwin console and observe the result. Record a clean halt separately. |
+| PureDarwin userspace | The real, paired PureDarwin disk and free kernel collection boot; a command produces output on the Darwin console. Record the command and output. This confirms console userspace, not clean shutdown. |
+| TCG guest shutdown | The guest issues `halt`; XNU unloads; ARM64 Linux powers off (`reboot: Power down`); and QEMU exits with status 0. Record each marker. Stopping QEMU from the host is not a guest shutdown pass. |
 | ARM64 hosted macOS desktop | A user-provided compatible system disk and matching XNU collection reach an interactive desktop through the ARM64 FKI/XNU path; record input, rendering backend, and networking separately. |
-| Separate native x86_64 hosted macOS experiment | Architecture-matched x86_64 `fki.ko` and `xnu.ko` host Tahoe 26 directly on Linux and reach the desktop on a physical Intel or AMD PC. Record host-integrity checks and guest-initiated clean shutdown; report Intel and AMD separately. |
-| Separate QEMU/KVM guest desktop | A user-prepared Tahoe 26 x86_64 disk reaches the desktop in a QEMU/KVM guest. This launcher does not use the project's hosted-XNU modules and is not evidence for the active TCG/PureDarwin goal. |
+| Separate x86_64 Tahoe/KVM experiment | A user-prepared Tahoe 26 x86_64 disk with EFI/OpenCore reaches the desktop under QEMU/KVM on physical Intel or AMD hardware. This launcher does not use the project's ARM64 XNU collection; record KVM use, host-integrity checks, and guest-initiated clean shutdown. |
 
 Report the profile alongside the stage:
 
@@ -38,39 +34,57 @@ Report the profile alongside the stage:
   a minimal test initramfs, not a full installed Linux distribution. This validates FKI's
   mapping and reuse in that profile; it is not a physical-PC compatibility claim, an XNU
   carve-out use test, or a PureDarwin boot.
-- **x86-64 PC → QEMU TCG → ARM64 Linux → PureDarwin console:** this is the active full
-  route, with acceptance tracked in [#36](https://github.com/Personed/xnulinux/pull/36)
-  and cross-host jobs in [#46](https://github.com/Personed/xnulinux/pull/46). Its workflow builds a paired PureDarwin image and
-  collection, requires a Darwin console command and guest-issued halt, then verifies module
-  unload and Linux power-off. The current profile uses 16 GiB guest RAM, 4 KiB pages, PAC
-  at EL1, and a fixed FKI carve-out; results apply only to that measured profile and do not
-  establish Tahoe/KVM or support on every PC.
-- **Current PureDarwin head:** run #72 passed the complete console/halt flow on the earlier
-  #36 head `5312b29`. It does not validate current head `97727ac`, which added checks that
-  kernel segment copies preserve file-backed bytes. The free-collection link layout must be
-  corrected and the full boot repeated before counting current-head acceptance. PR #50 is
-  the provisional relink implementation; #52 pins the ARM64 guest kernel and records input
-  hashes on top of it. Then #36 and #46 must rerun with the same guest manifest and disk
-  hashes across Linux, Windows, and Intel macOS.
-- **Hardware-capacity screen:** the full profile sets 16 GiB guest RAM and additionally
-  requires at least 20 GiB total physical host RAM and 4 GiB available before QEMU. Report
-  functional boot and capacity separately. A runner below either limit remains
-  capacity-limited even if QEMU overcommits and reaches the console.
-- **Separate native x86-64 hosted XNU on Intel/AMD Linux:** this experiment targets Tahoe 26.
-  Its design is mapped in [#49](https://github.com/Personed/xnulinux/pull/49), and the x86_64 FKI host-backend build is tracked in [#48](https://github.com/Personed/xnulinux/pull/48).
-  [#47](https://github.com/Personed/xnulinux/pull/47) adds a fail-closed XNU module target.
-  The FKI backend advertises no XNU execution capability; the architecture-specific XNU entry/world
-  switch and physical desktop acceptance are still pending.
-  For each host, record the CPU vendor/model/features, Linux kernel and configuration,
-  memory, page size, source and system build, desktop result, host-integrity checks before
-  and after, and guest-issued shutdown. Keep physical Intel and AMD evidence separate.
-- **Supplemental x86-64 macOS guest on Intel/AMD Linux:** the QEMU/KVM launcher in [#16]
-  is an optional guest path, not a port of the FKI/XNU modules. Record QEMU, accelerator,
-  Tahoe build, OpenCore configuration and guest result as launcher evidence only. An
-  x86_64 Linux TCG smoke is not evidence of macOS boot. See
-  [`tests/x86_64/README.md`](../tests/x86_64/README.md) for launcher prerequisites and limits.
+- **x86-64 macOS guest on Intel/AMD Linux:** the QEMU/KVM launcher in [#16] is a
+  separate experiment, not the active x86-64 TCG/PureDarwin target and not a port of the ARM64 XNU/FKI modules. It remains experimental
+  until physical Intel and AMD hosts reach the Tahoe 26 desktop and pass host-integrity
+  and clean-shutdown checks. Report KVM and TCG separately; an x86_64 Linux TCG smoke is
+  not evidence of macOS boot. For each physical host, record the CPU vendor/model/features,
+  Linux kernel, QEMU version and accelerator, Tahoe build, OpenCore configuration, desktop
+  result, host-integrity checks before and after, and guest-initiated shutdown. The ARM64
+  collection and FKI carve-out fields below do not apply to this profile. See
+  [`tests/x86_64/README.md`](../tests/x86_64/README.md) for host prerequisites and limits.
+- **x86-64 PC → QEMU TCG → ARM64 Linux → PureDarwin console:** acceptance is tracked
+  in [#36]. The reference job runs on Ubuntu 24.04 x86-64 with QEMU TCG and a 16 GiB
+  ARM64 Linux guest using `mem=7G`, 4 KiB pages, PAC at EL1, an 8,156 MiB FKI carve-out
+  at `0x200000000`, and 7,900 MiB for XNU. Record host CPU model/core count, OS/version,
+  total and available physical RAM, QEMU version, guest kernel release, and the complete
+  guest kernel `.config` or its SHA-256; report host RAM separately from the guest's
+  16 GiB allocation. Before artifact preparation, apply the reference-profile capacity
+  screen of at least 20 GiB total host RAM and 4 GiB available RAM, and record when those
+  measurements were taken. This operational screen is not a measured universal minimum
+  and does not establish practical performance on lower-memory PCs. Until PR #52 is
+  integrated and its availability checks pass, the #36 workflow selects Ubuntu's latest
+  generic ARM64 kernel package at run time; #52 proposes pinning package
+  `7.0.0-44.44~24.04.1` and recording input hashes. The first run (#69) built the
+  pinned image and HFS+ disk but failed at `kclink` on a `__TEXT_EXEC`/`__PRELINK_INFO`
+  overlap. At head `5312b29`, [run #72](https://github.com/Personed/xnulinux/actions/runs/45845795576)
+  completed the source build, guest preparation, and full QEMU TCG boot on Ubuntu 24.04 x86-64 with QEMU 8.2.2. The
+  runner reported an Intel Xeon 6975P-C, 4 CPUs, and `MemTotal: 16078396 kB`; the guest used Linux
+  `7.0.0-44-generic`, 4 KiB pages, PAC at EL1, and the 16 GiB allocation. It passed the Darwin command marker,
+  guest-issued halt, `xnu.ko` unload, Linux serial marker `reboot: Power down`, and QEMU exit status 0. Because the
+  runner's reported physical RAM was below the guest allocation, this proves the boot under that runner's memory
+  management; it does not prove all guest RAM stayed resident or that the host avoided swap/overcommit. A later
+  Mach-O inspection found `__TEXT_EXEC` and `__KLD` ranges overlap in the built image. Current #36
+  head `97727ac` adds a file-backed range check; run #74 failed in `kclink` before boot because file-backed
+  `__TEXT_EXEC` and `__KLD` overlap at `0x3854000-0x3858000`, so run #72 does not validate that changed head. PR #50
+  proposes relocating `__KLD`/`__LAST` and relinking; current run #86 is queued. PR #52's pinned package and
+  manifests are under validation in run #81. Cross-host Windows and Intel-macOS checks are proposed in
+  [#46](https://github.com/Personed/xnulinux/pull/46); its run #79 is still building the PureDarwin disk and is
+  based on the pre-relocation, pre-pin head. PR #58 adds pre-boot guest image/initramfs hash verification and
+  host-only reports for early failures; its run #85 is queued. After these changes are synchronized, repeat the
+  console/halt flow and host matrix with matching guest input hashes. An earlier Windows job (#71) started QEMU 11.1.0 but hit an
+  ARM64 write-permission fault in `macho_copy` while loading `xnu.ko` with the older #44 kernel layout; it did not
+  reach a Darwin marker, so this is not a Windows host pass or a Windows host limitation. PR #50 proposes relocating
+  The proposed public runners have 16 GB (Windows) and 14 GB (Intel macOS), below guest allocation
+  plus host overhead; larger runners or a validated lower-memory profile are needed
+  before those rows can be supported. This profile does not establish a universal
+  minimum, performance on every PC, a desktop, GPU/networking, or macOS/KVM.
 
 ## First end-to-end check for a new ARM64 FKI host profile
+
+This procedure runs XNU directly on an ARM64 Linux host. It verifies a guest-issued Darwin halt and XNU unload, but does
+not power off the outer Linux host. The x86-64 TCG acceptance above separately requires power-off of its disposable
+ARM64 Linux guest and a clean QEMU exit.
 
 1. Use a disposable machine or Linux VM and a writable copy of the test disk.
    Do not start the service before this manual run. If `/etc/xnulinux.conf`
@@ -138,27 +152,23 @@ Report the profile alongside the stage:
 
 ```text
 Repo commit(s) / PR(s):
-Profile (active x86-64 TCG/PureDarwin route, ARM64 hosted XNU, or separate native x86_64/QEMU-KVM experiment):
-Outer machine + CPU / OS + version:
+Profile (x86-64 TCG/PureDarwin, native ARM64, ARM64 hosted macOS desktop, or separate x86_64 Tahoe/KVM experiment):
+Outer machine + CPU model/core count / OS + version:
+Host physical RAM total / available RAM before the guest:
+Host RAM measurement phase (native preflight before artifact setup / Python after preparation before QEMU / final report):
+20 GiB / 4 GiB capacity screen result and any limiting reason:
 Runtime + version / accelerator:
 TCG Linux stage and result (if applicable; do not label as a macOS result):
 
 ARM64 FKI/PureDarwin profile (only when applicable):
-Linux distro / kernel / page size / PAC / userspace type:
-Memory / FKI carve-out / hosted CPUs:
+Linux distro/image / kernel release / full .config or SHA-256 / page size / PAC / userspace type:
+Guest RAM allocation / Linux mem= / FKI carve-out / hosted CPUs:
 FKI configuration / carve-out allocation and reuse result:
 XNU collection revision / digest and matching PureDarwin disk digest:
 XNU stage and contiguous DRAM interval / configured carve-out comparison:
 PureDarwin console command / guest-issued halt result:
 
-Native x86_64 hosted-XNU profile (only when applicable):
-CPU vendor/model/features / Linux kernel / page size / RAM:
-Tahoe build / matching XNU source and collection revision:
-Native hosted desktop / disk, input, network, rendering / result:
-Linux host-integrity checks before and during / result:
-Guest-issued shutdown / module unload / result:
-
-Supplemental QEMU/KVM guest profile (only when applicable):
+x86_64 Tahoe/KVM profile (only when applicable):
 Physical CPU vendor/model/features / Linux kernel / RAM:
 QEMU version / KVM active (yes/no):
 Tahoe build / prepared disk SHA-256 / OpenCore version and configuration:
@@ -188,3 +198,4 @@ artifacts. Remove machine identifiers, credentials and local paths before sharin
 [#7]: https://github.com/Personed/xnulinux/pull/7
 [#23]: https://github.com/Personed/xnulinux/pull/23
 [#16]: https://github.com/Personed/xnulinux/pull/16
+[#36]: https://github.com/Personed/xnulinux/pull/36

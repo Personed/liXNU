@@ -13,7 +13,8 @@ Darwin userspace ran. A PureDarwin shell does not establish macOS compatibility.
 | FKI carve-out allocation | A probe requests a known size and verifies the returned physical interval `[pa, pa + size)` is fully inside the configured carve-out `[carve_base, carve_base + (carve_mb << 20))`. It then frees and repeats the allocation without reloading FKI, verifying the interval is reused. Record the request, returned interval, and configured bounds. This validates allocation and reuse for the tested profile only. |
 | XNU module probe | `xnu.ko` resolves its FKI dependencies and reaches the expected missing-image error. This checks the module and loader path without a real collection; it does not show that XNU allocated from the carve-out. |
 | XNU uses the carve-out | With a compatible collection loaded, capture `xnu: contiguous DRAM at phys` and `xnu: contiguous DRAM size` from the host log. Mark this stage only when that complete returned interval lies inside the configured carve-out. The separate FKI probe above does not establish this stage. |
-| PureDarwin userspace and TCG guest shutdown | The real, paired PureDarwin disk and free kernel collection boot; a command produces output on the Darwin console; the guest issues `halt`; XNU unloads; ARM64 Linux powers off (`reboot: Power down`); and QEMU exits with status 0. Record every marker. Stopping QEMU from the host is not a pass. |
+| PureDarwin userspace | The real, paired PureDarwin disk and free kernel collection boot; a command produces output on the Darwin console. Record the command and output. This confirms console userspace, not clean shutdown. |
+| TCG guest shutdown | The guest issues `halt`; XNU unloads; ARM64 Linux powers off (`reboot: Power down`); and QEMU exits with status 0. Record each marker. Stopping QEMU from the host is not a guest shutdown pass. |
 | ARM64 hosted macOS desktop | A user-provided compatible system disk and matching XNU collection reach an interactive desktop through the ARM64 FKI/XNU path; record input, rendering backend, and networking separately. |
 | Separate x86_64 Tahoe/KVM experiment | A user-prepared Tahoe 26 x86_64 disk with EFI/OpenCore reaches the desktop under QEMU/KVM on physical Intel or AMD hardware. This launcher does not use the project's ARM64 XNU collection; record KVM use, host-integrity checks, and guest-initiated clean shutdown. |
 
@@ -52,13 +53,14 @@ Report the profile alongside the stage:
   kernel package at run time and records its release/config digest; pinning the package
   or repository snapshot is still needed for identical reruns. The first run (#69) built the
   pinned image and HFS+ disk but failed at `kclink` on a `__TEXT_EXEC`/`__PRELINK_INFO`
-  overlap. At current head `5312b29`, [run #72](https://github.com/Personed/xnulinux/actions/runs/45845795576)
+  overlap. At head `5312b29`, [run #72](https://github.com/Personed/xnulinux/actions/runs/45845795576)
   completed the source build, guest preparation, and full QEMU TCG boot on Ubuntu 24.04 x86-64. It passed the
   Darwin command marker, guest-issued halt, `xnu.ko` unload, Linux serial marker `reboot: Power down`, and QEMU exit
-  status 0. The review thread still requests the actual `__TEXT_EXEC`/`__KLD`/`__LAST` segment ranges; the tested
-  collection boots, but that layout question remains open. The full-console Linux job currently runs only on Ubuntu;
-  cross-host Windows/Intel-macOS jobs are proposed in [#46](https://github.com/Personed/xnulinux/pull/46) and have no
-  pass yet. Its proposed
+  status 0. A later Mach-O inspection found `__TEXT_EXEC` and `__KLD` ranges overlap in the built image. Current #36
+  head `97727ac` adds a file-backed range check; run #74 is rebuilding it, so run #72 does not yet validate that
+  changed head. The Ubuntu kernel package is still selected at runtime rather than pinned. Cross-host Windows and
+  Intel-macOS checks are proposed in [#46](https://github.com/Personed/xnulinux/pull/46); its run #75 is building
+  the guest image and has not reached the host matrix. Its proposed
   public runners have 16 GB (Windows) and 14 GB (Intel macOS), below guest allocation
   plus host overhead; larger runners or a validated lower-memory profile are needed
   before those rows can be supported. This profile does not establish a universal

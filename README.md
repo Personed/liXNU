@@ -104,12 +104,13 @@ additional physical RAM for the host OS and QEMU; report host total/available RA
 #36 run (#69) built the pinned image and HFS+ disk, but `kclink` failed on a `__TEXT_EXEC`/`__PRELINK_INFO` overlap.
 At head `5312b29`, [run #72](https://github.com/Personed/xnulinux/actions/runs/45845795576) completed the source build,
 prepared the guest, and passed the full console command, guest halt, XNU unload, Linux power-off, and QEMU exit checks
-on Ubuntu 24.04 x86-64. The review thread still asks for the actual `__TEXT_EXEC`/`__KLD`/`__LAST` ranges; the tested
-collection booted successfully, but the layout concern remains under review. Full-console Windows and Intel-macOS
-checks are proposed in #46 and remain pending. Its public runners are reported as 16 GB for Windows and 14 GB for
-Intel macOS, less than the 16 GiB guest allocation plus host overhead; use larger runners or mark those combinations
-unsupported for this profile if they cannot boot. The guest workflow still selects the latest Ubuntu ARM64 kernel at
-run time, so reruns are not yet pinned to identical kernel inputs. This is not a universal RAM minimum or a
+on Ubuntu 24.04 x86-64. A later Mach-O inspection found overlapping `__TEXT_EXEC`/`__KLD` ranges. Current #36 head
+`97727ac` adds a file-backed range check; run #74 is rebuilding it, so run #72 does not yet validate that changed
+head. Full-console Windows and Intel-macOS checks are proposed in #46; run #75 is still building the guest image.
+Its public runners are reported as 16 GB for Windows and 14 GB for Intel macOS, less than the 16 GiB guest allocation
+plus host overhead; use larger runners or mark those combinations unsupported for this profile if they cannot boot.
+The guest workflow still selects the latest Ubuntu ARM64 kernel at run time, so reruns are not yet pinned to identical
+kernel inputs. This is not a universal RAM minimum or a
 performance, GUI, networking, or Tahoe/KVM claim. See
 [PR #3](https://github.com/Personed/xnulinux/pull/3) for Windows/macOS/Linux host setup and
 [`docs/portability-validation.md`](docs/portability-validation.md) for stage-specific evidence.

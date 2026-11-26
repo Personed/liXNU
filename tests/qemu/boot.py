@@ -12,19 +12,18 @@ from tempfile import TemporaryDirectory
 SUCCESS_MARKER = "xnulinux QEMU smoke test passed"
 
 
-def guest_reported_success(log):
-    """Accept the unique success marker even if shutdown text shares its line."""
-    return log.count(SUCCESS_MARKER) == 1 and any(
-        line.startswith(SUCCESS_MARKER) for line in log.splitlines()
-    )
-
-
 def reports_smoke_success(log: str) -> bool:
-    marker = "xnulinux QEMU smoke test passed"
+    """Accept one exact marker, optionally followed by Linux's power-off text."""
+    if log.count(SUCCESS_MARKER) != 1:
+        return False
+
     shutdown_append = re.compile(
-        re.escape(marker) + r"(?:\[\s*\d+(?:\.\d+)?\]\s*)?reboot: Power down"
+        re.escape(SUCCESS_MARKER) + r"(?:\[\s*\d+(?:\.\d+)?\]\s*)?reboot: Power down"
     )
-    return any(line == marker or shutdown_append.fullmatch(line) for line in log.splitlines())
+    return any(
+        line == SUCCESS_MARKER or shutdown_append.fullmatch(line)
+        for line in log.splitlines()
+    )
 
 
 def main():

@@ -4,7 +4,7 @@
 
 import unittest
 
-from boot import reports_smoke_success
+from boot import SUCCESS_MARKER, reports_smoke_success
 
 
 class SmokeMarkerTests(unittest.TestCase):
@@ -30,7 +30,15 @@ class SmokeMarkerTests(unittest.TestCase):
         self.assertFalse(reports_smoke_success("xnulinux QEMU smoke test failed\n"))
 
     def test_embedded_marker_rejected(self):
-        self.assertFalse(reports_smoke_success("kernel: xnulinux QEMU smoke test passed\n"))
+        self.assertFalse(reports_smoke_success(f"kernel: {SUCCESS_MARKER}\n"))
+
+    def test_duplicate_markers_on_separate_lines_rejected(self):
+        console = f"{SUCCESS_MARKER}\n{SUCCESS_MARKER}\n"
+        self.assertFalse(reports_smoke_success(console))
+
+    def test_duplicate_markers_on_same_line_rejected(self):
+        console = f"{SUCCESS_MARKER}{SUCCESS_MARKER}\n"
+        self.assertFalse(reports_smoke_success(console))
 
 
 if __name__ == "__main__":

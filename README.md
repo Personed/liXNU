@@ -161,11 +161,32 @@ backend and its memory setup.
 - A macOS 27 installation (an Apple Virtualization VM disk) of your own. **No Apple binaries are in this repository or
   distributed by it**: the kexts Apple ships, the macOS system disk and its trust cache come from your own installation.
 
-### x86_64 native hosted-XNU target
+### Separate experimental x86_64 hosted-XNU path
 
-- Linux on an Intel or AMD x86_64 PC. Kernel versions, CPU features, RAM, and page-size requirements are being established by the port.
-- User-provided macOS Tahoe 26 x86_64 artifacts that match the selected XNU build. No Apple system image or binary is provided here.
-- The x86_64 FKI host-backend build merged in [#48](https://github.com/Personed/xnulinux/pull/48), and the fail-closed x86_64 XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Neither milestone provides native XNU execution. The QEMU/KVM launcher below is a separate optional guest experiment.
+- The native hosted-XNU/Tahoe experiment targets Linux on Intel or AMD x86_64 with matching user-provided macOS artifacts. The FKI host backend and fail-closed XNU stub in [#48](https://github.com/Personed/xnulinux/pull/48) and [#47](https://github.com/Personed/xnulinux/pull/47) do not provide native XNU execution.
+
+### x86-64 PC via QEMU TCG
+
+- The reusable host launcher and setup for Windows/macOS/Linux are documented in [PR #3](https://github.com/Personed/xnulinux/pull/3). Its separate CI smoke reaches the ARM64 UEFI shell on Linux x86-64, Windows x86-64, and macOS Apple Silicon; the Apple Silicon result is not x86-64 host coverage. Intel macOS and Windows ARM64 are not in that launcher matrix. This UEFI smoke does not boot PureDarwin; full-console cross-host checks are proposed in [PR #46](https://github.com/Personed/xnulinux/pull/46) and remain pending.
+- You do not need a Mac to prepare the PureDarwin boot disk. On Linux, export the ARM64 PureDarwin root with `scripts/puredarwin-root.sh`, then create the HFS+ disk with `scripts/mk-puredarwin-disk.sh`; the complete Linux command, packages, loop-device support, and privilege requirements are in [the Linux path in PR #5](https://github.com/Personed/xnulinux/pull/5). The resulting `pd.img` can be used with the Windows/macOS/Linux QEMU TCG host path below.
+- For a step-by-step Linux guest installation, follow [PR #3's QEMU guide](https://github.com/Personed/xnulinux/blob/2b5fad8a2189ff21bead02f77a280bc026d96fcd/docs/qemu.md). Inside the ARM64 guest, follow the [PureDarwin build and boot guide](docs/free-kc.md#using-it); this validation guide records the console markers, clean shutdown checks, and hardware limits.
+- QEMU 10 or newer for the reusable UEFI launcher, with AArch64 system emulation, matching AArch64 UEFI code and variables, and Python 3. VT-x/AMD-V is not required. The separate direct-kernel full-boot job passed with QEMU 8.2.2.
+- The PureDarwin reference profile allocates 16 GiB to the ARM64 Linux guest plus additional physical RAM for the host OS and QEMU. For this profile, use a host with at least 20 GiB physical RAM and 4 GiB available before QEMU. This is a capacity screen based on the current run, not a universal minimum.
+- Use an ARM64 Linux kernel with 4 KiB pages and PAC at EL1, built with matching FKI/XNU modules. Run #91 pins Ubuntu's `7.0.0-44-generic` package version `7.0.0-44.44~24.04.1` and snapshot `20261126T000000Z`; fixed package digest comparisons and explicit branch synchronization remain pending.
+- The full x86-64 TCG route, tested guest profile, kernel reporting fields, FKI carve-out, and stage limits are documented in [`docs/portability-validation.md`](docs/portability-validation.md).
+
+### Separate experimental x86_64 QEMU/KVM path
+
+- An Intel or AMD x86_64 Linux PC with VT-x or AMD-V, `/dev/kvm` accessible to the running user, and SSE4.2, AVX, FMA,
+  MOVBE, POPCNT, LZCNT, BMI1, AVX2 and BMI2 exposed by the host CPU.
+- QEMU 10 or newer, `qemu-img`, `flock` (from util-linux), and OVMF 4 MiB firmware files. The launcher auto-detects
+  common Debian/Ubuntu, Fedora/RHEL, Arch, and openSUSE layouts; override `OVMF_CODE` and `OVMF_VARS_TEMPLATE`, or add
+  a custom directory with `OVMF_DIR`, when needed.
+- A user-prepared bootable macOS Tahoe 26 x86_64 raw or qcow2 image with a working EFI/OpenCore setup. AMD images must
+  include matching OpenCore AMD kernel patches. No Apple system image is provided here.
+- The 64-byte Apple SMC OSK value supplied locally through `APPLE_SMC_OSK`; do not commit it or paste it into logs. The launcher writes it to a mode-0600 temporary QEMU config, keeps it out of QEMU's argv and environment, and removes the config when QEMU exits.
+- Enough physical RAM for the configured guest allocation plus Linux/QEMU overhead. The default guest allocation is
+  8 GiB and can be changed with `RAM_MB`.
 
 ## Building and running
 

@@ -13,9 +13,10 @@ guest CPUs and 16 GiB of guest RAM. Allow additional RAM for the physical host.
 ## Tested host and guest architectures
 
 CI starts the ARM64 guest through UEFI on Ubuntu 24.04 x86-64 and ARM64, Windows Server 2025
-x86-64, and macOS 15 on Apple Silicon. Ubuntu x86-64 also starts the graphical guest under Xvfb and
-checks that the QEMU window appears. Intel macOS and Windows ARM64 hosts are not in the current
-matrix.
+x86-64, macOS 15 on Intel, and macOS 15 on Apple Silicon. Ubuntu x86-64 also starts the graphical
+guest under Xvfb with both GTK and SDL and checks that the QEMU window appears. This confirms the
+launcher reaches the UEFI shell on these hosted runner profiles; it does not validate installing
+Linux or booting PureDarwin on each host. Windows ARM64 is not in the current matrix.
 
 ## Install the Linux guest
 
@@ -69,7 +70,8 @@ For the experimental 16 GiB VM profile, the QEMU `virt` RAM starts at `0x4000000
 Use `GPU=off` for the hosted system. The optional QEMU graphical display is for Linux's console.
 
 The QEMU launcher has been exercised from x86-64 Linux through the ARM64 Debian installer and in
-CI by starting ARM64 guests through UEFI on the Linux, Windows and macOS hosts listed above. Ubuntu
-x86-64 also exercises the graphical path. Its argument construction is checked on all host systems.
+CI by starting ARM64 guests through UEFI on the Linux, Windows, Intel macOS, and Apple Silicon
+macOS hosts listed above. Ubuntu x86-64 also exercises the graphical path. Its argument
+construction is checked on all host systems.
 A test module allocated 2 MiB at the documented address in a 16 GiB guest booted directly
 into Linux. A complete hosted PureDarwin or macOS boot using the UEFI profile remains unverified.

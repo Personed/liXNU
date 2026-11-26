@@ -103,11 +103,11 @@ QEMU TCG does not require VT-x/AMD-V. The reference profile allocates 16 GiB to 
 capacity screen requires at least 20 GiB total physical RAM and 4 GiB available before artifact preparation; record
 these host measurements separately from guest RAM. This screen is not a measured universal minimum. The first
 #36 run (#69) built the pinned image and HFS+ disk, but `kclink` failed on a `__TEXT_EXEC`/`__PRELINK_INFO` overlap.
-At head `5312b29`, [run #72](https://github.com/Personed/xnulinux/actions/runs/45845795576) completed the source build,
-prepared the guest, and passed the full console command, guest halt, XNU unload, Linux power-off, and QEMU exit checks
-on Ubuntu 24.04 x86-64. A later Mach-O inspection found overlapping `__TEXT_EXEC`/`__KLD` ranges. Current #36 head
-`97727ac` adds a file-backed range check; run #74 failed before boot on that overlap, so run #72 does not validate
-the current layout. PR #50 proposes relocating `__KLD`/`__LAST` and relinking; its current head is `eb01aba` and
+At head `5312b29`, [run #72](https://github.com/Personed/xnulinux/actions/runs/45845795576) emitted console, halt,
+unload, power-off, and QEMU-exit markers on Ubuntu 24.04 x86-64. It is not a valid acceptance pass: independent
+byte comparison confirmed the historical collection's `__TEXT_EXEC`/`__KLD` overlap at `0x3854000-0x3858000`,
+with output bytes matching `__KLD` rather than `__TEXT_EXEC`. Current #36 head `97727ac` adds a file-backed range
+check; run #74 failed before boot on that overlap. PR #50 proposes relocating `__KLD`/`__LAST` and relinking; its current head is `eb01aba` and
 run #89 is in progress. PR #52 pins the ARM64 guest kernel and records input hashes; it is rebased onto `eb01aba`
 and run #91 is queued. The workflow uses an immutable Ubuntu snapshot, but fixed expected hashes for downloaded
 packages and package-availability validation are still pending. PR #57 now also targets `eb01aba` and has run #92
@@ -115,12 +115,9 @@ queued to validate retention of the final post-relink segment-check output. Cros
 run #79 built the guest image but failed the XNU source build
 at the same `__TEXT_EXEC`/`__KLD` overlap; preparation and host boots were skipped. It is based on the
 pre-relocation/pre-pin head and provides no host acceptance. PR #58 adds guest-input hash checks and reliable
-per-host preflight reports; run #85 is building its guest image, with review still requesting macOS preflight
-regression coverage including the original-byte digest for invalid-UTF-8 manifests; run #90 is in progress. Its
-macOS preflight still needs coverage for `vm_stat` output without page-count rows. After #50/#52/#57/#58 are
-synchronized, rerun the full
-console/halt route and the host matrix with identical guest hashes.
-After #50/#52/#58 are synchronized, rerun the full console/halt route and the host matrix with identical guest hashes.
+per-host preflight reports; current run #90 is in progress. It now preserves raw-byte digests for invalid-UTF-8
+manifests; review still asks for the macOS preflight case where `vm_stat` has no page-count rows. After
+#50/#52/#57/#58 are synchronized, rerun the full console/halt route and host matrix with identical guest hashes.
 Its public runners are reported as 16 GB for Windows and 14 GB for Intel macOS, less than the 16 GiB guest allocation
 plus host overhead; use larger runners or mark those combinations unsupported for this profile if they cannot boot.
 Until #52 is integrated and its package check passes, the #36 guest workflow still selects the latest Ubuntu ARM64

@@ -58,19 +58,20 @@ Report the profile alongside the stage:
   `7.0.0-44.44~24.04.1` and recording input hashes. The first run (#69) built the
   pinned image and HFS+ disk but failed at `kclink` on a `__TEXT_EXEC`/`__PRELINK_INFO`
   overlap. At head `5312b29`, [run #72](https://github.com/Personed/xnulinux/actions/runs/45845795576)
-  completed the source build, guest preparation, and full QEMU TCG boot on Ubuntu 24.04 x86-64 with QEMU 8.2.2. The
+  completed the source build, guest preparation, and QEMU TCG boot on Ubuntu 24.04 x86-64 with QEMU 8.2.2. The
   runner reported an Intel Xeon 6975P-C, 4 CPUs, and `MemTotal: 16078396 kB`; the guest used Linux
-  `7.0.0-44-generic`, 4 KiB pages, PAC at EL1, and the 16 GiB allocation. It passed the Darwin command marker,
-  guest-issued halt, `xnu.ko` unload, Linux serial marker `reboot: Power down`, and QEMU exit status 0. Because the
-  runner's reported physical RAM was below the guest allocation, this proves the boot under that runner's memory
-  management; it does not prove all guest RAM stayed resident or that the host avoided swap/overcommit. A later
-  Mach-O inspection found `__TEXT_EXEC` and `__KLD` ranges overlap in the built image. Current #36
+  `7.0.0-44-generic`, 4 KiB pages, PAC at EL1, and the 16 GiB allocation. It emitted the Darwin command, guest halt,
+  `xnu.ko` unload, Linux `reboot: Power down`, and QEMU exit markers. This is historical evidence only, not an
+  acceptance pass: independent byte comparison confirmed that the historical collection's file-backed
+  `__TEXT_EXEC`/`__KLD` overlap at `0x3854000-0x3858000` overwrote bytes; output matched `__KLD`, not `__TEXT_EXEC`.
+  The runner's physical RAM was also below the guest allocation, so it does not establish that all guest RAM stayed
+  resident or that the host avoided swap/overcommit. Current #36
   head `97727ac` adds a file-backed range check; run #74 failed in `kclink` before boot because file-backed
-  `__TEXT_EXEC` and `__KLD` overlap at `0x3854000-0x3858000`, so run #72 does not validate that changed head. PR #50
-  proposes relocating `__KLD`/`__LAST` and relinking; current head is `eb01aba` and run #89 is in progress. PR #52
-  pins the guest inputs and is rebased onto `eb01aba`; run #91 is queued. It uses an immutable Ubuntu snapshot,
-  but fixed expected hashes for downloaded packages and package-availability validation are still pending. PR #57
-  is also rebased onto `eb01aba`; run #92 is queued to validate retention of the final post-relink segment-check
+  `__TEXT_EXEC` and `__KLD` overlap at `0x3854000-0x3858000`, so run #72 is historical observation and not acceptance.
+  PR #50 proposes relocating `__KLD`/`__LAST` and relinking; current head is `eb01aba` and run #89 is in progress.
+  PR #52 pins the guest inputs and is rebased onto `eb01aba`; run #91 is in progress. It uses an immutable Ubuntu
+  snapshot, but fixed expected hashes for downloaded packages and package-availability validation are pending.
+  PR #57 is also rebased onto `eb01aba`; run #92 is queued to validate retention of final post-relink segment-check
   output. Cross-host
   Windows and Intel-macOS checks are proposed in [#46](https://github.com/Personed/xnulinux/pull/46); its run #79
   built the guest image, then failed the XNU source build in `kclink` on the same file-backed `__TEXT_EXEC`/`__KLD`

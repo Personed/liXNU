@@ -50,7 +50,6 @@ WRAPPER
 cat >"$bin/mountpoint" <<'WRAPPER'
 #!/bin/sh
 case "$3" in /*) mount_dir=$3 ;; *) mount_dir=$PWD/$3 ;; esac
-printf '%s\n' "$mount_dir" >"$TEST_STATE/mount-dir"
 if [ -e "$TEST_STATE/mounted" ]; then exit 0; fi
 if [ -d "$3" ]; then exit 32; fi
 exit 1
@@ -90,6 +89,7 @@ if [ "$1" = '-d' ]; then
         printf '%s\n' "$result.original" >"$TEST_STATE/replaced-stage"
       fi
       ;;
+    *) printf '%s\n' "$result" >"$TEST_STATE/mount-dir" ;;
   esac
 fi
 printf '%s\n' "$result"
@@ -122,6 +122,7 @@ unmount_line=$(grep -n '^unmounted$' "$state/events" | cut -d: -f1)
 detach_line=$(grep -n '^detached$' "$state/events" | cut -d: -f1)
 [ "$unmount_line" -lt "$detach_line" ]
 mount_dir=$(cat "$state/mount-dir")
+[ "${mount_dir#/tmp/.puredarwin-root-mount.}" != "$mount_dir" ]
 [ ! -e "$mount_dir" ]
 [ -z "$(find "$shared_output" -mindepth 1 -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
 first_check_log=$(cat "$state/check-log")
@@ -133,7 +134,7 @@ echo 'PureDarwin root exporter signal cleanup test passed.'
 # Also interrupt after loop setup and filesystem validation but before mount.
 # util-linux mountpoint returns 32 for the existing, unmounted directory;
 # cleanup must accept that state and still detach the loop and remove temps.
-rm -f -- "$state/events" "$state/loop-attached" "$state/mounted"
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/mount-dir"
 rm -f -- "$state/check-log"
 export SIGNAL_BEFORE_MOUNT=1
 set +e
@@ -150,6 +151,7 @@ if grep -q '^unmounted$' "$state/events"; then
   exit 1
 fi
 mount_dir=$(cat "$state/mount-dir")
+[ "${mount_dir#/tmp/.puredarwin-root-mount.}" != "$mount_dir" ]
 [ ! -e "$mount_dir" ]
 [ -z "$(find "$shared_output" -mindepth 1 -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
 second_check_log=$(cat "$state/check-log")
@@ -161,7 +163,7 @@ echo 'PureDarwin root exporter pre-mount signal cleanup test passed.'
 
 # A signal after mktemp but before clearing setgid must still remove the empty
 # 2700 staging directory using its recorded inode identity.
-rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/check-log"
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/mount-dir" "$state/check-log"
 set +e
 SIGNAL_BEFORE_STAGING_CHMOD=1 "$script" "$image" "$output" >/dev/null 2>&1
 status=$?
@@ -169,6 +171,9 @@ set -e
 [ "$status" -eq 143 ] || { echo "Expected early SIGTERM exit 143; got $status" >&2; exit 1; }
 staging_dir=$(cat "$state/archive-dir")
 [ ! -e "$staging_dir" ]
+mount_dir=$(cat "$state/mount-dir")
+[ "${mount_dir#/tmp/.puredarwin-root-mount.}" != "$mount_dir" ]
+[ ! -e "$mount_dir" ]
 [ -z "$(find "$shared_output" -mindepth 1 -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
 
 echo 'PureDarwin root exporter early staging signal cleanup test passed.'

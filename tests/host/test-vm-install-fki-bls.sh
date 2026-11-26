@@ -8,6 +8,10 @@ FIXTURE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/xnulinux-fki-bls.XXXXXX")"
 trap 'rm -rf -- "$FIXTURE_DIR"' EXIT
 
 mkdir -p -- "$FIXTURE_DIR/bin" "$FIXTURE_DIR/sbin"
+cat >"$FIXTURE_DIR/iomem" <<'IOMEM'
+00000000-7ffffffff : System RAM
+IOMEM
+
 cat >"$FIXTURE_DIR/bin/sudo" <<'STUB'
 #!/usr/bin/env bash
 if [[ "${1:-}" == sh && "${2:-}" == -c ]]; then
@@ -15,6 +19,14 @@ if [[ "${1:-}" == sh && "${2:-}" == -c ]]; then
   exec env "PATH=$SUDO_SECURE_PATH:/usr/bin:/bin" /bin/sh -c "$@"
 fi
 exec "$@"
+STUB
+
+cat >"$FIXTURE_DIR/bin/python3" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == */scripts/detect-mem.py ]]; then
+  exec /usr/bin/python3 "$@" --iomem "$FIXTURE_IOMEM"
+fi
+exec /usr/bin/python3 "$@"
 STUB
 
 cat >"$FIXTURE_DIR/bin/systemctl" <<'STUB'
@@ -49,7 +61,7 @@ for entry in "$FIXTURE_BLS_DIR"/*.conf; do
   mv -- "$temporary" "$entry"
 done
 STUB
-chmod +x -- "$FIXTURE_DIR/bin/sudo" "$FIXTURE_DIR/bin/systemctl" "$FIXTURE_DIR/sbin/grubby"
+chmod +x -- "$FIXTURE_DIR/bin/sudo" "$FIXTURE_DIR/bin/python3" "$FIXTURE_DIR/bin/systemctl" "$FIXTURE_DIR/sbin/grubby"
 
 setup_case() {
   local name="$1" initial_options="$2"
@@ -72,6 +84,7 @@ run_installer() {
     SUDO_SECURE_PATH="$FIXTURE_DIR/sbin" \
     GRUBBY_LOG="$CASE_LOG" SYSTEMCTL_LOG="$CASE_SYSCTL_LOG" \
     FIXTURE_BLS_DIR="$CASE_BLS" FIXTURE_KERNELOPTS_FILE="$CASE_KERNELOPTS" \
+    FIXTURE_IOMEM="$FIXTURE_DIR/iomem" \
     LINUX_MEM=7G CARVE_BASE=0x200000000 CARVE_MB=8156 RAM_MB=7900 \
     XNULINUX_GRUB_DEFAULT="$CASE_DEFAULT" \
     XNULINUX_GRUB_DEFAULT_DIR="$CASE_DROPIN_DIR" \

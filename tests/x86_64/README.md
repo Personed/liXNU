@@ -1,8 +1,17 @@
-# x86_64 QEMU/KVM runtime
+# x86_64 PC support
 
-The x86_64 path runs a user-prepared macOS Tahoe 26 guest through QEMU/KVM. It does not build or load the project's
-ARM64-only `xnu.ko` or `fki.ko`. The ARM64 direct-kernel path remains unchanged. Intel and AMD are tracked as separate
-acceptance targets; neither is marked supported until tested on physical hardware.
+The native x86_64 hosted-XNU port is in progress. The FKI Linux host backend now builds on x86_64 and preserves the
+existing ARM64 backend, but it reports no XNU execution capabilities. The current XNU implementation in `xnu_main.c`
+and `world.S` is AArch64-only and requires the FKI PAC capability. The x86_64 fail-closed XNU stub is tracked
+separately in PR #47; it is not part of this FKI change and does not execute XNU. The architecture-specific XNU entry,
+context switch, address-space and fault paths remain to be implemented and verified before macOS can run natively on
+x86_64.
+
+## Supplemental QEMU/KVM guest path
+
+The optional x86_64 launcher runs a user-prepared macOS Tahoe 26 guest through QEMU/KVM. This guest path complements
+the native port and does not build or load the project's `xnu.ko`. Intel and AMD remain separate acceptance targets;
+neither is marked supported until tested on physical hardware.
 
 ## Host prerequisites
 
@@ -59,9 +68,10 @@ tests/x86_64/tcg-smoke.sh /path/to/x86_64/vmlinuz /path/to/initrd.cpio.gz
 The smoke initramfs must print `XNU_LINUX_TCG_BOOTED` on its serial console and shut down before the timeout. TCG boots
 only a disposable Linux guest; it does not demonstrate macOS boot, KVM, Intel/AMD compatibility or useful performance.
 
-The historical `build-fki.sh KDIR` and `build-xnu-main.sh KDIR` scripts probe the rejected direct x86_64 module path.
-They are expected to expose missing FKI architecture hooks and AArch64-only XNU assembly on an x86_64 kernel tree;
-they are not pass/fail tests for the selected QEMU/KVM path.
+`build-fki.sh KDIR` now builds the x86_64 FKI host backend. `build-xnu-main.sh KDIR` remains a diagnostic probe and
+currently exposes AArch64-specific assumptions in `xnu_main.c`; it is not yet an x86_64 pass condition. The native
+port must keep XNU execution capability disabled until its context switch, memory isolation and exception paths are
+implemented.
 
 ## Evidence and limits
 
@@ -78,8 +88,10 @@ they are not pass/fail tests for the selected QEMU/KVM path.
   `XNU_LINUX_TCG_BOOTED` and powered off cleanly.
 - The actual QEMU 10.0.13 launcher passed `--check` with real `qemu-img`, and a paused TCG invocation accepted its Q35,
   OVMF, AppleSMC, AHCI, E1000, USB and VGA arguments. This checked command/device setup only.
-- The direct x86 FKI module check found missing architecture hooks, and `xnu_main.c` / `world.S` contain AArch64-only
-  code. That is why the x86 path uses QEMU/KVM instead of direct x86 modules.
+- The x86_64 FKI module now builds against Debian 6.12.118 x86_64 headers. It reports zero execution capabilities,
+  and the current XNU startup requires `FKI_CAP_PAC`. `xnu_main.c` and `world.S` still contain AArch64-only code;
+  native macOS execution is not implemented. PR #47 tracks a separate x86_64 fail-closed stub; it does not validate
+  native execution.
 - ARM64 `fki.ko` and `xnu.ko` cross-compiled against Debian 6.12.118 ARM64 headers. This is a build check, not an ARM64
   runtime smoke test.
 - This environment has no `/dev/kvm`, no Tahoe disk and no physical Intel/AMD/ARM hardware. No macOS boot, native KVM

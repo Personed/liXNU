@@ -4,11 +4,12 @@
 
 import os
 from pathlib import Path
-import signal
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -63,6 +64,10 @@ class UefiLaunchTest(unittest.TestCase):
             if os.environ.get("QEMU_TEST_REQUIRED") == "1":
                 self.fail(message)
             self.skipTest(message)
+        if graphical and not shutil.which("xwininfo"):
+            if os.environ.get("QEMU_TEST_REQUIRED") == "1":
+                self.fail("missing xwininfo; install x11-utils to validate the graphical window")
+            self.skipTest("xwininfo is not installed")
         firmware_code, firmware_vars_template = self.firmware_pair()
 
         with tempfile.TemporaryDirectory() as directory:
@@ -85,6 +90,23 @@ class UefiLaunchTest(unittest.TestCase):
             if graphical:
                 command.append("--graphical")
             qemu = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            window_found = False
+            window_output = ""
+            if graphical:
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline and qemu.poll() is None:
+                    windows = subprocess.run(
+                        ["xwininfo", "-root", "-tree"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        check=False,
+                    )
+                    window_output = windows.stdout or ""
+                    if "qemu" in window_output.lower():
+                        window_found = True
+                        break
+                    time.sleep(0.25)
             try:
                 qemu.wait(timeout=30)
             except subprocess.TimeoutExpired:
@@ -104,6 +126,8 @@ class UefiLaunchTest(unittest.TestCase):
                 if os.name != "nt":
                     self.assertEqual(qemu.returncode, 0, output)
                 self.assertIn("UEFI Interactive Shell", output)
+                if graphical:
+                    self.assertTrue(window_found, "QEMU window did not appear in Xvfb:\n" + window_output)
             else:
                 output, _ = qemu.communicate()
                 self.fail(f"QEMU exited before the UEFI guest could be stopped ({qemu.returncode}):\n{output}")

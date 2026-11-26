@@ -82,9 +82,13 @@ We ship these. The user's disk script installs them into their own macOS disk:
 1. **Host OS.** arm64 Ubuntu, either directly on the hardware or as a VM. On an Apple Silicon Mac the VM runs under
    krunkit (krunkit, libkrun, virglrenderer, MoltenVK and gvproxy under `$KRUN`; `scripts/krun-vm.sh`,
    `scripts/install-krun-agent.sh`), which gives it the host GPU through virtio-gpu Venus.
-2. **Memory.** `scripts/vm-install-fki-service.sh` with `LINUX_MEM`, `CARVE_BASE` and `CARVE_MB` for that host's
-   physical memory map. The carve-out is RAM Linux never manages. The hosted kernel's `RAM_MB` has to fit inside it
-   (8 GB → `RAM_MB=7900`). Reboot once.
+2. **Memory.** Run `scripts/vm-install-fki-service.sh` once before the first reboot, while `/proc/iomem` still shows the
+   full physical RAM map and before an earlier `mem=` limit has hidden the carve-out. It detects `LINUX_MEM`,
+   `CARVE_BASE` and `CARVE_MB` by default, accepts those values as environment overrides, checks their final geometry
+   before changing GRUB or installing the FKI service, and prints a suggested `RAM_MB` for the guest. Use that guest
+   memory size in `/etc/xnulinux.conf`. The carve-out is RAM Linux never manages. After reboot, `mem=` may hide the
+   reserved range from `/proc/iomem`; do not rerun memory detection against that reduced map. To change the layout,
+   temporarily boot without the old `mem=` limit, run the setup again with the complete physical map, and reboot.
 3. **Kit.** Unpack it to `/opt/xnulinux/kit`, and install `kc-free.bin` as `/lib/firmware/xnu/kc-free.bin`.
 4. **Default system.** Put the PureDarwin disk at `/var/lib/xnulinux/pd.img` with its `pd.conf`. Configure
    `/etc/xnulinux.conf` as follows, then run `scripts/install-service.sh`:

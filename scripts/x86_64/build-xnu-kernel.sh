@@ -100,6 +100,9 @@ HOST_OS_VERSION=''
 HOST_SYS_UNISTD_BASE_SHA256=''
 HOST_SYS_UNISTD_OVERLAY_SHA256=''
 XNU_REQUIRED_HEADER_TREES_VERIFIED='false'
+XNU_TARGET_INCLUDE_PATHS_VERIFIED='false'
+XNU_IBOOT_HEADER_DEPENDENCY_COUNT='unknown'
+XNU_KERNEL_HEADER_DEPENDENCY_COUNT='unknown'
 HOST_TOOL_UNISTD_BASE_PROBE_LOG="$OUT_DIR/host-tool-unistd-base-probe.log"
 HOST_TOOL_UNISTD_OVERLAY_PROBE_LOG="$OUT_DIR/host-tool-unistd-overlay-probe.log"
 SDK_DIR="$OUT_DIR/sdk/MacOSX26.1.sdk"
@@ -119,6 +122,7 @@ XNU_HEADERS_DSTROOT="$XNU_HEADERS_BUILD_DIR/dst"
 XNU_EXPORTED_OSFMK_HEADERS_DIR="$XNU_HEADERS_OBJROOT/EXPORT_HDRS/osfmk"
 XNU_EXPORT_HEADERS_LOG="$OUT_DIR/xnu-export-headers.log"
 XNU_HEADERS_LOG="$OUT_DIR/xnu-header-install.log"
+XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG="$OUT_DIR/xnu-target-include-diagnostics.log"
 LIBDISPATCH_BUILD_DIR="$OUT_DIR/libdispatch"
 LIBDISPATCH_LOG="$OUT_DIR/libdispatch-build.log"
 LIBDISPATCH_DSTROOT="$LIBDISPATCH_BUILD_DIR/dst"
@@ -240,8 +244,6 @@ verify_required_target_header_trees() {
     [[ "$file_count" =~ ^[1-9][0-9]*$ ]] \
       || fail "required XNU include tree $suffix has no staged header files"
   done <<'TREES'
-kernel_usr_local|usr/local/include/kernel
-iBoot_usr_local|usr/local/include/iBoot
 Kernel_framework_AppleFeatures|System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/AppleFeatures
 Kernel_framework_platform|System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/platform
 TREES
@@ -249,24 +251,41 @@ TREES
 }
 
 verify_required_xnu_header_trees() {
-  local label suffix base_count install_count overlay_count
+  local label suffix required base_count install_count overlay_count base_dir install_dir overlay_dir
+  local missing_required_trees=()
   : > "$XNU_HEADER_TREES_DIAGNOSTIC_LOG"
-  while IFS='|' read -r label suffix; do
+  while IFS='|' read -r label suffix required; do
     [[ -n "$label" ]] || continue
     base_count="$(count_header_tree_files "$BASE_SDK_DIR/$suffix")"
     install_count="$(count_header_tree_files "$XNU_HEADERS_DSTROOT/$suffix")"
     overlay_count="$(count_header_tree_files "$SDK_DIR/$suffix")"
-    printf '%s base_files=%s installhdrs_files=%s overlay_files=%s\n' \
-      "$label" "$base_count" "$install_count" "$overlay_count" \
+    [[ -d "$BASE_SDK_DIR/$suffix" ]] && base_dir='present' || base_dir='absent'
+    [[ -d "$XNU_HEADERS_DSTROOT/$suffix" ]] && install_dir='present' || install_dir='absent'
+    [[ -d "$SDK_DIR/$suffix" ]] && overlay_dir='present' || overlay_dir='absent'
+    printf '%s required=%s base_dir=%s base_files=%s installhdrs_dir=%s installhdrs_files=%s overlay_dir=%s overlay_files=%s\n' \
+      "$label" "$required" "$base_dir" "$base_count" "$install_dir" "$install_count" "$overlay_dir" "$overlay_count" \
       >> "$XNU_HEADER_TREES_DIAGNOSTIC_LOG"
-    [[ "$overlay_count" =~ ^[1-9][0-9]*$ ]] \
-      || fail "required XNU include tree $suffix has no staged header files; see $XNU_HEADER_TREES_DIAGNOSTIC_LOG"
   done <<'TREES'
-kernel_usr_local|usr/local/include/kernel
-iBoot_usr_local|usr/local/include/iBoot
-Kernel_framework_AppleFeatures|System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/AppleFeatures
-Kernel_framework_platform|System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/platform
+kernel_usr_local|usr/local/include/kernel|compile-path-only
+iBoot_usr_local|usr/local/include/iBoot|unused-for-x86_64
+Kernel_framework_AppleFeatures|System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/AppleFeatures|required
+Kernel_framework_platform|System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/platform|required
 TREES
+  while IFS='|' read -r label suffix required; do
+    [[ -n "$label" && "$required" == required ]] || continue
+    overlay_count="$(count_header_tree_files "$SDK_DIR/$suffix")"
+    if [[ ! "$overlay_count" =~ ^[1-9][0-9]*$ ]]; then
+      missing_required_trees+=("$suffix")
+    fi
+  done <<'TREES'
+kernel_usr_local|usr/local/include/kernel|compile-path-only
+iBoot_usr_local|usr/local/include/iBoot|unused-for-x86_64
+Kernel_framework_AppleFeatures|System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/AppleFeatures|required
+Kernel_framework_platform|System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/platform|required
+TREES
+  if (( ${#missing_required_trees[@]} > 0 )); then
+    fail "required XNU include trees are empty (${missing_required_trees[*]}); all tree counts are in $XNU_HEADER_TREES_DIAGNOSTIC_LOG"
+  fi
   verify_required_target_header_trees
 }
 
@@ -385,6 +404,122 @@ PY
   then
     fail 'XNU verbose host-tool compile commands did not use the registered Xcode SDK'
   fi
+}
+
+verify_xnu_target_compile_commands() {
+  if ! python3 - "$LOG" "$OBJROOT" "$SDK_DIR" "$XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG" <<'PY'
+import pathlib
+import re
+import shlex
+import sys
+
+log_path = pathlib.Path(sys.argv[1])
+objroot = pathlib.Path(sys.argv[2]).resolve()
+sdk_root = pathlib.Path(sys.argv[3]).resolve()
+diagnostic_path = pathlib.Path(sys.argv[4])
+framework_private = sdk_root / "System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders"
+required_paths = {
+    "kernel": sdk_root / "usr/local/include/kernel",
+    "AppleFeatures": framework_private / "AppleFeatures",
+    "platform": framework_private / "platform",
+}
+required_header_paths = {"AppleFeatures", "platform"}
+iboot_path = sdk_root / "usr/local/include/iBoot"
+
+def include_paths(tokens):
+    paths = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "-I" and index + 1 < len(tokens):
+            paths.append(pathlib.Path(tokens[index + 1]).resolve())
+            index += 2
+            continue
+        if token.startswith("-I") and len(token) > 2:
+            paths.append(pathlib.Path(token[2:]).resolve())
+        index += 1
+    return paths
+
+target_commands = []
+for raw_line in log_path.read_text(errors="replace").splitlines():
+    try:
+        tokens = shlex.split(raw_line)
+    except ValueError:
+        continue
+    if len(tokens) < 2 or "-mkernel" not in tokens or "-c" not in tokens:
+        continue
+    executable = pathlib.PurePath(tokens[0]).name
+    if executable not in ("clang", "clang++"):
+        continue
+    target_commands.append((tokens, include_paths(tokens)))
+
+dependency_files = list(objroot.rglob("*.d"))
+iboot_dependency_files = []
+kernel_dependency_headers = set()
+for path in dependency_files:
+    text = path.read_text(errors="replace")
+    if re.search(r"/usr/local/include/iBoot/", text):
+        iboot_dependency_files.append(path)
+    kernel_dependency_headers.update(
+        re.findall(re.escape(str(required_paths["kernel"])) + r"/[^\s\\]+", text)
+    )
+missing_kernel_dependencies = [
+    header for header in sorted(kernel_dependency_headers)
+    if not pathlib.Path(header).is_file()
+]
+
+diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
+with diagnostic_path.open("w", encoding="utf-8") as diagnostic:
+    diagnostic.write(f"target_xnu_compile_commands={len(target_commands)}\n")
+    diagnostic.write(f"target_dependency_files={len(dependency_files)}\n")
+    diagnostic.write(f"iboot_search_path={iboot_path}\n")
+    diagnostic.write(f"iboot_dependency_files={len(iboot_dependency_files)}\n")
+    diagnostic.write(f"kernel_header_dependency_files={len(kernel_dependency_headers)}\n")
+    diagnostic.write(f"kernel_missing_dependency_headers={len(missing_kernel_dependencies)}\n")
+    for name, path in required_paths.items():
+        headers = list(path.rglob("*.h")) if path.is_dir() else []
+        diagnostic.write(f"{name}_include_path={path} directory_exists={path.is_dir()} headers={len(headers)}\n")
+    for header in sorted(kernel_dependency_headers)[:20]:
+        diagnostic.write(f"kernel_header_dependency={header}\n")
+    for depfile in iboot_dependency_files:
+        diagnostic.write(f"iboot_dependency_file={depfile}\n")
+    for index, (_, paths) in enumerate(target_commands, 1):
+        selected = [str(path) for path in paths if path in set(required_paths.values()) or path == iboot_path]
+        diagnostic.write(f"target_command_{index}_include_paths={' '.join(selected)}\n")
+
+if not target_commands:
+    raise SystemExit(f"no XNU target clang compile commands found in {log_path}")
+if not dependency_files:
+    raise SystemExit(f"no XNU compiler dependency files found under {objroot}")
+if iboot_dependency_files:
+    raise SystemExit(f"x86_64 target dependencies unexpectedly include iBoot headers: {iboot_dependency_files[:5]}")
+if missing_kernel_dependencies:
+    raise SystemExit(f"kernel SDK dependency entries do not exist: {missing_kernel_dependencies[:5]}")
+for name, path in required_paths.items():
+    if not path.is_dir():
+        raise SystemExit(f"x86_64 target include directory {name} does not exist: {path}")
+    if name in required_header_paths and not any(path.rglob("*.h")):
+        raise SystemExit(f"required x86_64 target header tree {name} is empty: {path}")
+    missing = [index for index, (_, paths) in enumerate(target_commands, 1) if path not in paths]
+    if missing:
+        raise SystemExit(f"{name} include tree is missing from target clang commands {missing[:10]}")
+for index, (_, paths) in enumerate(target_commands, 1):
+    if iboot_path in paths:
+        raise SystemExit(f"target clang command {index} still searches missing iBoot tree {iboot_path}")
+print(
+    f"Verified {len(target_commands)} XNU target clang commands: kernel include directory and real AppleFeatures/platform "
+    f"headers are present; no iBoot search path or dependency is present ({len(dependency_files)} dependency files scanned, "
+    f"{len(kernel_dependency_headers)} kernel SDK headers referenced)."
+)
+PY
+  then
+    fail "XNU target include commands/dependencies are inconsistent; see $XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG"
+  fi
+  XNU_TARGET_INCLUDE_PATHS_VERIFIED='true'
+  XNU_IBOOT_HEADER_DEPENDENCY_COUNT='0'
+  XNU_KERNEL_HEADER_DEPENDENCY_COUNT="$(awk -F= '$1 == "kernel_header_dependency_files" { print $2 }' "$XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG")"
+  [[ "$XNU_KERNEL_HEADER_DEPENDENCY_COUNT" =~ ^[0-9]+$ ]] \
+    || fail "missing kernel header dependency count in $XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG"
 }
 
 verify_firehose_header_closure() {
@@ -766,8 +901,9 @@ XNU_PRIVATE_INCLUDE_DSTROOT="$XNU_HEADERS_DSTROOT/usr/local/include"
   || fail 'XNU installhdrs did not produce Kernel.framework headers'
 [[ -d "$XNU_PRIVATE_INCLUDE_DSTROOT" ]] \
   || fail 'XNU installhdrs did not produce usr/local/include private headers'
-# Merge only XNU's private trees; retain base SDK headers such as iBoot,
-# AppleFeatures, and platform that are also required by MakeInc.def.
+# Merge only XNU's private trees while preserving base SDK headers used by the
+# generic MakeInc paths. The iBoot path is absent from both inputs and is
+# removed only from the later X86_64/NONE kernel-build invocation.
 mkdir -p "$SDK_DIR/System/Library/Frameworks" "$SDK_DIR/usr/local"
 rsync -a "$XNU_KERNEL_FRAMEWORK_DSTROOT/" "$XNU_KERNEL_FRAMEWORK_DIR/"
 rsync -a "$XNU_PRIVATE_INCLUDE_DSTROOT/" "$SDK_DIR/usr/local/include/"
@@ -837,6 +973,7 @@ host_sys_unistd_overlay_sha256=$HOST_SYS_UNISTD_OVERLAY_SHA256
 host_sys_unistd_headers_match=$([[ "$HOST_SYS_UNISTD_BASE_SHA256" == "$HOST_SYS_UNISTD_OVERLAY_SHA256" ]] && printf true || printf false)
 host_tool_base_unistd_probe=passed
 xnu_required_header_trees_verified=$XNU_REQUIRED_HEADER_TREES_VERIFIED
+xnu_target_include_path_policy=kernel-directory/depfile-verified; AppleFeatures/platform headers verified; iBoot omitted from X86_64/NONE build
 sdk_version=$SDK_VERSION
 platform=MacOSX
 arch_config=X86_64
@@ -861,6 +998,7 @@ if make -C "$SOURCE_DIR" build \
   SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$BASE_SDK_DIR" \
   SDKVERSION="$SDK_VERSION" PLATFORM=MacOSX \
   ARCH_CONFIGS=X86_64 MACHINE_CONFIGS=NONE KERNEL_CONFIGS=DEVELOPMENT \
+  INCFLAGS_SDK='-I$(SDKROOT)/usr/local/include/kernel -I$(SDKROOT)/$(KPINCDIR)/AppleFeatures $(if $(KDKROOT),-I$(KDKROOT)/$(KPINCDIR) -I$(KDKROOT)/System/Library/KernelSupport)' \
   RC_DARWIN_KERNEL_VERSION="$KERNEL_VERSION" RC_ProjectSourceVersion="$SOURCE_VERSION" \
   OBJROOT="$OBJROOT" SYMROOT="$SYMROOT" DSTROOT="$DSTROOT" VERBOSE=YES \
   MAKEJOBS="-j$JOBS" >"$LOG" 2>&1; then
@@ -870,6 +1008,7 @@ else
   fail "XNU build failed; see $LOG"
 fi
 verify_xnu_host_tool_compile_commands
+verify_xnu_target_compile_commands
 
 KERNEL="$OBJROOT/kernel.development"
 [[ -s "$KERNEL" ]] || fail "XNU build did not produce $KERNEL"
@@ -885,7 +1024,8 @@ python3 - "$PACKAGE_KERNEL" "$RESULT" "$XNU_COMMIT" "$XNU_TAG" "$SOURCE_VERSION"
   "$SDK_PUBLIC_AVAILABILITY_SHA256" "$MACHINE_CPU_NUMBER_SHA256" "$I386_CPU_NUMBER_SHA256" \
   "$HOST_ARCH" "$BUILD_HOST_MODE" "$HOST_PROCESS_ARCH" "$HOST_PROCESS_TRANSLATED" \
   "$BASE_SDK_DIR" "$HOST_SYS_UNISTD_BASE_SHA256" "$HOST_SYS_UNISTD_OVERLAY_SHA256" \
-  "$XNU_REQUIRED_HEADER_TREES_VERIFIED" <<'PY'
+  "$XNU_REQUIRED_HEADER_TREES_VERIFIED" "$XNU_TARGET_INCLUDE_PATHS_VERIFIED" \
+  "$XNU_IBOOT_HEADER_DEPENDENCY_COUNT" "$XNU_KERNEL_HEADER_DEPENDENCY_COUNT" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -909,6 +1049,11 @@ result = {
     "host_sys_unistd_headers_match": sys.argv[24] == sys.argv[25],
     "host_tool_base_unistd_probe": "passed",
     "xnu_required_header_trees_verified": sys.argv[26] == "true",
+    "xnu_target_include_paths_verified": sys.argv[27] == "true",
+    "xnu_iboot_include_removed_for_x86_64": True,
+    "xnu_iboot_header_dependency_files": int(sys.argv[28]),
+    "xnu_kernel_header_dependency_files": int(sys.argv[29]),
+    "xnu_target_include_path_policy": "kernel directory and dependencies verified; AppleFeatures/platform headers verified; iBoot omitted for X86_64/NONE",
     "xnu_commit": sys.argv[3],
     "xnu_tag": sys.argv[4],
     "xnu_source_version": sys.argv[5],

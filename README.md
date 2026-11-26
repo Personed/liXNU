@@ -169,6 +169,13 @@ for FKI carve-out setup; booting XNU also depends on the FKI backend and its mem
 - User-provided macOS Tahoe 26 x86_64 artifacts that match the selected XNU build. No Apple system image or binary is provided here.
 - The x86_64 FKI host-backend build merged in [#48](https://github.com/Personed/xnulinux/pull/48), and the fail-closed x86_64 XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Neither milestone provides native XNU execution. The QEMU/KVM launcher below is a separate optional guest experiment.
 
+### Experimental Intel/AMD PC route via an ARM64 Linux VM (QEMU TCG)
+
+This route is under validation: QEMU TCG boots ARM64 Linux on the x86-64 host, then the hosted-XNU modules run inside
+that guest. It does not require VT-x or AMD-V and is separate from the native x86_64 hosted-XNU target above. CI has
+started ARM64 Linux guests, but complete PureDarwin boot on this profile is not yet validated. See the
+[QEMU guide](docs/qemu.md) for host requirements and installation steps.
+
 ## Building and running
 
 1. `scripts/vm-xnu-build.sh` (on the arm64 Linux host, once): sets up the macOS-DroidVM Linux toolchain and builds XNU

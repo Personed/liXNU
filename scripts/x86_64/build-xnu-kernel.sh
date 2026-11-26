@@ -23,7 +23,8 @@ Environment:
   XNU_X86_BUILD_DIR  Absolute build directory with no spaces (default: ${TMPDIR:-/tmp}/xnulinux-x86_64-xnu-build)
   XNU_X86_JOBS       Parallel jobs (default: logical CPU count)
   XNU_X86_KDKROOT    macOS 26.5 build 25F71 KDK for the pinned source build;
-                     it does not validate the 26.6.2 runtime target
+                     required on Apple Silicon hosts; Intel-only builds may
+                     omit it when the pinned SDK contains TrustCache/API.h
 
 --check validates pinned checkouts, the staged SDK dependencies, the built
 x86_64 libfirehose_kernel archive, Xcode tools, and target without downloading
@@ -130,6 +131,14 @@ SDK_DIR="$OUT_DIR/sdk/MacOSX${SDK_VERSION}.sdk"
 KDKROOT="${XNU_X86_KDKROOT:-/Library/Developer/KDKs/KDK_${KDK_VERSION}_${KDK_BUILD}.kdk}"
 KDK_PRIVATE_HEADER_SHA256=''
 KDK_TRUSTCACHE_HEADER=''
+KDK_PRESENT='false'
+KDK_REQUIRED='false'
+KDK_PRODUCT_VERSION=''
+KDK_PRODUCT_BUILD=''
+KDK_XNU_VERSION=''
+TRUSTCACHE_HEADER=''
+TRUSTCACHE_HEADER_SHA256=''
+TRUSTCACHE_HEADER_SOURCE=''
 XNU_KERNEL_FRAMEWORK_DIR="$SDK_DIR/System/Library/Frameworks/Kernel.framework"
 XNU_KERNEL_PRIVATE_HEADERS="$XNU_KERNEL_FRAMEWORK_DIR/PrivateHeaders"
 XNU_KERNEL_HEADERS="$XNU_KERNEL_FRAMEWORK_DIR/Headers"
@@ -157,6 +166,15 @@ SDK_PUBLIC_AVAILABILITY_SHA256_FILE="$OUT_DIR/sdk-public-availability.sha256"
 SDK_PUBLIC_AVAILABILITY_SHA256=''
 HOST_SDK_DIAGNOSTIC_LOG="$OUT_DIR/host-sdk-diagnostic.log"
 XNU_HEADER_TREES_DIAGNOSTIC_LOG="$OUT_DIR/xnu-staged-header-trees.log"
+KDK_DIAGNOSTIC_LOG="$OUT_DIR/kdk-preflight.log"
+KDK_DIAGNOSTIC_TARGET="$KDK_DIAGNOSTIC_LOG"
+
+if (( ! CHECK_ONLY )); then
+  mkdir -p "$OUT_DIR"
+  : > "$KDK_DIAGNOSTIC_LOG"
+else
+  KDK_DIAGNOSTIC_TARGET='/dev/stderr'
+fi
 
 sdk_availability_headers_sha256() {
   local sdk_root="$1" header material=''
@@ -209,18 +227,80 @@ verify_sdk() {
 }
 
 verify_kdk() {
-  [[ -d "$KDKROOT" ]] || fail "matching Kernel Debug Kit $KDK_VERSION build $KDK_BUILD is required for the pinned XNU source at $KDKROOT; download it from Apple's Developer site and set XNU_X86_KDKROOT (the official download requires an Apple Developer account)"
-  [[ "$(basename "$KDKROOT")" == "KDK_${KDK_VERSION}_${KDK_BUILD}.kdk" ]] \
-    || fail "KDK bundle name is '$(basename "$KDKROOT")'; expected KDK_${KDK_VERSION}_${KDK_BUILD}.kdk for source release $XNU_SOURCE_RELEASE"
-  [[ "$KDKROOT" != *" "* ]] || fail 'KDK paths cannot contain spaces because XNU Makefiles cannot safely handle them'
-  KDKROOT="$(cd "$KDKROOT" && pwd -P)"
-  KDK_TRUSTCACHE_HEADER="$KDKROOT/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/TrustCache/API.h"
-  [[ -s "$KDK_TRUSTCACHE_HEADER" ]] \
-    || fail "matching KDK is missing its private TrustCache API header: $KDK_TRUSTCACHE_HEADER"
-  [[ -d "$KDKROOT/System/Library/KernelSupport" ]] \
-    || fail "matching KDK is missing KernelSupport: $KDKROOT/System/Library/KernelSupport"
-  KDK_PRIVATE_HEADER_SHA256="$(shasum -a 256 "$KDK_TRUSTCACHE_HEADER" | awk '{print $1}')"
-  [[ "$KDK_PRIVATE_HEADER_SHA256" =~ ^[[:xdigit:]]{64}$ ]] || fail 'could not compute KDK TrustCache header SHA-256'
+  local explicit_kdk='false'
+  [[ -n "${XNU_X86_KDKROOT:-}" ]] && explicit_kdk='true'
+  [[ "$BUILD_HOST_MODE" == cross ]] && KDK_REQUIRED='true'
+
+  if [[ -e "$KDKROOT" || -L "$KDKROOT" ]]; then
+    [[ -d "$KDKROOT" ]] || fail "KDK path exists but is not a directory: $KDKROOT"
+    [[ "$KDKROOT" != *" "* ]] || fail 'KDK paths cannot contain spaces because XNU Makefiles cannot safely handle them'
+    local requested_kdk="$KDKROOT"
+    KDKROOT="$(cd "$KDKROOT" && pwd -P)"
+    [[ "$(basename "$KDKROOT")" == "KDK_${KDK_VERSION}_${KDK_BUILD}.kdk" ]] \
+      || fail "resolved KDK bundle is '$(basename "$KDKROOT")'; expected KDK_${KDK_VERSION}_${KDK_BUILD}.kdk for source release $XNU_SOURCE_RELEASE (requested path: $requested_kdk)"
+    local metadata_json
+    if ! metadata_json="$(python3 "$SCRIPT_DIR/verify-xnu-kdk.py" --kdk-root "$KDKROOT" \
+      --expected-version "$KDK_VERSION" --expected-build "$KDK_BUILD" \
+      --expected-xnu-version "$SOURCE_VERSION" 2>>"$KDK_DIAGNOSTIC_TARGET")"; then
+      fail "KDK metadata does not match the pinned XNU source; see $KDK_DIAGNOSTIC_TARGET"
+    fi
+    KDK_PRESENT='true'
+    KDK_PRODUCT_VERSION="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["product_version"])' <<<"$metadata_json")"
+    KDK_PRODUCT_BUILD="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["product_build"])' <<<"$metadata_json")"
+    KDK_XNU_VERSION="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["xnu_version"])' <<<"$metadata_json")"
+    KDK_TRUSTCACHE_HEADER="$KDKROOT/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/TrustCache/API.h"
+    [[ -s "$KDK_TRUSTCACHE_HEADER" ]] \
+      || fail "matching KDK is missing its private TrustCache API header: $KDK_TRUSTCACHE_HEADER"
+    [[ -d "$KDKROOT/System/Library/KernelSupport" ]] \
+      || fail "matching KDK is missing KernelSupport: $KDKROOT/System/Library/KernelSupport"
+    KDK_PRIVATE_HEADER_SHA256="$(shasum -a 256 "$KDK_TRUSTCACHE_HEADER" | awk '{print $1}')"
+    [[ "$KDK_PRIVATE_HEADER_SHA256" =~ ^[[:xdigit:]]{64}$ ]] || fail 'could not compute KDK TrustCache header SHA-256'
+    TRUSTCACHE_HEADER="$KDK_TRUSTCACHE_HEADER"
+    TRUSTCACHE_HEADER_SOURCE='matching-kdk'
+    TRUSTCACHE_HEADER_SHA256="$KDK_PRIVATE_HEADER_SHA256"
+    printf 'kdk_root=%s\nkdk_product_version=%s\nkdk_product_build=%s\nkdk_xnu_version=%s\ntrustcache_header=%s\ntrustcache_header_sha256=%s\n' \
+      "$KDKROOT" "$KDK_PRODUCT_VERSION" "$KDK_PRODUCT_BUILD" "$KDK_XNU_VERSION" \
+      "$TRUSTCACHE_HEADER" "$TRUSTCACHE_HEADER_SHA256" > "$KDK_DIAGNOSTIC_TARGET"
+  elif [[ "$explicit_kdk" == true || "$KDK_REQUIRED" == true ]]; then
+    printf 'kdk_required=true\nkdk_present=false\nexpected_version=%s\nexpected_build=%s\nrequested_path=%s\n' \
+      "$KDK_VERSION" "$KDK_BUILD" "$KDKROOT" > "$KDK_DIAGNOSTIC_TARGET"
+    fail "matching Kernel Debug Kit $KDK_VERSION build $KDK_BUILD is required on Apple Silicon hosts or when XNU_X86_KDKROOT is set; install Apple's official KDK at $KDKROOT (the official download requires an Apple Developer account)"
+  else
+    KDKROOT=''
+    printf 'kdk_required=false\nkdk_present=false\nkdk_identity_status=not-present-not-required-for-intel\nreason=upstream XNU README permits Intel-only builds without a KDK\n' > "$KDK_DIAGNOSTIC_TARGET"
+  fi
+}
+
+verify_trustcache_header() {
+  local sdk_root="$1"
+  local sdk_header="$sdk_root/usr/local/include/TrustCache/API.h"
+  local sdk_framework_header="$sdk_root/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/TrustCache/API.h"
+  local sdk_public_header="$sdk_root/usr/include/TrustCache/API.h"
+  if [[ "$KDK_PRESENT" == true ]]; then
+    [[ -s "$KDK_TRUSTCACHE_HEADER" ]] \
+      || fail "matching KDK TrustCache API header disappeared: $KDK_TRUSTCACHE_HEADER"
+    TRUSTCACHE_HEADER="$KDK_TRUSTCACHE_HEADER"
+    TRUSTCACHE_HEADER_SOURCE='matching-kdk'
+  elif [[ -s "$sdk_header" ]]; then
+    TRUSTCACHE_HEADER="$sdk_header"
+    TRUSTCACHE_HEADER_SOURCE='pinned-xcode-sdk'
+  elif [[ -s "$sdk_framework_header" ]]; then
+    TRUSTCACHE_HEADER="$sdk_framework_header"
+    TRUSTCACHE_HEADER_SOURCE='pinned-xcode-sdk'
+  elif [[ -s "$sdk_public_header" ]]; then
+    TRUSTCACHE_HEADER="$sdk_public_header"
+    TRUSTCACHE_HEADER_SOURCE='pinned-xcode-sdk'
+  else
+    printf 'trustcache_header_status=missing\nchecked_sdk_paths=%s|%s|%s\n' \
+      "$sdk_header" "$sdk_framework_header" "$sdk_public_header" >> "$KDK_DIAGNOSTIC_TARGET"
+    fail "XNU source requires real TrustCache/API.h, absent from the macOS $SDK_VERSION SDK and no matching KDK is available; no header stub will be used (checked $sdk_header, $sdk_framework_header, and $sdk_public_header)"
+  fi
+  TRUSTCACHE_HEADER_SHA256="$(shasum -a 256 "$TRUSTCACHE_HEADER" | awk '{print $1}')"
+  [[ "$TRUSTCACHE_HEADER_SHA256" =~ ^[[:xdigit:]]{64}$ ]] \
+    || fail 'could not compute TrustCache API header SHA-256'
+  printf 'trustcache_source=%s\ntrustcache_header=%s\ntrustcache_header_sha256=%s\n' \
+    "$TRUSTCACHE_HEADER_SOURCE" "$TRUSTCACHE_HEADER" "$TRUSTCACHE_HEADER_SHA256" \
+    >> "$KDK_DIAGNOSTIC_TARGET"
 }
 
 verify_machine_header_exports() {
@@ -755,7 +835,9 @@ if (( CHECK_ONLY )); then
     || fail 'recorded SDK public availability header SHA-256 is malformed'
   verify_sdk
   verify_kdk
+  verify_trustcache_header "$SDK_DIR"
   verify_host_tool_unistd_probe "$BASE_SDK_DIR" 'base Xcode'
+  python3 "$SCRIPT_DIR/verify-xnu-kdk.py" --self-test
   python3 "$SCRIPT_DIR/verify-xnu-target-build.py" --self-test
   xcodebuild -version
   xcrun --find clang >/dev/null
@@ -768,8 +850,10 @@ if (( CHECK_ONLY )); then
   verify_firehose_header_closure
   printf 'int xnu_x86_64_target_probe;\n' |
     xcrun clang -target x86_64-apple-macosx26.0 -mkernel -ffreestanding -fsyntax-only -x c -
-  printf 'XNU source release %s, SDK %s, Xcode %s, and matching KDK build %s are ready for X86_64/NONE; runtime target is %s and remains unverified.\n' \
-    "$XNU_SOURCE_RELEASE" "$SDK_VERSION" "$XCODE_VERSION" "$KDK_BUILD" "$RUNTIME_TARGET_VERSION"
+  printf 'XNU source release %s, SDK %s, and Xcode %s are ready for X86_64/NONE; KDK status=%s; runtime target is %s and remains unverified.\n' \
+    "$XNU_SOURCE_RELEASE" "$SDK_VERSION" "$XCODE_VERSION" \
+    "$([[ "$KDK_PRESENT" == true ]] && printf 'matching %s/%s' "$KDK_VERSION" "$KDK_BUILD" || printf 'not required for Intel')" \
+    "$RUNTIME_TARGET_VERSION"
   exit 0
 fi
 
@@ -810,7 +894,9 @@ verify_availability_source
 
 verify_xcode_and_sdk
 verify_kdk
+verify_trustcache_header "$BASE_SDK_DIR"
 python3 "$SCRIPT_DIR/verify-xnu-target-build.py" --self-test
+python3 "$SCRIPT_DIR/verify-xnu-kdk.py" --self-test
 : > "$HOST_TOOL_UNISTD_BASE_PROBE_LOG"
 verify_host_tool_unistd_probe "$BASE_SDK_DIR" 'base Xcode' "$HOST_TOOL_UNISTD_BASE_PROBE_LOG"
 CLANG="$(xcrun --find clang)"
@@ -906,6 +992,7 @@ cp "$XNU_EXPORTED_OSFMK_HEADERS_DIR/i386/cpu_number.h" "$SDK_DIR/usr/local/inclu
 verify_machine_header_exports
 verify_firehose_header_closure
 verify_public_availability_header
+verify_trustcache_header "$SDK_DIR"
 record_host_sdk_diagnostics
 
 mkdir -p "$LIBDISPATCH_BUILD_DIR/obj" "$LIBDISPATCH_BUILD_DIR/sym" "$LIBDISPATCH_DSTROOT"
@@ -955,10 +1042,19 @@ host_sys_unistd_overlay_sha256=$HOST_SYS_UNISTD_OVERLAY_SHA256
 host_sys_unistd_headers_match=$([[ "$HOST_SYS_UNISTD_BASE_SHA256" == "$HOST_SYS_UNISTD_OVERLAY_SHA256" ]] && printf true || printf false)
 host_tool_base_unistd_probe=passed
 kdk_root=$KDKROOT
-kdk_version=$KDK_VERSION
-kdk_build=$KDK_BUILD
-kdk_matches_xnu_source=true
+kdk_status=$([[ "$KDK_PRESENT" == true ]] && printf verified || printf not-present-not-required-for-intel)
+kdk_present=$KDK_PRESENT
+kdk_required=$KDK_REQUIRED
+kdk_expected_version=$KDK_VERSION
+kdk_expected_build=$KDK_BUILD
+kdk_product_version=$KDK_PRODUCT_VERSION
+kdk_product_build=$KDK_PRODUCT_BUILD
+kdk_xnu_version=$KDK_XNU_VERSION
+kdk_matches_xnu_source=$([[ "$KDK_PRESENT" == true && "$KDK_XNU_VERSION" == "$SOURCE_VERSION" ]] && printf true || printf false)
 kdk_trustcache_api_header_sha256=$KDK_PRIVATE_HEADER_SHA256
+trustcache_header_source=$TRUSTCACHE_HEADER_SOURCE
+trustcache_header_path=$TRUSTCACHE_HEADER
+trustcache_header_sha256=$TRUSTCACHE_HEADER_SHA256
 xnu_sdk_header_tree_diagnostics_recorded=$XNU_HEADER_TREE_DIAGNOSTICS_RECORDED
 xnu_target_include_paths_verified=$XNU_TARGET_INCLUDE_PATHS_VERIFIED
 xnu_generic_sdk_header_dependencies=$XNU_GENERIC_SDK_HEADER_DEPENDENCY_COUNT
@@ -966,7 +1062,7 @@ xnu_target_dependency_files=$XNU_TARGET_DEPENDENCY_FILE_COUNT
 xnu_dependency_file_entries=$XNU_DEPENDENCY_FILE_ENTRY_COUNT
 xnu_header_dependencies=$XNU_HEADER_DEPENDENCY_COUNT
 xnu_missing_dependency_files=$XNU_MISSING_DEPENDENCY_FILE_COUNT
-xnu_target_include_path_policy=keep \$SDKROOT/usr/local/include; omit empty kernel/iBoot/AppleFeatures/platform SDK roots for X86_64/NONE; retain KDK includes
+xnu_target_include_path_policy=KDK Kernel.framework private headers first when supplied; otherwise SDK Kernel.framework private headers; keep \$SDKROOT/usr/local/include; omit generic kernel/iBoot/AppleFeatures/platform SDK roots for X86_64/NONE
 xnu_target_sysroot_policy=explicit -isysroot to isolated SDK overlay for every target clang compile
 xnu_warning_policy_verified=$XNU_WARNING_POLICY_VERIFIED
 xnu_compiler_reserved_identifier_warning=-Wno-error=reserved-identifier
@@ -1014,7 +1110,7 @@ if make -C "$SOURCE_DIR" build \
   SDKVERSION="$SDK_VERSION" KDKROOT="$KDKROOT" PLATFORM=MacOSX \
   OTHER_CFLAGS='$(RC_NONARCH_CFLAGS) -isysroot $(SDKROOT)' \
   ARCH_CONFIGS=X86_64 MACHINE_CONFIGS=NONE KERNEL_CONFIGS=DEVELOPMENT \
-  INCFLAGS_SDK='-I$(SDKROOT)/usr/local/include $(if $(KDKROOT),-I$(KDKROOT)/$(KPINCDIR) -I$(KDKROOT)/System/Library/KernelSupport) -Wno-error=reserved-identifier -Wno-error=unused-but-set-variable -Wno-error=void-pointer-to-enum-cast' \
+  INCFLAGS_SDK='$(if $(KDKROOT),-I$(KDKROOT)/$(KPINCDIR),-I$(SDKROOT)/$(KPINCDIR)) -I$(SDKROOT)/usr/local/include $(if $(KDKROOT),-I$(KDKROOT)/System/Library/KernelSupport) -Wno-error=reserved-identifier -Wno-error=unused-but-set-variable -Wno-error=void-pointer-to-enum-cast' \
   INCFLAGS_PLATFORM='$(if $(KDKROOT),-I$(KDKROOT)/$(KINCDIR)/platform -I$(KDKROOT)/$(KPINCDIR)/platform)' \
   RC_DARWIN_KERNEL_VERSION="$KERNEL_VERSION" RC_ProjectSourceVersion="$SOURCE_VERSION" \
   OBJROOT="$OBJROOT" SYMROOT="$SYMROOT" DSTROOT="$DSTROOT" VERBOSE=YES \
@@ -1048,7 +1144,9 @@ python3 - "$PACKAGE_KERNEL" "$RESULT" "$XNU_COMMIT" "$XNU_TAG" "$SOURCE_VERSION"
   "$XNU_TARGET_SYSROOT_MODE" "$XNU_TARGET_SDKROOT_OVERLAY_NOTE_COUNT" \
   "$XNU_TARGET_SDKROOT_BASE_NOTE_COUNT" "$XNU_TARGET_NO_EXPLICIT_SYSROOT_COMMAND_COUNT" \
   "$XNU_OVERLAY_HEADER_DEPENDENCY_COUNT" "$KDKROOT" "$KDK_VERSION" "$KDK_BUILD" \
-  "$KDK_PRIVATE_HEADER_SHA256" "$HOST_OS_VERSION" "$XNU_SOURCE_RELEASE" "$RUNTIME_TARGET_VERSION" <<'PY'
+  "$KDK_PRIVATE_HEADER_SHA256" "$HOST_OS_VERSION" "$XNU_SOURCE_RELEASE" "$RUNTIME_TARGET_VERSION" \
+  "$KDK_PRESENT" "$KDK_REQUIRED" "$KDK_PRODUCT_VERSION" "$KDK_PRODUCT_BUILD" "$KDK_XNU_VERSION" \
+  "$TRUSTCACHE_HEADER_SOURCE" "$TRUSTCACHE_HEADER_SHA256" "$TRUSTCACHE_HEADER" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -1094,13 +1192,22 @@ result = {
     "xnu_target_sdkroot_base_notes": int(sys.argv[36]),
     "xnu_target_commands_without_explicit_isysroot": int(sys.argv[37]),
     "xnu_overlay_header_dependencies": int(sys.argv[38]),
-    "xnu_target_include_path_policy": "keep SDKROOT/usr/local/include; omit generic kernel/iBoot/AppleFeatures/platform SDK roots from X86_64/NONE search paths; retain KDK includes",
+    "xnu_target_include_path_policy": "use matching KDK Kernel.framework private headers when supplied, otherwise use SDK Kernel.framework private headers; keep SDKROOT/usr/local/include; omit generic kernel/iBoot/AppleFeatures/platform SDK roots for X86_64/NONE; retain KDK platform paths",
     "xnu_target_sysroot_policy": "explicit -isysroot to isolated SDK overlay for every target clang compile",
-    "kdk_root": sys.argv[39],
-    "kdk_version": sys.argv[40],
-    "kdk_build": sys.argv[41],
-    "kdk_matches_xnu_source": True,
-    "kdk_trustcache_api_header_sha256": sys.argv[42],
+    "kdk_root": sys.argv[39] or None,
+    "kdk_status": "verified" if sys.argv[46] == "true" else "not-present-not-required-for-intel",
+    "kdk_expected_version": sys.argv[40],
+    "kdk_expected_build": sys.argv[41],
+    "kdk_present": sys.argv[46] == "true",
+    "kdk_required_for_build_host": sys.argv[47] == "true",
+    "kdk_product_version": sys.argv[48] or None,
+    "kdk_product_build": sys.argv[49] or None,
+    "kdk_xnu_version": sys.argv[50] or None,
+    "kdk_matches_xnu_source": sys.argv[46] == "true" and sys.argv[50] == sys.argv[5],
+    "kdk_trustcache_api_header_sha256": sys.argv[42] or None,
+    "trustcache_header_source": sys.argv[51],
+    "trustcache_header_sha256": sys.argv[52],
+    "trustcache_header_path": sys.argv[53],
     "host_os_version": sys.argv[43],
     "xnu_commit": sys.argv[3],
     "xnu_tag": sys.argv[4],

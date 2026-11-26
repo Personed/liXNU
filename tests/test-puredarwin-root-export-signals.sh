@@ -4,6 +4,7 @@ set -euo pipefail
 
 script=$(cd -- "$(dirname -- "$0")/.." && pwd)/scripts/puredarwin-root.sh
 real_mktemp=$(command -v mktemp)
+real_chmod=$(command -v chmod)
 tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
 bin=$tmp/bin
@@ -14,6 +15,7 @@ chmod 2777 -- "$shared_output"
 export TEST_STATE=$state
 export FAKE_LOOP=/dev/loop-codex-test
 export REAL_MKTEMP=$real_mktemp
+export REAL_CHMOD=$real_chmod
 export PATH="$bin:$PATH"
 
 cat >"$bin/sfdisk" <<'WRAPPER'
@@ -93,6 +95,15 @@ fi
 printf '%s\n' "$result"
 WRAPPER
 chmod +x "$bin"/*
+cat >"$bin/chmod" <<'WRAPPER'
+#!/bin/sh
+if [ "${SIGNAL_BEFORE_STAGING_CHMOD:-0}" = 1 ] && [ "${1:-}" = 0700 ]; then
+  kill -TERM "$PPID"
+  exit 0
+fi
+exec "$REAL_CHMOD" "$@"
+WRAPPER
+chmod +x "$bin/chmod"
 
 image=$tmp/fake.img
 truncate -s 4194304 "$image"
@@ -148,6 +159,20 @@ second_check_log=$(cat "$state/check-log")
 
 echo 'PureDarwin root exporter pre-mount signal cleanup test passed.'
 
+# A signal after mktemp but before clearing setgid must still remove the empty
+# 2700 staging directory using its recorded inode identity.
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/check-log"
+set +e
+SIGNAL_BEFORE_STAGING_CHMOD=1 "$script" "$image" "$output" >/dev/null 2>&1
+status=$?
+set -e
+[ "$status" -eq 143 ] || { echo "Expected early SIGTERM exit 143; got $status" >&2; exit 1; }
+staging_dir=$(cat "$state/archive-dir")
+[ ! -e "$staging_dir" ]
+[ -z "$(find "$shared_output" -mindepth 1 -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
+
+echo 'PureDarwin root exporter early staging signal cleanup test passed.'
+
 # An attacker-controlled replacement directory in the shared output parent
 # must be rejected before the exporter writes its archive or e2fsck log.
 attacker_dir=$tmp/attacker-owned
@@ -170,3 +195,22 @@ replaced_stage=$(cat "$state/replaced-stage")
 rm -rf -- "$replaced_stage" "$(cat "$state/archive-dir")"
 
 echo 'PureDarwin root exporter staging replacement test passed.'
+
+# A directory name ending in a newline must survive output-directory
+# canonicalization and keep the temporary staging path in that directory.
+newline_dir=$tmp/$'newline-tail\n'
+mkdir -- "$newline_dir"
+rm -f -- "$state/check-log"
+set +e
+REPLACE_ARCHIVE_DIR=1 ATTACKER_DIR=$attacker_dir \
+  "$script" "$image" "$newline_dir/must-not-exist.tar.gz" >/dev/null 2>&1
+status=$?
+set -e
+[ "$status" -ne 0 ] || { echo 'Exporter accepted a replaced staging directory in a newline path' >&2; exit 1; }
+newline_stage=$(cat "$state/archive-dir")
+[[ "$newline_stage" == "$newline_dir"/* ]]
+[ "$(cat "$attacker_dir/root.tar.gz")" = 'private sentinel' ]
+replaced_stage=$(cat "$state/replaced-stage")
+rm -rf -- "$replaced_stage" "$newline_stage"
+
+echo 'PureDarwin root exporter newline path check passed.'

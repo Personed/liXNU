@@ -20,12 +20,15 @@ case "$output" in
   /*) ;;
   *) output=$PWD/$output ;;
 esac
-output_dir=$(dirname -- "$output")
+output_dir=$(dirname -- "$output" && printf '.')
+output_dir=${output_dir%.}
+output_dir=${output_dir%$'\n'}
 if [ ! -d "$output_dir" ]; then
   echo "Output directory does not exist: $output_dir" >&2
   exit 1
 fi
-output_dir=$(CDPATH= cd -P -- "$output_dir" && pwd -P)
+output_dir=$(CDPATH= cd -P -- "$output_dir" && printf '%s.' "$PWD")
+output_dir=${output_dir%.}
 if [ -e "$output" ] || [ -L "$output" ]; then
   echo "Refusing to replace existing output path: $output" >&2
   exit 1
@@ -69,7 +72,7 @@ print(offset, length)
 ' "$image" <<< "$partition_table")
 read -r offset length <<< "$partition"
 
-mount_dir='' archive_dir='' archive='' loop='' check_log=''
+mount_dir='' archive_dir='' archive_identity='' archive='' loop='' check_log=''
 cleanup() {
   trap '' INT TERM
   if [ -n "$mount_dir" ]; then
@@ -98,24 +101,31 @@ cleanup() {
   if [ -n "$check_log" ]; then rm -f -- "$check_log" || return 1; check_log=''; fi
   if [ -n "$archive_dir" ]; then
     CDPATH= cd -P -- "$output_dir" || return 1
+    staging_owner=$(stat -c '%u' -- "$archive_dir" 2>/dev/null || true)
+    staging_mode=$(stat -c '%a' -- "$archive_dir" 2>/dev/null || true)
+    staging_identity=$(stat -c '%d:%i' -- "$archive_dir" 2>/dev/null || true)
     if [ -d "$archive_dir" ] && [ ! -L "$archive_dir" ] &&
-       [ "$(stat -c '%u' -- "$archive_dir")" = "$EUID" ] &&
-       [ "$(stat -c '%a' -- "$archive_dir")" = 700 ]; then
+       [ "$staging_owner" = "$EUID" ] &&
+       { [ "$staging_mode" = 700 ] || [ "$staging_mode" = 2700 ]; } &&
+       { [ -z "$archive_identity" ] || [ "$staging_identity" = "$archive_identity" ]; }; then
       rmdir -- "$archive_dir" || return 1
     else
       echo "Staging path changed during export; leaving it untouched: $archive_dir" >&2
     fi
-    archive_dir=''
+    archive_dir='' archive_identity=''
   fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 archive_dir=$(mktemp -d -- "$output_dir/.puredarwin-root.XXXXXXXX")
+archive_identity=$(stat -c '%d:%i' -- "$archive_dir")
 CDPATH= cd -P -- "$archive_dir"
 staging_owner=$(stat -c '%u' .)
 staging_mode=$(stat -c '%a' .)
-if [ "$staging_owner" != "$EUID" ] || { [ "$staging_mode" != 700 ] && [ "$staging_mode" != 2700 ]; }; then
+staging_identity=$(stat -c '%d:%i' .)
+if [ "$staging_owner" != "$EUID" ] || [ "$staging_identity" != "$archive_identity" ] ||
+   { [ "$staging_mode" != 700 ] && [ "$staging_mode" != 2700 ]; }; then
   echo "Staging directory changed before it could be opened securely: $archive_dir" >&2
   exit 1
 fi

@@ -92,7 +92,7 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 ## Requirements
 
 Run `scripts/xnulinux-boot.sh --check` on the Linux host (inside the Linux VM if you use one). It checks the
-architecture, page size, headers for the running kernel and module tools before you prepare a system disk. It also
+architecture, page size, headers for the running kernel, and the compiler selected by Kbuild before you prepare a disk. It also
 reports when Linux does not advertise address pointer authentication. Booting XNU also depends on the FKI
 backend and its memory setup.
 

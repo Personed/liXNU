@@ -7,11 +7,11 @@ if [ "$EUID" -eq 0 ]; then
   echo 'Run this NFS integration test as an unprivileged user.' >&2
   exit 1
 fi
-for tool in sudo systemctl exportfs mount mountpoint sfdisk mkfs.ext4 tar gzip stat link; do
+for tool in sudo systemctl exportfs mount mountpoint sfdisk mkfs.ext4 tar gzip stat link python3; do
   command -v "$tool" >/dev/null || { echo "Missing NFS test dependency: $tool" >&2; exit 1; }
 done
 
-tmp=$(mktemp -d)
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/xnulinux-nfs&fixture.XXXXXX")
 share=$tmp/export
 mount_dir=$tmp/client
 mount_dirs=$tmp/mount-directories
@@ -97,8 +97,29 @@ source_identity=$("@REAL_STAT@" -c '%d:%i' -- "$source")
 destination_identity=$("@REAL_STAT@" -c '%d:%i' -- "$destination")
 printf '%s\n%s\n' "$source_identity" "$destination_identity" >"@NFS_LINK_INODES@"
 WRAPPER
-sed -i "s|@REAL_MKDIR@|$real_mkdir|g; s|@NFS_MOUNT_DIRS@|$mount_dirs|g" "$bin/mkdir"
-sed -i "s|@REAL_LINK@|$real_link|g; s|@REAL_STAT@|$real_stat|g; s|@NFS_LINK_INODES@|$link_inodes|g" "$bin/link"
+python3 - "$bin/mkdir" "$real_mkdir" "$mount_dirs" <<'PYWRAPPER'
+from pathlib import Path
+import shlex
+import sys
+
+path = Path(sys.argv[1])
+script = path.read_text()
+script = script.replace('"@REAL_MKDIR@"', shlex.quote(sys.argv[2]))
+script = script.replace('"@NFS_MOUNT_DIRS@"', shlex.quote(sys.argv[3]))
+path.write_text(script)
+PYWRAPPER
+python3 - "$bin/link" "$real_link" "$real_stat" "$link_inodes" <<'PYWRAPPER'
+from pathlib import Path
+import shlex
+import sys
+
+path = Path(sys.argv[1])
+script = path.read_text()
+script = script.replace('"@REAL_LINK@"', shlex.quote(sys.argv[2]))
+script = script.replace('"@REAL_STAT@"', shlex.quote(sys.argv[3]))
+script = script.replace('"@NFS_LINK_INODES@"', shlex.quote(sys.argv[4]))
+path.write_text(script)
+PYWRAPPER
 chmod +x "$bin/mkdir" "$bin/link"
 nfs_output=$mount_dir/output/root.tar.gz
 PATH="$bin:$PATH" TMPDIR="$mount_dir/tmp" "$script" "$image" "$nfs_output"

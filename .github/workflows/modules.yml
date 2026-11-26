@@ -10,6 +10,12 @@ concurrency:
   group: modules-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  cli-installer:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: CLI and installer tests
+        run: sudo python3 -m unittest -v tests.host.test_cli
   build-x86_64-fki:
     runs-on: ubuntu-24.04
     steps:

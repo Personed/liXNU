@@ -64,6 +64,9 @@ jobs:
           assert manifest["xnu_dependency_file_entries"] > 0, manifest
           assert manifest["xnu_header_dependencies"] > 0, manifest
           assert manifest["xnu_missing_dependency_files"] == 0, manifest
+          assert manifest["xnu_warning_policy_verified"] is True, manifest
+          assert manifest["xnu_reserved_identifier_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_other_warnings_remain_errors"] is True, manifest
           PY
       - uses: actions/upload-artifact@v4
         with:
@@ -92,6 +95,7 @@ jobs:
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/host-tool-unistd-overlay-probe.log
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/xnu-staged-header-trees.log
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/xnu-target-include-diagnostics.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/xnu-warning-policy-probe.log
           if-no-files-found: ignore
           retention-days: 5
   cross-build-on-arm64-host:
@@ -142,6 +146,9 @@ jobs:
           assert manifest["xnu_dependency_file_entries"] > 0, manifest
           assert manifest["xnu_header_dependencies"] > 0, manifest
           assert manifest["xnu_missing_dependency_files"] == 0, manifest
+          assert manifest["xnu_warning_policy_verified"] is True, manifest
+          assert manifest["xnu_reserved_identifier_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_other_warnings_remain_errors"] is True, manifest
           PY
       - uses: actions/upload-artifact@v4
         with:
@@ -170,5 +177,6 @@ jobs:
             ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/host-tool-unistd-overlay-probe.log
             ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/xnu-staged-header-trees.log
             ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/xnu-target-include-diagnostics.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/xnu-warning-policy-probe.log
           if-no-files-found: ignore
           retention-days: 5

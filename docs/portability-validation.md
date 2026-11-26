@@ -8,8 +8,11 @@ Darwin userspace ran. A PureDarwin shell does not establish macOS compatibility.
 | Stage | What counts as evidence |
 | --- | --- |
 | Firmware | The intended architecture reaches the firmware console (e.g. UEFI shell for the QEMU profile). |
-| Linux host | An ARM64 Linux host or guest reaches userspace; report its kernel, page size, and PAC availability. |
-| FKI/XNU module probe | FKI loads and exposes its host-call interface; XNU resolves its FKI dependencies and reaches the expected firmware request. A missing collection ends the probe here. |
+| Linux host or guest | ARM64 Linux reaches the intended userspace; record whether this is a distro boot or a minimal test initramfs, plus the kernel, page size, and PAC availability. |
+| FKI configuration | FKI loads with the requested `carve_base` and `carve_mb`; reading those parameters confirms configuration only, not that the reserved pages can be allocated. |
+| FKI carve-out allocation | A probe allocates 16 MiB from the reserved region at physical `0x70000000`, frees it, and allocates it again at the same address without reloading FKI. This validates allocation and reuse for the recorded QEMU profile only. |
+| XNU module probe | `xnu.ko` resolves its FKI dependencies and reaches the expected missing-image error. This checks the module and loader path without a real collection; it does not show that XNU allocated from the carve-out. |
+| XNU uses the carve-out | XNU loads a compatible kernel collection and runs using its reserved memory. The FKI probe above does not establish this stage. |
 | PureDarwin userspace | The real, paired PureDarwin disk and free kernel collection boot; execute a command on the Darwin console and observe the result. Record a clean halt separately. |
 | macOS desktop | A user-provided compatible macOS disk and collection reach an interactive desktop; record input, rendering backend, and networking separately. |
 
@@ -21,6 +24,14 @@ Report the profile alongside the stage:
   from the Linux guest. The ARM64 QEMU path in [#3] uses TCG, including on Intel/AMD hosts;
   distinguish it from the Apple Silicon krunkit path. The module smoke test in [#1]
   is a separate check. Neither substitutes for the PureDarwin test below.
+- **x86-64 PC → QEMU TCG → ARM64 Linux:** keep the PC's CPU/OS/QEMU details separate from
+  the ARM64 guest. The reference FKI carve-out profile is tracked in [#23]: x86-64 Linux,
+  QEMU 10.0.13 TCG, an ARM64 `virt` guest with 1 GiB of RAM and `mem=768M`, and FKI
+  configured with `carve_base=0x70000000 carve_mb=256`. Its probe allocates and frees
+  16 MiB twice, requiring physical address `0x70000000` on both passes. The guest uses
+  a minimal test initramfs, not a full installed Linux distribution. This validates FKI's
+  mapping and reuse in that profile; it is not a physical-PC compatibility claim, an XNU
+  carve-out use test, or a PureDarwin boot.
 - **x86-64 guest on Intel/AMD Linux:** [#16] describes a distinct experimental QEMU/KVM
   path, not a port of the ARM64 XNU/FKI modules. Report KVM and TCG separately; a Linux
   test guest is not evidence of an x86-64 Darwin or macOS boot. The PureDarwin run below
@@ -95,7 +106,10 @@ Repo commit(s) / PR(s):
 Outer machine + CPU / OS + version:
 Runtime + version / accelerator:
 ARM64 Linux distro / kernel / page size / PAC (if applicable):
+Linux userspace type (installed distro or test initramfs):
 Memory / FKI carve-out / hosted CPUs:
+FKI configuration / carve-out allocation and reuse result:
+XNU stage (not loaded, missing-image probe, or loaded with collection):
 Guest OS + version / collection and pristine disk digests:
 Stages reached / guest halt result:
 Rendering / input / networking (tested, failed, or not tested):
@@ -110,4 +124,5 @@ artifacts. Remove machine identifiers, credentials and local paths before sharin
 [#4]: https://github.com/Personed/xnulinux/pull/4
 [#5]: https://github.com/Personed/xnulinux/pull/5
 [#7]: https://github.com/Personed/xnulinux/pull/7
+[#23]: https://github.com/Personed/xnulinux/pull/23
 [#16]: https://github.com/Personed/xnulinux/pull/16

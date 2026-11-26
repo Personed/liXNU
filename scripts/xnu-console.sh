@@ -1,8 +1,8 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-only
 # Interactive terminal on XNU's /dev/console.
-# Works locally on the Linux host/VM where xnu.ko runs (reading dmesg/journalctl and writing CONSOLE_IN) or from a
-# remote host via serial-cap.log + scripts/vm.sh.
+# Works locally on the Linux host/VM where xnu.ko runs (reading journalctl -k -f or dmesg -w and writing CONSOLE_IN)
+# or from a remote host via serial-cap.log + scripts/vm.sh.
 # Usage: xnu-console.sh [--local | --remote]
 set -u
 P=$(cd "$(dirname "$0")/.." && pwd)
@@ -26,15 +26,21 @@ if [ "$MODE" = auto ]; then
   fi
 fi
 
+# Strip CR inside unbuffered sed (-u) rather than piping through `tr`, which
+# block-buffers stdout in pipelines and hides short prompts/replies.
+SED_FILTER='s/\r//g; s/^\[ *[0-9.]*\] .*fki: darwin console: //p; t; s/^\[ *[0-9.]*\] fki: darwin console: //p; t; s/^fki: darwin console: //p'
+
 if [ "$MODE" = local ]; then
-  if command -v dmesg >/dev/null 2>&1; then
-    (sudo dmesg -w 2>/dev/null || dmesg -w 2>/dev/null) | tr -d '\r' |
-      sed -un 's/^\[ *[0-9.]*\] fki: darwin console: //p; s/^fki: darwin console: //p' &
-  elif command -v journalctl >/dev/null 2>&1; then
-    (sudo journalctl -k -f -n 0 -o short-monotonic --no-pager 2>/dev/null || journalctl -k -f -n 0 -o short-monotonic --no-pager) |
-      tr -d '\r' | sed -un 's/^\[ *[0-9.]*\] .*fki: darwin console: //p' &
+  # Prefer journalctl -k -f when systemd-journald is running: util-linux dmesg
+  # (/dev/kmsg) can stop delivering records after a flood of XNU output while
+  # journald keeps receiving them (see scripts/vm-dmesg-shell.sh).
+  if command -v journalctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    (sudo journalctl -k -f -n 0 -q -o short-monotonic --no-pager 2>/dev/null ||
+      journalctl -k -f -n 0 -q -o short-monotonic --no-pager) | sed -un "$SED_FILTER" &
+  elif command -v dmesg >/dev/null 2>&1; then
+    (sudo dmesg -w 2>/dev/null || dmesg -w 2>/dev/null) | sed -un "$SED_FILTER" &
   else
-    echo "xnu-console: neither dmesg nor journalctl found" >&2
+    echo "xnu-console: neither journalctl nor dmesg found" >&2
     exit 1
   fi
   TP=$!; trap 'kill $TP 2>/dev/null' EXIT
@@ -42,7 +48,7 @@ if [ "$MODE" = local ]; then
     printf '%s\n' "$line" >> "$CONSOLE_IN"
   done
 else
-  tail -n 0 -F "$LOG" | tr -d '\r' | sed -un 's/^\[ *[0-9.]*\] fki: darwin console: //p' &
+  tail -n 0 -F "$LOG" | sed -un "$SED_FILTER" &
   TP=$!; trap 'kill $TP 2>/dev/null' EXIT
   while IFS= read -r line; do
     printf '%s\n' "$line" | bash "$P/scripts/vm.sh" "cat >> '$CONSOLE_IN'"

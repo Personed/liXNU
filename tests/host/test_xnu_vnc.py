@@ -7,6 +7,8 @@ import os
 import pathlib
 import socket
 import struct
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -25,14 +27,33 @@ class TestXnuVnc(unittest.TestCase):
         self.assertEqual(xnu_vnc.keysym_to_evdev(0xFFEB), 125)  # Super_L -> Command
         self.assertEqual(xnu_vnc.keysym_to_evdev(0xFF52), 103)  # Up
 
-    def test_bgra_conversion(self):
+    def test_bgra_conversion_32_16_8(self):
         bgra = bytes([0x11, 0x22, 0x33, 0xFF])
         self.assertEqual(xnu_vnc.bgra_to_pixel_bytes(bgra, 32, 0, 16, 8, 0), bgra)
         # RGBX (red_shift=0, green_shift=8, blue_shift=16) little-endian
         rgbx = xnu_vnc.bgra_to_pixel_bytes(bgra, 32, 0, 0, 8, 16)
         self.assertEqual(rgbx, bytes([0x33, 0x22, 0x11, 0x00]))
+        # 16-bit RGB565 (R=255, G=0, B=0 -> 0xF800)
+        red_bgra = bytes([0x00, 0x00, 0xFF, 0xFF])
+        rgb565 = xnu_vnc.bgra_to_pixel_bytes(red_bgra, 16, 0, 11, 5, 0, 1, 31, 63, 31)
+        self.assertEqual(struct.unpack("<H", rgb565)[0], 0xF800)
+        # 8-bit RGB233 (R=255, G=0, B=0 -> 0x07 at shift 0)
+        rgb8 = xnu_vnc.bgra_to_pixel_bytes(red_bgra, 8, 0, 0, 3, 6, 1, 7, 7, 3)
+        self.assertEqual(rgb8, bytes([0x07]))
+        # Non-true-color raises ValueError
+        with self.assertRaises(ValueError):
+            xnu_vnc.bgra_to_pixel_bytes(red_bgra, 8, 0, 0, 0, 0, true_color=0)
 
-    def test_rfb_handshake_update_and_input(self):
+    def test_refuses_non_loopback_without_flag(self):
+        res = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "hosted" / "xnu-vnc.py"), "--listen", "0.0.0.0"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("refusing to bind", res.stderr)
+
+    def test_rfb_handshake_update_lowcolor_and_release_on_disconnect(self):
         with tempfile.TemporaryDirectory() as tmp:
             fb_path = os.path.join(tmp, "fb.raw")
             in_path = os.path.join(tmp, "in.ev")
@@ -43,6 +64,7 @@ class TestXnuVnc(unittest.TestCase):
 
             writer = xnu_vnc.InputWriter(in_path, 2, 2)
             s_srv, s_cli = socket.socketpair()
+
             def run_srv():
                 try:
                     xnu_vnc.serve_client(s_srv, fb_path, writer, 2, 2, 30)
@@ -68,7 +90,7 @@ class TestXnuVnc(unittest.TestCase):
                 name = xnu_vnc.recv_exact(s_cli, name_len)
                 self.assertEqual((w, h, name), (2, 2, b"xnulinux"))
 
-                # Request non-incremental framebuffer update
+                # Request non-incremental 32-bit framebuffer update
                 s_cli.sendall(struct.pack("!BBHHHH", 3, 0, 0, 0, 2, 2))
                 msg_type, _, n_rects = struct.unpack("!BBH", xnu_vnc.recv_exact(s_cli, 4))
                 self.assertEqual((msg_type, n_rects), (0, 1))
@@ -77,7 +99,17 @@ class TestXnuVnc(unittest.TestCase):
                 pixels = xnu_vnc.recv_exact(s_cli, 16)
                 self.assertEqual(pixels, fb_data)
 
-                # Send PointerEvent (left click at 1, 1) and KeyEvent ('a' down)
+                # Switch to 8-bit low-color true-color format (like TigerVNC low-color mode)
+                pf_8 = struct.pack("!BBBBHHHBBB3x", 8, 8, 0, 1, 7, 7, 3, 0, 3, 6)
+                s_cli.sendall(b"\x00\x00\x00\x00" + pf_8)
+                s_cli.sendall(struct.pack("!BBHHHH", 3, 0, 0, 0, 2, 2))
+                msg_type, _, n_rects = struct.unpack("!BBH", xnu_vnc.recv_exact(s_cli, 4))
+                self.assertEqual((msg_type, n_rects), (0, 1))
+                xnu_vnc.recv_exact(s_cli, 12)
+                pixels_8 = xnu_vnc.recv_exact(s_cli, 4)
+                self.assertEqual(len(pixels_8), 4)
+
+                # Send PointerEvent (left button down) and KeyEvent ('a' down) WITHOUT releasing before disconnect
                 s_cli.sendall(struct.pack("!BBHH", 5, 1, 1, 1))
                 s_cli.sendall(struct.pack("!BB2xI", 4, 1, ord("a")))
             finally:
@@ -91,6 +123,9 @@ class TestXnuVnc(unittest.TestCase):
             self.assertIn((xnu_vnc.EV_ABS, 0, 32767), events)
             self.assertIn((xnu_vnc.EV_KEY, xnu_vnc.BTN_LEFT, 1), events)
             self.assertIn((xnu_vnc.EV_KEY, 30, 1), events)
+            # Disconnecting must release both held key and held mouse button
+            self.assertIn((xnu_vnc.EV_KEY, xnu_vnc.BTN_LEFT, 0), events)
+            self.assertIn((xnu_vnc.EV_KEY, 30, 0), events)
 
 
 if __name__ == "__main__":

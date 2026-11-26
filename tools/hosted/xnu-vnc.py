@@ -3,13 +3,20 @@
 """Lightweight RFB/VNC server for xnulinux's framebuffer dump and evdev input file.
 
 Uses only the Python 3 standard library so any PC with a VNC client can view the
-hosted macOS/PureDarwin screen and send mouse/keyboard input without extra packages.
+hosted macOS screen (XnuDisplay) and send mouse/keyboard input (XnuInput) without
+extra packages. Note: PureDarwin's default console-only collection does not include
+XnuDisplay or XnuInput.
+
+By default this server binds to loopback (127.0.0.1) without VNC authentication.
+Non-loopback --listen addresses are refused unless --allow-insecure-remote is passed
+(prefer SSH port forwarding, e.g. `ssh -L 5900:127.0.0.1:5900 ...`, for remote access).
 
     xnu-vnc.py [--fb /var/tmp/xnu-fb.raw] [--input /var/tmp/xnu-input]
                [--screen 1280x800] [--listen 127.0.0.1] [--port 5900]
 """
 
 import argparse
+import ipaddress
 import os
 import select
 import socket
@@ -74,21 +81,58 @@ def keysym_to_evdev(keysym):
     return KEYSYM_TO_EVDEV.get(keysym)
 
 
-def bgra_to_pixel_bytes(raw_bgra, bpp, big_endian, red_shift, green_shift, blue_shift):
+def is_loopback_address(host):
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def bgra_to_pixel_bytes(
+    raw_bgra,
+    bpp,
+    big_endian,
+    red_shift,
+    green_shift,
+    blue_shift,
+    true_color=1,
+    red_max=255,
+    green_max=255,
+    blue_max=255,
+):
     """Convert raw 32-bit BGRA framebuffer bytes to the client's requested pixel format."""
-    if bpp == 32 and not big_endian and red_shift == 16 and green_shift == 8 and blue_shift == 0:
+    if not true_color:
+        raise ValueError("color-map (non-true-color) pixel format is not supported")
+    if (
+        bpp == 32
+        and not big_endian
+        and red_max == 255
+        and green_max == 255
+        and blue_max == 255
+        and red_shift == 16
+        and green_shift == 8
+        and blue_shift == 0
+    ):
         return raw_bgra
-    if bpp != 32:
-        raise ValueError(f"unsupported bpp={bpp} (only 32-bit true-color supported)")
+    if bpp not in (8, 16, 32):
+        raise ValueError(f"unsupported bpp={bpp} (supported: 8, 16, 32)")
+
     n = len(raw_bgra) // 4
-    out = bytearray(n * 4)
-    endian = ">" if big_endian else "<"
+    bytes_pp = bpp // 8
+    out = bytearray(n * bytes_pp)
+    fmt = (">" if big_endian else "<") + {1: "B", 2: "H", 4: "I"}[bytes_pp]
+    mask = (1 << bpp) - 1
     for i in range(n):
         b = raw_bgra[i * 4]
         g = raw_bgra[i * 4 + 1]
         r = raw_bgra[i * 4 + 2]
-        px = (r << red_shift) | (g << green_shift) | (b << blue_shift)
-        struct.pack_into(endian + "I", out, i * 4, px)
+        rs = (r * red_max + 127) // 255 if red_max != 255 else r
+        gs = (g * green_max + 127) // 255 if green_max != 255 else g
+        bs = (b * blue_max + 127) // 255 if blue_max != 255 else b
+        px = ((rs << red_shift) | (gs << green_shift) | (bs << blue_shift)) & mask
+        struct.pack_into(fmt, out, i * bytes_pp, px)
     return bytes(out)
 
 
@@ -98,6 +142,7 @@ class InputWriter:
         self.width = max(2, width)
         self.height = max(2, height)
         self.prev_buttons = 0
+        self.pressed_keys = set()
 
     def _write_events(self, events):
         if not self.path or not events:
@@ -110,6 +155,10 @@ class InputWriter:
         code = keysym_to_evdev(keysym)
         if code is None:
             return
+        if down:
+            self.pressed_keys.add(code)
+        else:
+            self.pressed_keys.discard(code)
         self._write_events([(EV_KEY, code, 1 if down else 0), (EV_SYN, 0, 0)])
 
     def handle_pointer(self, mask, x, y):
@@ -131,6 +180,20 @@ class InputWriter:
         self.prev_buttons = mask & 7
         events.append((EV_SYN, 0, 0))
         self._write_events(events)
+
+    def release_all(self):
+        """Release any held keys and mouse buttons when a VNC client disconnects."""
+        events = []
+        for code in sorted(self.pressed_keys):
+            events.append((EV_KEY, code, 0))
+        self.pressed_keys.clear()
+        for bit, code in ((1, BTN_LEFT), (2, BTN_MIDDLE), (4, BTN_RIGHT)):
+            if self.prev_buttons & bit:
+                events.append((EV_KEY, code, 0))
+        self.prev_buttons = 0
+        if events:
+            events.append((EV_SYN, 0, 0))
+            self._write_events(events)
 
 
 def recv_exact(sock, n):
@@ -156,84 +219,99 @@ def read_fb(path, width, height):
 
 
 def serve_client(conn, fb_path, input_writer, width, height, fps):
-    # 1. RFB handshake
-    conn.sendall(b"RFB 003.008\n")
-    ver = recv_exact(conn, 12)
-    if not ver.startswith(b"RFB "):
-        return
-    minor = int(ver[8:11])
-    if minor >= 7:
-        conn.sendall(struct.pack("!BB", 1, 1))  # 1 security type: None (1)
-        sec = recv_exact(conn, 1)[0]
-        if sec != 1:
+    try:
+        # 1. RFB handshake
+        conn.sendall(b"RFB 003.008\n")
+        ver = recv_exact(conn, 12)
+        if not ver.startswith(b"RFB "):
             return
-        conn.sendall(struct.pack("!I", 0))  # OK
-    else:
-        conn.sendall(struct.pack("!I", 1))  # SecurityType None
+        minor = int(ver[8:11])
+        if minor >= 7:
+            conn.sendall(struct.pack("!BB", 1, 1))  # 1 security type: None (1)
+            sec = recv_exact(conn, 1)[0]
+            if sec != 1:
+                return
+            conn.sendall(struct.pack("!I", 0))  # OK
+        else:
+            conn.sendall(struct.pack("!I", 1))  # SecurityType None
 
-    recv_exact(conn, 1)  # ClientInit (shared flag)
+        recv_exact(conn, 1)  # ClientInit (shared flag)
 
-    # ServerInit: 32-bit little-endian BGRA (red_shift=16, green_shift=8, blue_shift=0)
-    bpp, depth, big_endian, true_color = 32, 24, 0, 1
-    r_shift, g_shift, b_shift = 16, 8, 0
-    pixfmt = struct.pack("!BBBBHHHBBB3x", bpp, depth, big_endian, true_color, 255, 255, 255, r_shift, g_shift, b_shift)
-    name = b"xnulinux"
-    conn.sendall(struct.pack("!HH", width, height) + pixfmt + struct.pack("!I", len(name)) + name)
+        # ServerInit: 32-bit little-endian BGRA (red_shift=16, green_shift=8, blue_shift=0)
+        bpp, depth, big_endian, true_color = 32, 24, 0, 1
+        r_max, g_max, b_max = 255, 255, 255
+        r_shift, g_shift, b_shift = 16, 8, 0
+        pixfmt = struct.pack(
+            "!BBBBHHHBBB3x", bpp, depth, big_endian, true_color, r_max, g_max, b_max, r_shift, g_shift, b_shift
+        )
+        name = b"xnulinux"
+        conn.sendall(struct.pack("!HH", width, height) + pixfmt + struct.pack("!I", len(name)) + name)
 
-    last_fb = None
-    pending_update = False
-    pending_incremental = True
-    interval = 1.0 / max(1, fps)
-    last_send = 0.0
+        last_fb = None
+        pending_update = False
+        pending_incremental = True
+        interval = 1.0 / max(1, fps)
+        last_send = 0.0
 
-    while True:
-        timeout = interval if pending_update else 0.25
-        r, _, _ = select.select([conn], [], [], timeout)
-        if r:
-            msg_type = recv_exact(conn, 1)[0]
-            if msg_type == 0:  # SetPixelFormat
-                recv_exact(conn, 3)
-                pf = recv_exact(conn, 16)
-                bpp, depth, big_endian, true_color, _, _, _, r_shift, g_shift, b_shift = struct.unpack(
-                    "!BBBBHHHBBB3x", pf
-                )
-                last_fb = None
-            elif msg_type == 2:  # SetEncodings
-                recv_exact(conn, 1)
-                n_enc = struct.unpack("!H", recv_exact(conn, 2))[0]
-                recv_exact(conn, n_enc * 4)
-            elif msg_type == 3:  # FramebufferUpdateRequest
-                inc, _x, _y, _w, _h = struct.unpack("!BHHHH", recv_exact(conn, 9))
-                pending_update = True
-                pending_incremental = bool(inc)
-            elif msg_type == 4:  # KeyEvent
-                down = recv_exact(conn, 1)[0]
-                recv_exact(conn, 2)
-                keysym = struct.unpack("!I", recv_exact(conn, 4))[0]
-                input_writer.handle_key(bool(down), keysym)
-            elif msg_type == 5:  # PointerEvent
-                mask, px, py = struct.unpack("!BHH", recv_exact(conn, 5))
-                input_writer.handle_pointer(mask, px, py)
-            elif msg_type == 6:  # ClientCutText
-                recv_exact(conn, 3)
-                clen = struct.unpack("!I", recv_exact(conn, 4))[0]
-                recv_exact(conn, clen)
-            else:
-                break
+        while True:
+            timeout = interval if pending_update else 0.25
+            r, _, _ = select.select([conn], [], [], timeout)
+            if r:
+                msg_type = recv_exact(conn, 1)[0]
+                if msg_type == 0:  # SetPixelFormat
+                    recv_exact(conn, 3)
+                    pf = recv_exact(conn, 16)
+                    bpp, depth, big_endian, true_color, r_max, g_max, b_max, r_shift, g_shift, b_shift = struct.unpack(
+                        "!BBBBHHHBBB3x", pf
+                    )
+                    if not true_color or bpp not in (8, 16, 32):
+                        print(
+                            f"xnu-vnc: rejecting unsupported pixel format (bpp={bpp}, true_color={true_color})",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        break
+                    last_fb = None
+                elif msg_type == 2:  # SetEncodings
+                    recv_exact(conn, 1)
+                    n_enc = struct.unpack("!H", recv_exact(conn, 2))[0]
+                    recv_exact(conn, n_enc * 4)
+                elif msg_type == 3:  # FramebufferUpdateRequest
+                    inc, _x, _y, _w, _h = struct.unpack("!BHHHH", recv_exact(conn, 9))
+                    pending_update = True
+                    pending_incremental = bool(inc)
+                elif msg_type == 4:  # KeyEvent
+                    down = recv_exact(conn, 1)[0]
+                    recv_exact(conn, 2)
+                    keysym = struct.unpack("!I", recv_exact(conn, 4))[0]
+                    input_writer.handle_key(bool(down), keysym)
+                elif msg_type == 5:  # PointerEvent
+                    mask, px, py = struct.unpack("!BHH", recv_exact(conn, 5))
+                    input_writer.handle_pointer(mask, px, py)
+                elif msg_type == 6:  # ClientCutText
+                    recv_exact(conn, 3)
+                    clen = struct.unpack("!I", recv_exact(conn, 4))[0]
+                    recv_exact(conn, clen)
+                else:
+                    break
 
-        now = time.monotonic()
-        if pending_update and (not pending_incremental or now - last_send >= interval):
-            raw = read_fb(fb_path, width, height)
-            if not pending_incremental or raw != last_fb:
-                pixels = bgra_to_pixel_bytes(raw, bpp, big_endian, r_shift, g_shift, b_shift)
-                hdr = struct.pack("!BxH", 0, 1) + struct.pack("!HHHHi", 0, 0, width, height, 0)
-                conn.sendall(hdr + pixels)
-                last_fb = raw
-                last_send = now
-                pending_update = False
+            now = time.monotonic()
+            if pending_update and (not pending_incremental or now - last_send >= interval):
+                raw = read_fb(fb_path, width, height)
+                if not pending_incremental or raw != last_fb:
+                    pixels = bgra_to_pixel_bytes(
+                        raw, bpp, big_endian, r_shift, g_shift, b_shift, true_color, r_max, g_max, b_max
+                    )
+                    hdr = struct.pack("!BxH", 0, 1) + struct.pack("!HHHHi", 0, 0, width, height, 0)
+                    conn.sendall(hdr + pixels)
+                    last_fb = raw
+                    last_send = now
+                    pending_update = False
+    finally:
+        input_writer.release_all()
 
 
-def main():
+def main(argv=None):
     p = argparse.ArgumentParser(description="VNC server for xnulinux framebuffer and evdev input")
     p.add_argument("--fb", default=os.environ.get("FB_DUMP", "/var/tmp/xnu-fb.raw"))
     p.add_argument("--input", default=os.environ.get("INPUT_IN", "/var/tmp/xnu-input"))
@@ -241,7 +319,20 @@ def main():
     p.add_argument("--listen", default="127.0.0.1")
     p.add_argument("--port", type=int, default=5900)
     p.add_argument("--fps", type=int, default=15)
-    args = p.parse_args()
+    p.add_argument(
+        "--allow-insecure-remote",
+        action="store_true",
+        help="Allow binding to a non-loopback address without VNC authentication (unsafe on untrusted networks)",
+    )
+    args = p.parse_args(argv)
+
+    if not is_loopback_address(args.listen) and not args.allow_insecure_remote:
+        print(
+            f"xnu-vnc: refusing to bind unauthenticated VNC server on non-loopback address '{args.listen}'. "
+            "Use SSH port forwarding to 127.0.0.1, or pass --allow-insecure-remote to override.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     w_s, h_s = args.screen.lower().split("x", 1)
     width, height = int(w_s), int(h_s)
@@ -251,14 +342,17 @@ def main():
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((args.listen, args.port))
     srv.listen(4)
-    print(f"xnu-vnc: listening on {args.listen}:{args.port} ({width}x{height}, fb={args.fb}, input={args.input})", flush=True)
+    print(
+        f"xnu-vnc: listening on {args.listen}:{args.port} ({width}x{height}, fb={args.fb}, input={args.input})",
+        flush=True,
+    )
 
     try:
         while True:
-            conn, addr = srv.accept()
+            conn, _addr = srv.accept()
             try:
                 serve_client(conn, args.fb, writer, width, height, args.fps)
-            except (EOFError, BrokenPipeError, ConnectionResetError, OSError):
+            except (EOFError, BrokenPipeError, ConnectionResetError, ValueError, OSError):
                 pass
             finally:
                 conn.close()

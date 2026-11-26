@@ -17,7 +17,11 @@ as_root=()
 if [ "$EUID" -ne 0 ]; then as_root=(sudo); fi
 
 populate_root() {
-  "${as_root[@]}" tar --numeric-owner -xzf "$ROOT" -C "$M"
+  if [ "$(uname -s)" = Linux ]; then
+    "${as_root[@]}" tar --numeric-owner -xzf "$ROOT" -C "$M"
+  else
+    "${as_root[@]}" tar -xzf "$ROOT" -C "$M"
+  fi
   "${as_root[@]}" rm -rf "$M/.fseventsd" "$M/.Spotlight-V100"
   "${as_root[@]}" rm -f "$M/sbin/fsck"
   "${as_root[@]}" tee "$M/sbin/fsck" >/dev/null <<'FSCK'

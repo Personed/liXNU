@@ -74,7 +74,7 @@ def compiler_path(token: str, expected_compilers: set[pathlib.Path]) -> bool:
 
 def parse_commands(objroot: pathlib.Path, expected_compilers: set[pathlib.Path]) -> list[dict[str, object]]:
     commands = []
-    fragments = sorted(objroot.rglob("*.o.json"))
+    fragments = sorted(set(objroot.rglob("*.o.json")) | set(objroot.rglob("*.cpo.json")))
     if not fragments:
         raise ValidationError(f"XNU build produced no Clang -MJ compilation database fragments under {objroot}")
     for fragment in fragments:
@@ -127,6 +127,18 @@ def parse_commands(objroot: pathlib.Path, expected_compilers: set[pathlib.Path])
                         f"{source} != {canonical(argument_source)}"
                     )
             language, _ = classify_source(tokens, source)
+            depfiles = depfile_paths(tokens)
+            if not depfiles:
+                fragment_name = fragment.name
+                if fragment_name.endswith(".cpo.json"):
+                    depfile_name = fragment_name[:-len(".cpo.json")] + ".cpd"
+                elif fragment_name.endswith(".o.json"):
+                    depfile_name = fragment_name[:-len(".o.json")] + ".d"
+                else:
+                    raise ValidationError(
+                        f"cannot derive XNU dependency filename from Clang -MJ fragment {fragment}"
+                    )
+                depfiles = [str(fragment.with_name(depfile_name))]
             commands.append({
                 "tokens": tokens,
                 "language": language,
@@ -134,7 +146,8 @@ def parse_commands(objroot: pathlib.Path, expected_compilers: set[pathlib.Path])
                 "directory": directory,
                 "includes": include_paths(tokens, directory),
                 "sysroots": sysroot_paths(tokens),
-                "depfiles": depfile_paths(tokens),
+                "depfiles": depfiles,
+                "depfile_source": "-MF" if depfile_paths(tokens) else "-MJ filename",
                 "fragment": fragment,
             })
     return commands
@@ -290,14 +303,11 @@ def sdkroot_notes(log_text: str) -> list[pathlib.Path]:
     return [canonical(value) for value in re.findall(r"xcrun: note: SDKROOT = '([^']+)'", log_text)]
 
 
-def validate_sysroot_contract(sysroots: list[pathlib.Path], sdk_root: pathlib.Path, overlay_note_count: int) -> str:
-    if overlay_note_count < 1:
-        raise ValidationError(f"XNU make log does not show SDKROOT resolving to isolated SDK {sdk_root}")
-    wrong = [root for root in sysroots if root != sdk_root]
-    if wrong:
-        raise ValidationError(f"XNU target clang uses explicit sysroots {wrong}; expected only {sdk_root}")
+def validate_sysroot_contract(sysroots: list[pathlib.Path], sdk_root: pathlib.Path) -> str:
     if not sysroots:
-        return "sdkroot-resolved-no-explicit-isysroot"
+        raise ValidationError(f"XNU target clang command has no explicit -isysroot for isolated SDK {sdk_root}")
+    if sysroots != [sdk_root]:
+        raise ValidationError(f"XNU target clang uses explicit sysroots {sysroots}; expected only {sdk_root}")
     return "explicit-isysroot-overlay"
 
 
@@ -342,8 +352,12 @@ def verify(log_path: pathlib.Path, objroot: pathlib.Path, sdk_root: pathlib.Path
     wrong_sysroots = []
     for command in commands:
         sysroots = command["sysroots"]
+        if not sysroots:
+            raise ValidationError(
+                f"XNU target command {command['source']} has no explicit -isysroot for isolated SDK {sdk_root}"
+            )
         try:
-            mode = validate_sysroot_contract(sysroots, sdk_root, overlay_note_count)
+            mode = validate_sysroot_contract(sysroots, sdk_root)
         except ValidationError as error:
             wrong_sysroots.append((command["source"], str(error)))
             continue
@@ -458,6 +472,7 @@ def verify(log_path: pathlib.Path, objroot: pathlib.Path, sdk_root: pathlib.Path
     for index, command in enumerate(commands, 1):
         selected = [str(path) for path in command["includes"] if path == private_include_root or any(path in roots for roots in excluded_paths.values())]
         diagnostics.append(f"target_command_{index}_source={command['source']} language={command['language']} sysroots={' '.join(map(str, command['sysroots']))}")
+        diagnostics.append(f"target_command_{index}_depfile_source={command['depfile_source']} depfiles={' '.join(command['depfiles'])}")
         diagnostics.append(f"target_command_{index}_sdk_include_paths={' '.join(selected)}")
 
     diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
@@ -478,10 +493,12 @@ def verify(log_path: pathlib.Path, objroot: pathlib.Path, sdk_root: pathlib.Path
     }
 
 
-def _expect_failure(callable_, label: str) -> None:
+def _expect_failure(callable_, label: str, expected: str | None = None) -> None:
     try:
         callable_()
-    except ValidationError:
+    except ValidationError as error:
+        if expected is not None and expected not in str(error):
+            raise ValidationError(f"self-test expected {label} failure containing {expected!r}, got {error!s}") from error
         return
     raise ValidationError(f"self-test expected failure: {label}")
 
@@ -509,16 +526,20 @@ def self_test() -> None:
         source_asm = source_root / "osfmk/start.s"
         source_asm.parent.mkdir(parents=True)
         source_asm.write_text("/* assembly fixture */\n")
+        source_cpp = source_root / "iokit/Probe.cpp"
+        source_cpp.parent.mkdir(parents=True)
+        source_cpp.write_text("int cpp_probe;\n")
         c_dep = objdir / "probe.d"
         asm_dep = objdir / "start.d"
+        cpp_dep = objdir / "Probe.cpd"
         c_dep.write_text(f"probe.o: {source_c} {private_header}\n")
         asm_dep.write_text(f"start.o: {source_asm} {private_header}\n")
+        cpp_dep.write_text(f"Probe.cpo: {source_cpp} {private_header}\n")
         common = ["-c", "-mkernel", "-I", str(include_root)]
-        c_args = [
-            str(compiler), *common, "-Werror", *WARNING_EXCEPTIONS,
-            "-MF", "probe.d", str(source_c),
-        ]
-        asm_args = [str(compiler), *common, "-MF", "start.d", str(source_asm)]
+        sysroot = ["-isysroot", str(sdk_root)]
+        c_args = [str(compiler), *common, *sysroot, "-Werror", *WARNING_EXCEPTIONS, str(source_c)]
+        asm_args = [str(compiler), *common, *sysroot, str(source_asm)]
+        cpp_args = [str(compiler), *common, *sysroot, "-Werror", *WARNING_EXCEPTIONS, str(source_cpp)]
         log = root / "build.log"
         diagnostic = root / "diagnostics.log"
 
@@ -526,58 +547,63 @@ def self_test() -> None:
             lines = [f"xcrun: note: SDKROOT = '{path}'" for path in notes]
             lines.extend(shlex.join(command) for command in commands)
             log.write_text("\n".join(lines) + "\n")
-            for stale in objdir.glob("*.o.json"):
+            for stale in set(objdir.glob("*.o.json")) | set(objdir.glob("*.cpo.json")):
                 stale.unlink()
             for command in commands:
                 source = pathlib.Path(command[-1])
-                fragment = objdir / f"{source.stem}.o.json"
+                is_cpp = source.suffix.lower() in {".cpp", ".cc", ".cxx", ".mm"}
+                fragment = objdir / (f"{source.stem}.cpo.json" if is_cpp else f"{source.stem}.o.json")
                 entry = {
                     "directory": str(objdir),
                     "arguments": command,
                     "file": str(source),
-                    "output": str(objdir / f"{source.stem}.o"),
+                    "output": str(objdir / (f"{source.stem}.cpo" if is_cpp else f"{source.stem}.o")),
                 }
                 fragment.write_text(json.dumps(entry) + ",\n")
 
-        write_log(c_args, asm_args)
+        write_log(c_args, asm_args, cpp_args)
         result = verify(log, objroot, sdk_root, base_sdk_root, source_root, diagnostic, [compiler])
-        if result["mode"] != "sdkroot-resolved-no-explicit-isysroot":
-            raise ValidationError(f"self-test expected effective SDKROOT mode, got {result['mode']}")
-        if result["c_cxx_compile_commands"] != 1 or result["assembly_compile_commands"] != 1:
+        if result["mode"] != "explicit-isysroot-overlay":
+            raise ValidationError(f"self-test expected explicit overlay sysroot mode, got {result['mode']}")
+        if result["c_cxx_compile_commands"] != 2 or result["assembly_compile_commands"] != 1:
             raise ValidationError(f"self-test failed to separate C and assembly: {result}")
-
-        explicit_overlay_args = [*c_args]
-        explicit_overlay_args[explicit_overlay_args.index("-Werror"):explicit_overlay_args.index("-Werror")] = [
-            "-isysroot", str(sdk_root)
-        ]
-        write_log(explicit_overlay_args, asm_args)
-        result = verify(log, objroot, sdk_root, base_sdk_root, source_root, diagnostic, [compiler])
-        if result["mode"] != "mixed-explicit-and-sdkroot":
-            raise ValidationError(f"self-test expected mixed explicit/implicit overlay mode, got {result['mode']}")
 
         wrong_sysroot_args = [*c_args]
         wrong_sysroot_args[wrong_sysroot_args.index("-Werror"):wrong_sysroot_args.index("-Werror")] = ["-isysroot", str(base_sdk_root)]
-        write_log(wrong_sysroot_args, asm_args)
-        _expect_failure(lambda: verify(log, objroot, sdk_root, base_sdk_root, source_root, diagnostic, [compiler]), "wrong explicit target sysroot")
+        write_log(wrong_sysroot_args, asm_args, cpp_args)
+        _expect_failure(lambda: verify(log, objroot, sdk_root, base_sdk_root, source_root, diagnostic, [compiler]),
+                        "wrong explicit target sysroot", "expected only")
 
-        no_sdk_notes_log = [f"xcrun: note: SDKROOT = '{base_sdk_root}'"]
-        no_sdk_notes_log.extend((shlex.join(c_args), shlex.join(asm_args)))
-        log.write_text("\n".join(no_sdk_notes_log) + "\n")
-        _expect_failure(lambda: verify(log, objroot, sdk_root, base_sdk_root, source_root, diagnostic, [compiler]), "missing overlay SDKROOT evidence")
+        implicit_args = [token for token in c_args if token not in {"-isysroot", str(sdk_root)}]
+        write_log(implicit_args, asm_args, cpp_args)
+        _expect_failure(lambda: verify(log, objroot, sdk_root, base_sdk_root, source_root, diagnostic, [compiler]),
+                        "missing explicit target sysroot", "no explicit -isysroot")
+
+        write_log(c_args, asm_args, cpp_args, notes=(base_sdk_root,))
+        result = verify(log, objroot, sdk_root, base_sdk_root, source_root, diagnostic, [compiler])
+        if result["mode"] != "explicit-isysroot-overlay":
+            raise ValidationError(f"self-test incorrectly relied on SDKROOT notes: {result}")
 
         missing_werror = [token for token in c_args if token != "-Werror"]
-        write_log(missing_werror, asm_args)
-        _expect_failure(lambda: verify(log, objroot, sdk_root, base_sdk_root, source_root, diagnostic, [compiler]), "C command without global Werror")
+        write_log(missing_werror, asm_args, cpp_args)
+        _expect_failure(lambda: verify(log, objroot, sdk_root, base_sdk_root, source_root, diagnostic, [compiler]),
+                        "C command without global Werror", "lack global -Werror")
+
+        missing_cpp_werror = [token for token in cpp_args if token != "-Werror"]
+        write_log(c_args, asm_args, missing_cpp_werror)
+        _expect_failure(lambda: verify(log, objroot, sdk_root, base_sdk_root, source_root, diagnostic, [compiler]),
+                        "C++ command without global Werror", "lack global -Werror")
 
         excluded = sdk_root / EXCLUDED_SUFFIXES["Kernel_framework_platform"]
         excluded.mkdir(parents=True)
         excluded_header = excluded / "fixture.h"
         excluded_header.write_text("/* forbidden dependency */\n")
         c_dep.write_text(f"probe.o: {source_c} {private_header} {excluded_header}\n")
-        write_log(c_args, asm_args)
-        _expect_failure(lambda: verify(log, objroot, sdk_root, base_sdk_root, source_root, diagnostic, [compiler]), "dependency in an excluded SDK subtree")
+        write_log(c_args, asm_args, cpp_args)
+        _expect_failure(lambda: verify(log, objroot, sdk_root, base_sdk_root, source_root, diagnostic, [compiler]),
+                        "dependency in an excluded SDK subtree", "removed SDK roots")
 
-    print("XNU target verifier self-tests passed: effective SDKROOT, rejected wrong SDK, assembly warning split, C/C++ Werror, and dependency closure")
+    print("XNU target verifier self-tests passed: explicit SDK sysroots, C/C++ -MJ and dependency closure, assembly warning split, and specific rejection paths")
 
 
 def main() -> int:

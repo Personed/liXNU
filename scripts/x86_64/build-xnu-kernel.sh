@@ -11,15 +11,19 @@ usage() {
   cat <<'USAGE'
 Usage: build-xnu-kernel.sh [--check]
 
-Build the pinned Tahoe 26 XNU source as an x86_64 macOS development kernel.
+Build the latest publicly published Tahoe 26 XNU source as an x86_64 macOS
+development kernel. The runtime goal is Tahoe 26.6.2, but the latest published
+matching XNU source is 26.5; this artifact does not prove 26.6.2 compatibility.
 Intel macOS is the native build target; Apple Silicon cross-build support is
 experimental until the CI probe produces and validates its artifact.
 The build uses pinned AvailabilityVersions, XNU, and libdispatch revisions
-with Xcode 26.1.1's macOS 26.1 SDK. It does not use or modify a system disk.
+with Xcode 26.6's macOS 26.5 SDK. It does not use or modify a system disk.
 
 Environment:
   XNU_X86_BUILD_DIR  Absolute build directory with no spaces (default: ${TMPDIR:-/tmp}/xnulinux-x86_64-xnu-build)
   XNU_X86_JOBS       Parallel jobs (default: logical CPU count)
+  XNU_X86_KDKROOT    macOS 26.5 build 25F71 KDK for the pinned source build;
+                     it does not validate the 26.6.2 runtime target
 
 --check validates pinned checkouts, the staged SDK dependencies, the built
 x86_64 libfirehose_kernel archive, Xcode tools, and target without downloading
@@ -51,8 +55,12 @@ readonly AVAILABILITY_COMMIT='149b1777f3e8c2133042d8e188f72e3adf6a7110'
 readonly AVAILABILITY_TAG='AvailabilityVersions-157.2'
 readonly KERNEL_VERSION='25.5.0'
 readonly SOURCE_VERSION='12377.121.6'
-readonly SDK_VERSION='26.1'
-readonly XCODE_VERSION='26.1.1'
+readonly XNU_SOURCE_RELEASE='26.5'
+readonly RUNTIME_TARGET_VERSION='26.6.2'
+readonly SDK_VERSION='26.5'
+readonly XCODE_VERSION='26.6'
+readonly KDK_VERSION='26.5'
+readonly KDK_BUILD='25F71'
 
 HOST_OS="$(uname -s)"
 HOST_PROCESS_ARCH="$(uname -m)"
@@ -118,7 +126,10 @@ XNU_TARGET_NO_EXPLICIT_SYSROOT_COMMAND_COUNT='unknown'
 XNU_OVERLAY_HEADER_DEPENDENCY_COUNT='unknown'
 HOST_TOOL_UNISTD_BASE_PROBE_LOG="$OUT_DIR/host-tool-unistd-base-probe.log"
 HOST_TOOL_UNISTD_OVERLAY_PROBE_LOG="$OUT_DIR/host-tool-unistd-overlay-probe.log"
-SDK_DIR="$OUT_DIR/sdk/MacOSX26.1.sdk"
+SDK_DIR="$OUT_DIR/sdk/MacOSX${SDK_VERSION}.sdk"
+KDKROOT="${XNU_X86_KDKROOT:-/Library/Developer/KDKs/KDK_${KDK_VERSION}_${KDK_BUILD}.kdk}"
+KDK_PRIVATE_HEADER_SHA256=''
+KDK_TRUSTCACHE_HEADER=''
 XNU_KERNEL_FRAMEWORK_DIR="$SDK_DIR/System/Library/Frameworks/Kernel.framework"
 XNU_KERNEL_PRIVATE_HEADERS="$XNU_KERNEL_FRAMEWORK_DIR/PrivateHeaders"
 XNU_KERNEL_HEADERS="$XNU_KERNEL_FRAMEWORK_DIR/Headers"
@@ -195,6 +206,21 @@ verify_sdk() {
   verify_machine_header_exports
   verify_public_availability_header
   verify_public_sys_unistd_header
+}
+
+verify_kdk() {
+  [[ -d "$KDKROOT" ]] || fail "matching Kernel Debug Kit $KDK_VERSION build $KDK_BUILD is required for the pinned XNU source at $KDKROOT; download it from Apple's Developer site and set XNU_X86_KDKROOT (the official download requires an Apple Developer account)"
+  [[ "$(basename "$KDKROOT")" == "KDK_${KDK_VERSION}_${KDK_BUILD}.kdk" ]] \
+    || fail "KDK bundle name is '$(basename "$KDKROOT")'; expected KDK_${KDK_VERSION}_${KDK_BUILD}.kdk for source release $XNU_SOURCE_RELEASE"
+  [[ "$KDKROOT" != *" "* ]] || fail 'KDK paths cannot contain spaces because XNU Makefiles cannot safely handle them'
+  KDKROOT="$(cd "$KDKROOT" && pwd -P)"
+  KDK_TRUSTCACHE_HEADER="$KDKROOT/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/TrustCache/API.h"
+  [[ -s "$KDK_TRUSTCACHE_HEADER" ]] \
+    || fail "matching KDK is missing its private TrustCache API header: $KDK_TRUSTCACHE_HEADER"
+  [[ -d "$KDKROOT/System/Library/KernelSupport" ]] \
+    || fail "matching KDK is missing KernelSupport: $KDKROOT/System/Library/KernelSupport"
+  KDK_PRIVATE_HEADER_SHA256="$(shasum -a 256 "$KDK_TRUSTCACHE_HEADER" | awk '{print $1}')"
+  [[ "$KDK_PRIVATE_HEADER_SHA256" =~ ^[[:xdigit:]]{64}$ ]] || fail 'could not compute KDK TrustCache header SHA-256'
 }
 
 verify_machine_header_exports() {
@@ -464,8 +490,8 @@ verify_xnu_target_compile_commands() {
      "$XNU_DEPENDENCY_FILE_ENTRY_COUNT" =~ ^[1-9][0-9]*$ && \
      "$XNU_HEADER_DEPENDENCY_COUNT" =~ ^[1-9][0-9]*$ && \
      "$XNU_MISSING_DEPENDENCY_FILE_COUNT" == 0 && \
-     "$XNU_TARGET_SYSROOT_MODE" =~ ^(sdkroot-resolved-no-explicit-isysroot|explicit-isysroot-overlay|mixed-explicit-and-sdkroot)$ && \
-     "$XNU_TARGET_SDKROOT_OVERLAY_NOTE_COUNT" =~ ^[1-9][0-9]*$ && \
+     "$XNU_TARGET_SYSROOT_MODE" == explicit-isysroot-overlay && \
+     "$XNU_TARGET_SDKROOT_OVERLAY_NOTE_COUNT" =~ ^[0-9]+$ && \
      "$XNU_TARGET_SDKROOT_BASE_NOTE_COUNT" =~ ^[0-9]+$ && \
      "$XNU_TARGET_NO_EXPLICIT_SYSROOT_COMMAND_COUNT" =~ ^[0-9]+$ && \
      "$XNU_OVERLAY_HEADER_DEPENDENCY_COUNT" =~ ^[1-9][0-9]*$ ]] \
@@ -623,7 +649,7 @@ with tempfile.TemporaryDirectory() as fixture_dir:
     fixture_arguments = ["-isysroot", str(fixture_base_sdk), *fixture_includes]
     fixture_response.write_text(shlex.join(fixture_arguments) + "\n")
     fixture = (
-        r"/Applications/Xcode\ 26.1.1.app/Contents/Developer/Toolchains/"
+        r"/Applications/Xcode\ 26.6.app/Contents/Developer/Toolchains/"
         r"XcodeDefault.xctoolchain/usr/bin/clang @"
         + shlex.quote(str(fixture_response))
         + " -isysroot " + shlex.quote(str(fixture_base_sdk))
@@ -728,6 +754,7 @@ if (( CHECK_ONLY )); then
   [[ "$SDK_PUBLIC_AVAILABILITY_SHA256" =~ ^[[:xdigit:]]{64}$ ]] \
     || fail 'recorded SDK public availability header SHA-256 is malformed'
   verify_sdk
+  verify_kdk
   verify_host_tool_unistd_probe "$BASE_SDK_DIR" 'base Xcode'
   python3 "$SCRIPT_DIR/verify-xnu-target-build.py" --self-test
   xcodebuild -version
@@ -741,7 +768,8 @@ if (( CHECK_ONLY )); then
   verify_firehose_header_closure
   printf 'int xnu_x86_64_target_probe;\n' |
     xcrun clang -target x86_64-apple-macosx26.0 -mkernel -ffreestanding -fsyntax-only -x c -
-  printf 'XNU source, macOS SDK %s, and Xcode tools are ready for X86_64/NONE.\n' "$SDK_VERSION"
+  printf 'XNU source release %s, SDK %s, Xcode %s, and matching KDK build %s are ready for X86_64/NONE; runtime target is %s and remains unverified.\n' \
+    "$XNU_SOURCE_RELEASE" "$SDK_VERSION" "$XCODE_VERSION" "$KDK_BUILD" "$RUNTIME_TARGET_VERSION"
   exit 0
 fi
 
@@ -781,6 +809,7 @@ fi
 verify_availability_source
 
 verify_xcode_and_sdk
+verify_kdk
 python3 "$SCRIPT_DIR/verify-xnu-target-build.py" --self-test
 : > "$HOST_TOOL_UNISTD_BASE_PROBE_LOG"
 verify_host_tool_unistd_probe "$BASE_SDK_DIR" 'base Xcode' "$HOST_TOOL_UNISTD_BASE_PROBE_LOG"
@@ -826,7 +855,7 @@ mkdir -p "$XNU_HEADERS_OBJROOT" "$XNU_HEADERS_DSTROOT"
 printf 'Exporting XNU kernel headers from %s before private header installation\n' "$XNU_TAG"
 if make -C "$SOURCE_DIR" exporthdrs \
   SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$BASE_SDK_DIR" \
-  SDKVERSION="$SDK_VERSION" PLATFORM=MacOSX \
+  SDKVERSION="$SDK_VERSION" KDKROOT="$KDKROOT" PLATFORM=MacOSX \
   ARCH_CONFIGS=X86_64 MACHINE_CONFIGS=NONE KERNEL_CONFIGS=DEVELOPMENT \
   RC_DARWIN_KERNEL_VERSION="$KERNEL_VERSION" RC_ProjectSourceVersion="$SOURCE_VERSION" \
   OBJROOT="$XNU_HEADERS_OBJROOT" SYMROOT="$XNU_HEADERS_BUILD_DIR/sym" DSTROOT="$XNU_HEADERS_DSTROOT" \
@@ -839,7 +868,7 @@ fi
 printf 'Installing private headers from XNU %s before Firehose build\n' "$XNU_TAG"
 if make -C "$SOURCE_DIR" installhdrs \
   SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$BASE_SDK_DIR" \
-  SDKVERSION="$SDK_VERSION" PLATFORM=MacOSX \
+  SDKVERSION="$SDK_VERSION" KDKROOT="$KDKROOT" PLATFORM=MacOSX \
   ARCH_CONFIGS=X86_64 MACHINE_CONFIGS=NONE KERNEL_CONFIGS=DEVELOPMENT \
   RC_DARWIN_KERNEL_VERSION="$KERNEL_VERSION" RC_ProjectSourceVersion="$SOURCE_VERSION" \
   OBJROOT="$XNU_HEADERS_OBJROOT" SYMROOT="$XNU_HEADERS_BUILD_DIR/sym" DSTROOT="$XNU_HEADERS_DSTROOT" \
@@ -925,6 +954,11 @@ host_sys_unistd_base_sha256=$HOST_SYS_UNISTD_BASE_SHA256
 host_sys_unistd_overlay_sha256=$HOST_SYS_UNISTD_OVERLAY_SHA256
 host_sys_unistd_headers_match=$([[ "$HOST_SYS_UNISTD_BASE_SHA256" == "$HOST_SYS_UNISTD_OVERLAY_SHA256" ]] && printf true || printf false)
 host_tool_base_unistd_probe=passed
+kdk_root=$KDKROOT
+kdk_version=$KDK_VERSION
+kdk_build=$KDK_BUILD
+kdk_matches_xnu_source=true
+kdk_trustcache_api_header_sha256=$KDK_PRIVATE_HEADER_SHA256
 xnu_sdk_header_tree_diagnostics_recorded=$XNU_HEADER_TREE_DIAGNOSTICS_RECORDED
 xnu_target_include_paths_verified=$XNU_TARGET_INCLUDE_PATHS_VERIFIED
 xnu_generic_sdk_header_dependencies=$XNU_GENERIC_SDK_HEADER_DEPENDENCY_COUNT
@@ -933,6 +967,7 @@ xnu_dependency_file_entries=$XNU_DEPENDENCY_FILE_ENTRY_COUNT
 xnu_header_dependencies=$XNU_HEADER_DEPENDENCY_COUNT
 xnu_missing_dependency_files=$XNU_MISSING_DEPENDENCY_FILE_COUNT
 xnu_target_include_path_policy=keep \$SDKROOT/usr/local/include; omit empty kernel/iBoot/AppleFeatures/platform SDK roots for X86_64/NONE; retain KDK includes
+xnu_target_sysroot_policy=explicit -isysroot to isolated SDK overlay for every target clang compile
 xnu_warning_policy_verified=$XNU_WARNING_POLICY_VERIFIED
 xnu_compiler_reserved_identifier_warning=-Wno-error=reserved-identifier
 xnu_compiler_unused_but_set_variable_warning=-Wno-error=unused-but-set-variable
@@ -944,6 +979,12 @@ xnu_target_sdkroot_base_notes=$XNU_TARGET_SDKROOT_BASE_NOTE_COUNT
 xnu_target_commands_without_explicit_isysroot=$XNU_TARGET_NO_EXPLICIT_SYSROOT_COMMAND_COUNT
 xnu_overlay_header_dependencies=$XNU_OVERLAY_HEADER_DEPENDENCY_COUNT
 sdk_version=$SDK_VERSION
+xcode_version=$XCODE_VERSION
+host_os_version=$HOST_OS_VERSION
+xnu_source_release=$XNU_SOURCE_RELEASE
+runtime_target_os_version=$RUNTIME_TARGET_VERSION
+runtime_compatibility_verified=false
+kernel_source_runtime_match=false
 platform=MacOSX
 arch_config=X86_64
 machine_config=NONE
@@ -963,14 +1004,15 @@ EOF
 
 printf 'Building XNU %s for X86_64/NONE with %s\n' "$XNU_TAG" "$ACTUAL_XCODE_VERSION"
 rm -rf -- "$OBJROOT" "$SYMROOT" "$DSTROOT"
-# Xcode 26.1.1 enables three source-level warning classes for the pinned x86
+# Xcode 26.6 enables three source-level warning classes for the pinned x86
 # target that are non-actionable there: reserved internal identifiers, dead
 # stores (including ARM-only trace arguments), and the intentional enum-as-
 # opaque-sysctl-argument round trip. Keep the warnings visible and all other
 # warnings fatal; apply these exceptions only to X86_64/NONE.
 if make -C "$SOURCE_DIR" build \
   SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$BASE_SDK_DIR" \
-  SDKVERSION="$SDK_VERSION" PLATFORM=MacOSX \
+  SDKVERSION="$SDK_VERSION" KDKROOT="$KDKROOT" PLATFORM=MacOSX \
+  OTHER_CFLAGS='$(RC_NONARCH_CFLAGS) -isysroot $(SDKROOT)' \
   ARCH_CONFIGS=X86_64 MACHINE_CONFIGS=NONE KERNEL_CONFIGS=DEVELOPMENT \
   INCFLAGS_SDK='-I$(SDKROOT)/usr/local/include $(if $(KDKROOT),-I$(KDKROOT)/$(KPINCDIR) -I$(KDKROOT)/System/Library/KernelSupport) -Wno-error=reserved-identifier -Wno-error=unused-but-set-variable -Wno-error=void-pointer-to-enum-cast' \
   INCFLAGS_PLATFORM='$(if $(KDKROOT),-I$(KDKROOT)/$(KINCDIR)/platform -I$(KDKROOT)/$(KPINCDIR)/platform)' \
@@ -1005,7 +1047,8 @@ python3 - "$PACKAGE_KERNEL" "$RESULT" "$XNU_COMMIT" "$XNU_TAG" "$SOURCE_VERSION"
   "$XNU_MISSING_DEPENDENCY_FILE_COUNT" "$XNU_WARNING_POLICY_VERIFIED" \
   "$XNU_TARGET_SYSROOT_MODE" "$XNU_TARGET_SDKROOT_OVERLAY_NOTE_COUNT" \
   "$XNU_TARGET_SDKROOT_BASE_NOTE_COUNT" "$XNU_TARGET_NO_EXPLICIT_SYSROOT_COMMAND_COUNT" \
-  "$XNU_OVERLAY_HEADER_DEPENDENCY_COUNT" <<'PY'
+  "$XNU_OVERLAY_HEADER_DEPENDENCY_COUNT" "$KDKROOT" "$KDK_VERSION" "$KDK_BUILD" \
+  "$KDK_PRIVATE_HEADER_SHA256" "$HOST_OS_VERSION" "$XNU_SOURCE_RELEASE" "$RUNTIME_TARGET_VERSION" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -1052,9 +1095,20 @@ result = {
     "xnu_target_commands_without_explicit_isysroot": int(sys.argv[37]),
     "xnu_overlay_header_dependencies": int(sys.argv[38]),
     "xnu_target_include_path_policy": "keep SDKROOT/usr/local/include; omit generic kernel/iBoot/AppleFeatures/platform SDK roots from X86_64/NONE search paths; retain KDK includes",
+    "xnu_target_sysroot_policy": "explicit -isysroot to isolated SDK overlay for every target clang compile",
+    "kdk_root": sys.argv[39],
+    "kdk_version": sys.argv[40],
+    "kdk_build": sys.argv[41],
+    "kdk_matches_xnu_source": True,
+    "kdk_trustcache_api_header_sha256": sys.argv[42],
+    "host_os_version": sys.argv[43],
     "xnu_commit": sys.argv[3],
     "xnu_tag": sys.argv[4],
     "xnu_source_version": sys.argv[5],
+    "xnu_source_release": sys.argv[44],
+    "runtime_target_os_version": sys.argv[45],
+    "runtime_compatibility_verified": False,
+    "kernel_source_runtime_match": False,
     "darwin_kernel_version": sys.argv[6],
     "sdk_version": sys.argv[7],
     "xcode_version": sys.argv[8],

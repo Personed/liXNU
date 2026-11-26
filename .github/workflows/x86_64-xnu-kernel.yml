@@ -40,5 +40,16 @@ jobs:
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/kernel.development
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/build-result.json
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/x86_64-build.env
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/libdispatch/dst/usr/local/lib/kernel/libfirehose_kernel.a
           if-no-files-found: error
+          retention-days: 5
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xnu-tahoe26-x86_64-diagnostics-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/xnu-build.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/libdispatch-build.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/x86_64-build.env
+          if-no-files-found: ignore
           retention-days: 5

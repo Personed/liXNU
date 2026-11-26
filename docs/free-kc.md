@@ -42,11 +42,14 @@ kernel has; and a kext's load tag.
 1. `scripts/puredarwin-root.sh IMAGE root.tar.gz` archives the PureDarwin arm64 root on Linux, including x86-64.
    It requires `fdisk` (`sfdisk`), `util-linux` (loop devices and mount tools), `e2fsprogs` (`tune2fs` and `e2fsck`),
    `python3`, `tar`, `coreutils` (`link`, `stat`, `chmod`), and kernel support for ext4 and loop devices. Run as root
-   or with `sudo`.
+   or as a regular user with `sudo` available. On root-squashed NFS output, run as a regular user so the archive can
+   be created by that account; the privileged mount helper uses a separate private temporary directory.
    The input image's ext4
    root must be clean and have no pending journal recovery; the exporter refuses filesystems that need repair. It opens
-   the source image read-only, mounts under its private staging directory with journal replay disabled, and preserves
-   numeric owners in the archive. The output path must be new, its parent directory must exist, and that filesystem
+   the source image read-only, mounts below a private mode-0700 directory on a filesystem accessible to the mount
+   helper, disables journal replay, and preserves numeric owners in the archive. The helper tries `TMPDIR` first and
+   falls back to `/tmp`; set `TMPDIR` to a local filesystem if both are inaccessible to root. The output path must be
+   new, its parent directory must exist, and that filesystem
    must support hard links. The archive
    is published without replacing an existing file or symlink and has mode `0644`. The exporter refuses output paths
    with an ancestor controlled by another account or writable by a group or other user outside a sticky directory;

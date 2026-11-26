@@ -90,6 +90,17 @@ if ! export_path_is_safe "$output_dir"; then
   exit 1
 fi
 
+# Resolve a possibly relative TMPDIR before entering the archive staging
+# directory, matching the caller's original working directory.
+mount_tmp_candidates=()
+if [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; then
+  resolved_tmpdir=''
+  if IFS= read -r -d '' resolved_tmpdir < <(CDPATH= cd -P -- "$TMPDIR" && printf '%s\0' "$PWD"); then
+    mount_tmp_candidates+=("$resolved_tmpdir")
+  fi
+fi
+mount_tmp_candidates+=(/tmp)
+
 partition_table=$(sfdisk --json -- "$image")
 partition=$(python3 -c '
 import json
@@ -111,11 +122,12 @@ print(offset, length)
 ' "$image" <<< "$partition_table")
 read -r offset length <<< "$partition"
 
-mount_dir='' mount_identity='' archive_dir='' archive_identity='' archive='' loop='' check_log=''
+mount_dir='' mount_identity='' mount_parent='' mount_parent_identity=''
+archive_dir='' archive_identity='' archive='' loop='' check_log=''
 cleanup() {
-  local cleanup_mount_identity cleanup_mount_owner_mode
+  local cleanup_mount_identity cleanup_mount_owner_mode cleanup_parent_identity cleanup_parent_owner_mode
   trap '' INT TERM
-  if [ -n "$mount_dir" ]; then
+  if [ -n "$mount_dir" ] && { [ -e "$mount_dir" ] || [ -L "$mount_dir" ]; }; then
     if mountpoint -q -- "$mount_dir"; then
       if ! "${as_root[@]}" umount -- "$mount_dir"; then
         echo "Could not unmount $mount_dir; leaving the loop device and temporary archive for recovery." >&2
@@ -138,7 +150,7 @@ cleanup() {
   fi
   if [ -n "$archive_dir" ] && [ -n "$archive_identity" ]; then
     if [ "$(stat -c '%d:%i' -- . 2>/dev/null || true)" = "$archive_identity" ]; then
-      if [ -n "$mount_dir" ]; then
+      if [ -n "$mount_dir" ] && { [ -e "$mount_dir" ] || [ -L "$mount_dir" ]; }; then
         cleanup_mount_identity=$(stat -c '%d:%i' -- "$mount_dir" 2>/dev/null || true)
         cleanup_mount_owner_mode=$(stat -c '%u:%a' -- "$mount_dir" 2>/dev/null || true)
         if [ ! -L "$mount_dir" ] &&
@@ -150,7 +162,21 @@ cleanup() {
           echo "Mount staging path changed during export; leaving it untouched: $mount_dir" >&2
           return 1
         fi
-        mount_dir=''
+      fi
+      mount_dir=''
+      if [ -n "$mount_parent" ]; then
+        cleanup_parent_identity=$(stat -c '%d:%i' -- "$mount_parent" 2>/dev/null || true)
+        cleanup_parent_owner_mode=$(stat -c '%u:%a' -- "$mount_parent" 2>/dev/null || true)
+        if [ ! -L "$mount_parent" ] &&
+           [ -n "$cleanup_parent_identity" ] &&
+           [ "$cleanup_parent_identity" = "$mount_parent_identity" ] &&
+           [ "$cleanup_parent_owner_mode" = "$EUID:700" ]; then
+          rmdir -- "$mount_parent" || return 1
+        else
+          echo "Mount staging parent changed during export; leaving it untouched: $mount_parent" >&2
+          return 1
+        fi
+        mount_parent=''
       fi
       if [ -n "$archive" ]; then rm -f -- "$archive" || return 1; archive=''; fi
       if [ -n "$check_log" ]; then rm -f -- "$check_log" || return 1; check_log=''; fi
@@ -203,10 +229,57 @@ if [ "$staging_identity" != "$expected_archive_identity" ] ||
   exit 1
 fi
 archive=root.tar.gz
-mount_dir=mount
-mkdir -m 0700 -- "$mount_dir"
-mount_identity=$(stat -c '%d:%i' -- "$mount_dir")
 check_log=check.log
+
+# The output staging directory may be on root-squashed NFS. Keep the mount
+# point in a separate private temp directory that the privileged mount helper
+# can access; the archive itself remains opened by this unprivileged shell.
+create_mount_stage() {
+  local candidate last_candidate='' owner_mode owner
+  local -a candidates=("${mount_tmp_candidates[@]}")
+  for candidate in "${candidates[@]}"; do
+    [ -n "$candidate" ] || continue
+    [ "$candidate" != "$last_candidate" ] || continue
+    last_candidate=$candidate
+    [ -d "$candidate" ] || continue
+    export_path_is_safe "$candidate" || continue
+    mount_parent=$(mktemp -d -- "$candidate/.puredarwin-root-mount.XXXXXXXX") || continue
+    if [ -L "$mount_parent" ] || ! export_path_is_safe "$mount_parent"; then
+      rmdir -- "$mount_parent" 2>/dev/null || true
+      mount_parent=''
+      continue
+    fi
+    mount_parent_identity=$(stat -c '%d:%i' -- "$mount_parent")
+    chmod 0700 -- "$mount_parent"
+    chmod g-s -- "$mount_parent"
+    owner_mode=$(stat -c '%u:%a' -- "$mount_parent")
+    owner=${owner_mode%%:*}
+    if [ "$owner" != "$EUID" ] || [ "${owner_mode#*:}" != 700 ] ||
+       [ "$(stat -c '%d:%i' -- "$mount_parent")" != "$mount_parent_identity" ] ||
+       [ -L "$mount_parent" ]; then
+      rmdir -- "$mount_parent" 2>/dev/null || true
+      mount_parent=''
+      mount_parent_identity=''
+      continue
+    fi
+    mount_dir=$mount_parent/mount
+    mkdir -m 0700 -- "$mount_dir"
+    mount_identity=$(stat -c '%d:%i' -- "$mount_dir")
+    if [ "$(stat -c '%a' -- "$mount_dir")" != 700 ] || ! "${as_root[@]}" test -w "$mount_dir" 2>/dev/null; then
+      rmdir -- "$mount_dir"
+      rmdir -- "$mount_parent"
+      mount_dir=''
+      mount_identity=''
+      mount_parent=''
+      mount_parent_identity=''
+      continue
+    fi
+    return 0
+  done
+  echo 'Could not create a private mount staging directory accessible to the mount helper. Set TMPDIR to a local filesystem, or use a local /tmp (root-squashed NFS cannot host the mount point).' >&2
+  return 1
+}
+create_mount_stage
 # Keep INT/TERM pending until losetup has returned the attached device. That
 # lets the EXIT trap detach the exact loop device if a signal arrives here.
 loop=$(trap '' INT TERM; "${as_root[@]}" losetup --find --show --read-only --offset "$offset" --sizelimit "$length" -- "$image")

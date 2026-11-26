@@ -27,6 +27,11 @@ printf '%s\n' '{"partitiontable":{"label":"gpt","sectorsize":512,"partitions":[{
 WRAPPER
 cat >"$bin/sudo" <<'WRAPPER'
 #!/bin/sh
+if [ "${NFS_ROOT_SQUASH_TEST:-0}" = 1 ] && [ "$1" = test ] && [ "$2" = -w ]; then
+  case "$3" in
+    "$NFS_SIM_DIR"/*) exit 1 ;;
+  esac
+fi
 exec "$@"
 WRAPPER
 cat >"$bin/losetup" <<'WRAPPER'
@@ -64,6 +69,8 @@ cat >"$bin/mount" <<'WRAPPER'
 mount_dir=''
 for arg do mount_dir=$arg; done
 case "$mount_dir" in /*) ;; *) mount_dir=$PWD/$mount_dir ;; esac
+mount_parent=${mount_dir%/*}
+stat -c '%a' -- "$mount_parent" >"$TEST_STATE/mount-parent-mode"
 printf '%s\n' "$mount_dir" >"$TEST_STATE/mount-dir"
 printf 'signal test root\n' >"$mount_dir/hello.txt"
 printf '%s\n' mounted >>"$TEST_STATE/events"
@@ -84,7 +91,8 @@ WRAPPER
 cat >"$bin/umount" <<'WRAPPER'
 #!/bin/sh
 rm -f -- "$TEST_STATE/mounted"
-rm -f -- mount/hello.txt
+mount_dir=$(cat "$TEST_STATE/mount-dir")
+rm -f -- "$mount_dir/hello.txt"
 printf '%s\n' unmounted >>"$TEST_STATE/events"
 WRAPPER
 cat >"$bin/tune2fs" <<'WRAPPER'
@@ -102,6 +110,9 @@ cat >"$bin/mktemp" <<'WRAPPER'
 result=$("$REAL_MKTEMP" "$@") || exit
 if [ "$1" = '-d' ]; then
   case "$*" in
+    *'.puredarwin-root-mount.'*)
+      printf '%s\n' "$result" >"$TEST_STATE/mount-parent"
+      ;;
     *'.puredarwin-root.'*)
       printf '%s\n' "$result" >"$TEST_STATE/archive-dir"
       if [ "${REPLACE_ARCHIVE_DIR:-0}" = 1 ]; then
@@ -159,8 +170,12 @@ if [ ! -s "$state/archive-dir" ]; then
 fi
 archive_dir=$(cat "$state/archive-dir")
 mount_dir=$(cat "$state/mount-dir")
-[ "$mount_dir" = "$archive_dir/mount" ]
+mount_parent=$(cat "$state/mount-parent")
+[ "$mount_parent" = "${mount_dir%/*}" ]
+[ "$mount_dir" != "$archive_dir/mount" ]
+[ "$(cat "$state/mount-parent-mode")" = 700 ]
 [ ! -e "$mount_dir" ]
+[ ! -e "$mount_parent" ]
 if [ -z "$archive_dir" ] || [ -e "$archive_dir" ] || [ -L "$archive_dir" ]; then
   echo "Exporter did not remove its signal-test staging directory: $archive_dir" >&2
   exit 1
@@ -197,8 +212,11 @@ if [ ! -s "$state/archive-dir" ]; then
 fi
 archive_dir=$(cat "$state/archive-dir")
 mount_dir=$(cat "$state/mount-dir")
-[ "$mount_dir" = "$archive_dir/mount" ]
+mount_parent=$(cat "$state/mount-parent")
+[ "$mount_parent" = "${mount_dir%/*}" ]
+[ "$mount_dir" != "$archive_dir/mount" ]
 [ ! -e "$mount_dir" ]
+[ ! -e "$mount_parent" ]
 if [ -z "$archive_dir" ] || [ -e "$archive_dir" ] || [ -L "$archive_dir" ]; then
   echo "Exporter did not remove its pre-mount staging directory: $archive_dir" >&2
   exit 1
@@ -240,11 +258,17 @@ set -e
 [ "$status" -eq 143 ] || { echo "Expected mount-dir SIGTERM exit 143; got $status" >&2; exit 1; }
 archive_dir=$(cat "$state/archive-dir")
 mount_dir=$(cat "$state/mount-dir")
-[ "$mount_dir" = "$archive_dir/mount" ]
+mount_parent=$(cat "$state/mount-parent")
+[ "$mount_parent" = "${mount_dir%/*}" ]
+[ "$mount_dir" != "$archive_dir/mount" ]
 [ ! -e "$mount_dir" ]
 [ ! -e "$archive_dir" ]
+[ ! -e "$mount_parent" ]
 [ ! -e "$state/loop-attached" ]
-[ ! -e "$state/check-log" ]
+if [ -e "$state/check-log" ]; then
+  check_log=$(cat "$state/check-log")
+  [ ! -e "$check_log" ]
+fi
 
 echo 'PureDarwin root exporter mount-directory signal cleanup test passed.'
 
@@ -295,6 +319,7 @@ archive_dir=$(cat "$state/archive-dir")
 [ -z "$(find "$archive_dir.moved" -mindepth 1 -print -quit)" ]
 [ "$(tar -xOzf "$race_output" ./hello.txt)" = 'signal test root' ]
 [ ! -e "$(cat "$state/mount-dir")" ]
+[ ! -e "$(cat "$state/mount-parent")" ]
 rm -- "$archive_dir"
 [ -n "$(find "$tmp" -maxdepth 1 -name '.puredarwin-root.*.moved' -print -quit)" ]
 rmdir -- "$archive_dir.moved"
@@ -318,6 +343,7 @@ same_owner_stage=$(cat "$state/archive-dir")
 grep -F 'Staging path changed during export; leaving it untouched' "$tmp/same-owner-race.log" >/dev/null
 [ "$(tar -xOzf "$same_owner_output" ./hello.txt)" = 'signal test root' ]
 [ ! -e "$(cat "$state/mount-dir")" ]
+[ ! -e "$(cat "$state/mount-parent")" ]
 [ ! -e "$state/loop-attached" ]
 rm -rf -- "$same_owner_stage" "$same_owner_stage.moved"
 echo 'PureDarwin root exporter same-owner inode check test passed.'
@@ -410,6 +436,7 @@ TMPDIR=. "$script" "$image" "$physical_output" >/dev/null
 [ -f "$physical_parent/branch2/path-resolution.tar.gz" ]
 [ ! -e "$state/loop-attached" ]
 [ ! -e "$(cat "$state/mount-dir")" ]
+[ ! -e "$(cat "$state/mount-parent")" ]
 [ -z "$(find "$physical_parent/branch2" -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
 echo 'PureDarwin root exporter physical-path resolution test passed.'
 
@@ -424,5 +451,28 @@ TMPDIR=. "$script" "$image" "$newline_output" >/dev/null
 [ -f "$newline_dir/newline-name.tar.gz" ]
 [ ! -e "$state/loop-attached" ]
 [ ! -e "$(cat "$state/mount-dir")" ]
+[ ! -e "$(cat "$state/mount-parent")" ]
 [ -z "$(find "$newline_dir" -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
 echo 'PureDarwin root exporter newline-path resolution test passed.'
+
+# Simulate a root-squashed NFS TMPDIR: the user's archive staging remains on
+# that filesystem, but the privileged mount helper must fall back to local /tmp.
+nfs_sim=$tmp/nfs-sim
+mkdir -p -- "$nfs_sim/tmp" "$nfs_sim/output"
+nfs_output=$nfs_sim/output/root.tar.gz
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/mount-dir" "$state/mount-parent" "$state/mount-parent-mode" "$state/check-log"
+NFS_ROOT_SQUASH_TEST=1 NFS_SIM_DIR="$nfs_sim" TMPDIR="$nfs_sim/tmp" \
+  "$script" "$image" "$nfs_output" >/dev/null
+gzip -t "$nfs_output"
+mount_parent=$(cat "$state/mount-parent")
+case "$mount_parent" in
+  "$nfs_sim"/*)
+    echo "Mount staging remained under simulated root-squashed NFS: $mount_parent" >&2
+    exit 1
+    ;;
+esac
+[ ! -e "$mount_parent" ]
+[ ! -e "$(cat "$state/mount-dir")" ]
+[ ! -e "$state/loop-attached" ]
+[ -f "$nfs_output" ]
+echo 'PureDarwin root exporter root-squashed NFS staging test passed.'

@@ -96,9 +96,11 @@ We ship these. The user's disk script installs them into their own macOS disk:
 4. **Default system.** Put the PureDarwin disk at `/var/lib/xnulinux/pd.img` with its `pd.conf`. Set `RAM_MB` in
    `/etc/xnulinux.conf` to the numeric recommendation printed by `scripts/vm-install-fki-service.sh`, then run
    `scripts/install-service.sh`. That number depends on the host's carve-out; the example leaves it out deliberately.
-   To validate a custom value before saving it, run `sudo env RAM_MB=<number> scripts/vm-install-fki-service.sh
-   --dry-run` while the full physical map is still visible. Replace `<number>` with the decimal value to check. Do not
-   omit `RAM_MB` on a smaller host because the boot script's fallback is 7900 MiB.
+   To validate a custom RAM value before saving it, run `sudo env RAM_MB=<number> scripts/vm-install-fki-service.sh
+   --dry-run` while the full physical map is still visible. Replace `<number>` with the decimal value to check. If
+   you customized the memory layout, pass the same `LINUX_MEM`, `CARVE_BASE` and `CARVE_MB` values used during setup:
+   `sudo env LINUX_MEM=<value> CARVE_BASE=<value> CARVE_MB=<value> RAM_MB=<number> scripts/vm-install-fki-service.sh --dry-run`.
+   Do not omit `RAM_MB` on a smaller host because the boot script's fallback is 7900 MiB.
    ```
    IMAGE=xnu/kc-free.bin
    TRUSTCACHE=

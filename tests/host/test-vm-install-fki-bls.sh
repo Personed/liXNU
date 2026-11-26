@@ -41,6 +41,23 @@ if [[ "${1:-}" == --info=ALL ]]; then
     printf 'index=0\nkernel="/boot/vmlinuz"\nargs="%s"\n' "$(cat "$FIXTURE_KERNELOPTS_FILE")"
     exit 0
   fi
+  if [[ "${FIXTURE_GRUBBY_INFO_MODE:-}" == entries ]]; then
+    index=0
+    for entry in "$FIXTURE_BLS_DIR"/*.conf; do
+      [[ -f "$entry" ]] || continue
+      args=$(awk '
+        $1 == "options" {
+          sub(/^[[:space:]]*options[[:space:]]+/, "", $0)
+          print
+          exit
+        }
+      ' "$entry")
+      printf 'index=%s\nargs="%s"\n' "$index" "$args"
+      index=$((index + 1))
+    done
+    [[ "$index" -gt 0 ]] && exit 0
+    exit 1
+  fi
   exit 1
 fi
 [[ "${1:-}" == --update-kernel=ALL && "${2:-}" == --args=* ]] || exit 2
@@ -61,7 +78,12 @@ for entry in "$FIXTURE_BLS_DIR"/*.conf; do
   mv -- "$temporary" "$entry"
 done
 STUB
+cat >"$FIXTURE_DIR/sbin/update-grub" <<'STUB'
+#!/usr/bin/env bash
+printf 'called\n' >>"$UPDATE_GRUB_LOG"
+STUB
 chmod +x -- "$FIXTURE_DIR/bin/sudo" "$FIXTURE_DIR/bin/python3" "$FIXTURE_DIR/bin/systemctl" "$FIXTURE_DIR/sbin/grubby"
+chmod +x -- "$FIXTURE_DIR/sbin/update-grub"
 
 setup_case() {
   local name="$1" initial_options="$2"
@@ -72,8 +94,10 @@ setup_case() {
   CASE_SYSTEMD_DIR="$CASE_DIR/run/systemd/system"
   CASE_UNIT="$CASE_DIR/etc/systemd/system/xnulinux-fki.service"
   CASE_LOG="$CASE_DIR/grubby.log"
+  CASE_UPDATE_GRUB_LOG="$CASE_DIR/update-grub.log"
   CASE_SYSCTL_LOG="$CASE_DIR/systemctl.log"
   CASE_KERNELOPTS=""
+  CASE_GRUBBY_INFO_MODE=""
   mkdir -p -- "$CASE_BLS" "$(dirname -- "$CASE_DEFAULT")" "$(dirname -- "$CASE_UNIT")" "$CASE_SYSTEMD_DIR"
   printf 'GRUB_CMDLINE_LINUX="quiet"\n' >"$CASE_DEFAULT"
   printf 'title fixture\nlinux /vmlinuz\noptions %s\n' "$initial_options" >"$CASE_BLS/fixture.conf"
@@ -82,8 +106,9 @@ setup_case() {
 run_installer() {
   PATH="$FIXTURE_DIR/bin:/usr/bin:/bin" \
     SUDO_SECURE_PATH="$FIXTURE_DIR/sbin" \
-    GRUBBY_LOG="$CASE_LOG" SYSTEMCTL_LOG="$CASE_SYSCTL_LOG" \
+    GRUBBY_LOG="$CASE_LOG" UPDATE_GRUB_LOG="$CASE_UPDATE_GRUB_LOG" SYSTEMCTL_LOG="$CASE_SYSCTL_LOG" \
     FIXTURE_BLS_DIR="$CASE_BLS" FIXTURE_KERNELOPTS_FILE="$CASE_KERNELOPTS" \
+    FIXTURE_GRUBBY_INFO_MODE="$CASE_GRUBBY_INFO_MODE" \
     FIXTURE_IOMEM="$FIXTURE_DIR/iomem" \
     LINUX_MEM=7G CARVE_BASE=0x200000000 CARVE_MB=8156 RAM_MB=7900 \
     XNULINUX_GRUB_DEFAULT="$CASE_DEFAULT" \
@@ -122,10 +147,29 @@ if run_installer >"$CASE_DIR/out" 2>&1; then
   echo 'installer accepted conflicting mem= arguments in a BLS entry' >&2
   exit 1
 fi
-grep -Fq 'does not contain exactly one effective mem=7G argument' "$CASE_DIR/out"
+grep -Fq 'BLS entry does not contain exactly one effective mem=7G argument' "$CASE_DIR/out" || {
+  cat "$CASE_DIR/out" >&2
+  echo 'installer did not report the expected BLS validation failure' >&2
+  exit 1
+}
 [[ ! -e "$CASE_UNIT" ]] || { echo 'installer enabled the FKI service despite a BLS validation failure' >&2; exit 1; }
 
-# 4. Missing grubby -> fails BEFORE creating systemd unit
+# 4. A bad second entry reported by grubby --info=ALL also blocks service setup
+setup_case invalid-grubby-second 'root=UUID=fixture ro quiet'
+printf 'title second\nlinux /vmlinuz-second\noptions root=UUID=second ro mem=4G\n' >"$CASE_BLS/second.conf"
+CASE_GRUBBY_INFO_MODE=entries
+if run_installer >"$CASE_DIR/out" 2>&1; then
+  echo 'installer accepted a conflicting second entry reported by grubby --info=ALL' >&2
+  exit 1
+fi
+grep -Fq 'BLS entries do not contain exactly one effective mem=7G argument' "$CASE_DIR/out" || {
+  cat "$CASE_DIR/out" >&2
+  echo 'installer did not reject the invalid grubby-reported second entry' >&2
+  exit 1
+}
+[[ ! -e "$CASE_UNIT" ]] || { echo 'installer enabled the FKI service despite an invalid grubby entry' >&2; exit 1; }
+
+# 5. Missing grubby -> fails BEFORE creating systemd unit
 setup_case missing-grubby 'root=UUID=fixture ro quiet'
 mv -- "$FIXTURE_DIR/sbin/grubby" "$FIXTURE_DIR/sbin/grubby.disabled"
 if run_installer >"$CASE_DIR/out" 2>&1; then
@@ -136,4 +180,25 @@ mv -- "$FIXTURE_DIR/sbin/grubby.disabled" "$FIXTURE_DIR/sbin/grubby"
 grep -Fq 'grubby is required to apply and verify' "$CASE_DIR/out"
 [[ ! -e "$CASE_UNIT" ]] || { echo 'installer enabled the FKI service without a BLS updater' >&2; exit 1; }
 
-echo 'PASS: BLS entries (RHEL 8 $kernelopts and RHEL 9) require grubby via sudo PATH and block service setup on failure'
+assert_bls_disabled_comment() {
+  local name="$1" assignment="$2" run_rc=0
+  setup_case "$name" 'root=UUID=fixture ro quiet'
+  printf '%s\n' "$assignment" >>"$CASE_DEFAULT"
+  mv -- "$FIXTURE_DIR/sbin/grubby" "$FIXTURE_DIR/sbin/grubby.disabled"
+  run_installer >"$CASE_DIR/out" 2>&1 || run_rc=$?
+  mv -- "$FIXTURE_DIR/sbin/grubby.disabled" "$FIXTURE_DIR/sbin/grubby"
+  if (( run_rc != 0 )); then
+    cat "$CASE_DIR/out" >&2
+    echo "installer failed with BLS disabled by $name" >&2
+    exit 1
+  fi
+  [[ -s "$CASE_UPDATE_GRUB_LOG" ]] || { echo "installer did not use update-grub when BLS was disabled by $name" >&2; exit 1; }
+  [[ ! -s "$CASE_LOG" ]] || { echo "installer incorrectly invoked grubby when BLS was disabled by $name" >&2; exit 1; }
+  [[ -f "$CASE_UNIT" ]] || { echo "installer did not create systemd unit when BLS was disabled by $name" >&2; exit 1; }
+}
+
+# 6. A trailing shell comment must not turn an explicit false into enabled BLS
+assert_bls_disabled_comment bls-disabled-unquoted 'GRUB_ENABLE_BLSCFG=false # traditional GRUB is active'
+assert_bls_disabled_comment bls-disabled-quoted 'GRUB_ENABLE_BLSCFG="false" # traditional GRUB is active'
+
+echo 'PASS: BLS entries (RHEL 8 $kernelopts and RHEL 9), all grubby-reported kernels, commented BLS settings, and service-failure gates'

@@ -7,6 +7,10 @@ if [ "$#" -ne 1 ] || [ ! -f "$1/Makefile" ]; then
   echo "usage: $0 KDIR" >&2
   exit 2
 fi
+if [ "$(uname -m)" != x86_64 ]; then
+  echo "this compile-only check must run on x86_64; got $(uname -m)" >&2
+  exit 1
+fi
 
 KDIR=$(cd "$1" && pwd)
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
@@ -16,5 +20,10 @@ trap 'rm -rf "$BUILD"' EXIT
 cp -a "$REPO/xnu-ko" "$BUILD/xnu-ko"
 cp -a "$REPO/fki-ko" "$BUILD/fki-ko"
 make -C "$KDIR" M="$BUILD/xnu-ko" macho.o adt.o
-test -s "$BUILD/xnu-ko/macho.o"
-test -s "$BUILD/xnu-ko/adt.o"
+for object in macho.o adt.o; do
+  object_path="$BUILD/xnu-ko/$object"
+  test -s "$object_path"
+  header=$(LC_ALL=C readelf -h "$object_path")
+  printf '%s\n' "$header" | grep -Fq 'Class:                             ELF64'
+  printf '%s\n' "$header" | grep -Fq 'Machine:                           Advanced Micro Devices X86-64'
+done

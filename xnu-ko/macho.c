@@ -216,6 +216,7 @@ int macho_rebase(struct xnu_image *img)
 	return (int)n;
 }
 #else
+/* Thread-start decoding and pointer authentication are ARM64-specific. */
 int macho_rebase(struct xnu_image *img)
 {
 	(void)img;

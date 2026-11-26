@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 set -Eeuo pipefail
 
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+LAUNCHER="$ROOT_DIR/scripts/x86_64/xnulinux-boot.sh"
 QEMU_IMG="${QEMU_IMG:-qemu-img}"
 QEMU_IO="${QEMU_IO:-qemu-io}"
 command -v -- "$QEMU_IMG" >/dev/null 2>&1 || { printf 'qemu-img executable not found: %s\n' "$QEMU_IMG" >&2; exit 1; }
@@ -66,7 +68,7 @@ for overlay_base in "$OVERLAY" "$EXTERNAL_OVERLAY"; do
     "APPLE_SMC_OSK=$SMC_KEY" \
     "ACCEL=tcg" \
     "REAL_LAUNCH_QEMU_LOG=$REAL_LAUNCH_QEMU_LOG" \
-    "$ROOT_DIR/scripts/x86_64/xnulinux-boot.sh" >"$LAUNCH_OUTPUT" 2>&1; then
+    "$LAUNCHER" >"$LAUNCH_OUTPUT" 2>&1; then
     cat "$LAUNCH_OUTPUT" >&2
     printf 'launcher accepted a managed overlay selected through %s\n' "$overlay_base" >&2
     exit 1

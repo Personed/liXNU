@@ -47,7 +47,7 @@ Report the profile alongside the stage:
   establish Tahoe/KVM or support on every PC.
 - **Native x86-64 hosted XNU on Intel/AMD Linux:** this is the project target for Tahoe 26.
   The x86_64 FKI host-backend build merged in [#48](https://github.com/Personed/xnulinux/pull/48) and passed compilation while preserving ARM64; it advertises no XNU execution capability.
-  [#47](https://github.com/Personed/xnulinux/pull/47) adds a fail-closed XNU module target.
+  The fail-closed x86_64 XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47) still provides no execution support.
   The architecture-specific XNU entry/world switch and physical desktop acceptance are still pending.
   For each host, record the CPU vendor/model/features, Linux kernel and configuration,
   memory, page size, source and system build, desktop result, host-integrity checks before

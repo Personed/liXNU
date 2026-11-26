@@ -102,7 +102,7 @@ Working on two arm64 Linux setups:
 | Intel x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | The FKI host backend merged in [#48](https://github.com/Personed/xnulinux/pull/48) builds and preserves ARM64, but advertises no XNU execution capability; the fail-closed XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Native runtime and physical Intel acceptance remain pending. |
 | AMD x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | The FKI host backend merged in [#48](https://github.com/Personed/xnulinux/pull/48) builds and preserves ARM64, but advertises no XNU execution capability; the fail-closed XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Native runtime and physical AMD acceptance remain pending. |
 | Intel/AMD x86_64 with QEMU/KVM | User-prepared macOS guest | Complementary launcher experiment; does not use the hosted-XNU modules or validate the native port. |
-| Intel/AMD x86_64 with QEMU TCG | ARM64 Linux → PureDarwin console | Complementary profile: #50/#52 CI and #62/#64 local runs report console and guest-halt evidence. The synchronized #36/#46 manifest and cross-host matrix remain pending; this is not a native x86_64 result. |
+| Intel/AMD x86_64 with QEMU TCG | ARM64 Linux → PureDarwin console | Complementary TCG evidence: PR #52 run [#138](https://github.com/Personed/xnulinux/actions/runs/45891610133) and PR #72 run [#140](https://github.com/Personed/xnulinux/actions/runs/45891917494) passed the 6 GiB route. Run #140 validated the guard tree now in #52 commit `3b47444`. Virtualized CI only; no physical-PC support or memory floor. |
 
 The x86_64 native target is not a support claim yet: the FKI host backend exposes no XNU execution capabilities, and
 the architecture-specific XNU execution path plus physical Intel and AMD desktop boots with Linux host-integrity checks
@@ -117,8 +117,8 @@ The full TCG route in [#36](https://github.com/Personed/xnulinux/pull/36) uses a
 reference host-capacity screen is 20 GiB total RAM and 4 GiB available before artifact preparation. These values
 describe one measured profile, not a universal minimum. Run #72 on older #36 head `5312b29` emitted Darwin-console,
 guest-halt, module-unload, Linux power-off, and clean-QEMU-exit markers, but later byte inspection found overlapping
-file-backed `__TEXT_EXEC` and `__KLD` data, so that run is not an acceptance pass. Current #36 head `97727ac` failed
-run #74 before boot on the same overlap.
+file-backed `__TEXT_EXEC` and `__KLD` data, so that run is not an acceptance pass. At the time of run #74,
+#36 head `97727ac` failed before boot on the same overlap.
 
 PR #50 run #89 subsequently passed its Linux x86-64 TCG workflow through the Darwin console, guest `halt`, module
 unload, Linux power-off, and QEMU success on Ubuntu 24.04.5 x86-64 with QEMU 8.2.2. The nested KVM-backed Intel runner
@@ -132,10 +132,12 @@ expected package hashes and the current-main #62/#64/#58 synchronization are sti
 [#62](https://github.com/Personed/xnulinux/pull/62) and follow-up [#64](https://github.com/Personed/xnulinux/pull/64)
 also report local runs with the pinned Ubuntu ARM64 kernel package, Darwin console, guest `halt`, module unload, and
 Linux power-off using the locally relocated collection. Those runs are not the synchronized #50/#52 CI manifest or
-cross-host matrix. PRs #57/#58 continue diagnostics, while #46 has no Windows or Intel-macOS boot
-result yet. None of this TCG evidence establishes native x86_64 hosting, Tahoe/KVM, a macOS desktop, or practical speed
+cross-host matrix. PR #58's artifact-hash follow-up is not part of #52 run #138; #46 still has no full-route
+Windows or Intel-macOS result. None of this TCG evidence establishes native x86_64 hosting, Tahoe/KVM, a macOS desktop, or practical speed
 on every PC. The detailed profiles and remaining evidence are in
 [`docs/portability-validation.md`](docs/portability-validation.md).
+
+Run #138 used the paired `puredarwin-e2e-guest` and `puredarwin-e2e-disk` artifacts from that same PR #52 workflow run. Later, #72 added the TTBR1 geometry guard; its tested tree is now in #52 commit `3b47444`, and run #140 completed the same reduced boot on that exact tree. The still-separate #75 follow-up is not included. Neither CI run establishes a full boot on physical PCs, Windows, or Intel macOS. For Linux disk preparation, [`scripts/mk-puredarwin-disk.sh`](scripts/mk-puredarwin-disk.sh) creates the HFS+ disk from the exported PureDarwin root on Linux or macOS; see [`docs/free-kc.md`](docs/free-kc.md).
 
 Shipping it as a hosted service (what is distributed, what a user installs to run Apple's macOS) is in
 [`docs/hosted-service.md`](docs/hosted-service.md).

@@ -48,11 +48,11 @@ Report the profile alongside the stage:
   carve-out at `0x200000000`, and assigns 7,900 MiB to XNU. It screens for at least 20 GiB
   total host RAM and 4 GiB available before artifact preparation; record these host values
   separately from guest RAM and note the measurement phase. This is an operational screen
-  for that profile, not a measured universal minimum. The #36 workflow still selects the
-  latest Ubuntu generic ARM64 kernel package at runtime; PR #52 proposes a pinned package
-  (`7.0.0-44.44~24.04.1`) and immutable repository snapshot, but fixed expected package
-  digests and availability checks remain pending. Results do not establish native
-  x86_64/Tahoe, QEMU/KVM, a macOS desktop, or support on every PC.
+  for that profile, not a measured universal minimum. The #36 workflow selects the latest Ubuntu generic ARM64 kernel package at runtime.
+  PR #52 pins the candidate package (`7.0.0-44.44~24.04.1`) and repository snapshot; follow-up
+  PR #75 adds fixed package-digest and built-in VirtIO checks, but remains a separate branch
+  rather than main-integrated evidence. TCG results do not establish native x86_64/Tahoe,
+  QEMU/KVM, a macOS desktop, or support on every PC.
 
   Run #72 on earlier #36 head `5312b29` emitted the Darwin command, guest halt, XNU unload,
   Linux power-off, and QEMU exit markers on Ubuntu 24.04 x86-64 with QEMU 8.2.2. It is not
@@ -60,8 +60,7 @@ Report the profile alongside the stage:
   and `__KLD` overlap at `0x3854000-0x3858000`, with output bytes matching `__KLD` instead
   of `__TEXT_EXEC`. That runner reported an Intel Xeon 6975P-C, 4 CPUs, and
   `MemTotal: 16078396 kB` while assigning 16 GiB to the guest; this does not show all guest
-  memory remained resident or rule out host overcommit/swap. Current #36 head `97727ac`
-  failed run #74 before boot on the same file-backed overlap. PR #50's segment relocation
+  memory remained resident or rule out host overcommit/swap. Then-current #36 head `97727ac` failed run #74 before boot on the same file-backed overlap. PR #50's segment relocation
   workflow run #89 passed its own end-to-end Linux x86-64 TCG route on the #36 head plus
   the #50 relocation: source build, guest preparation, Darwin console
   `XNULINUX_USERLAND_OK`, guest halt, XNU unload, Linux power-off, and QEMU exit all passed
@@ -70,18 +69,19 @@ Report the profile alongside the stage:
   RAM and available RAM before artifact preparation were not reported. Functional success
   does not show that all guest RAM stayed resident or rule out host overcommit/swap. This is
   TCG evidence for that workflow, not native-hosted-XNU evidence or the synchronized
-  #52/#62/#64/#58 cross-host acceptance. PR #50 is not yet integrated into #36.
+  cross-host acceptance. PR #50's relocation was merged into the #36 branch; the #36 chain
+  remains a PR branch, not main-integrated evidence.
   PR #52 run #91 passed the pinned-package build, guest-preparation, and TCG console/halt
   workflow using package `7.0.0-44.44~24.04.1`. Its Microsoft-hypervisor Ubuntu runner
   exposed an AMD EPYC 9V45 virtual CPU, 4 vCPU, and runner-OS `MemTotal` of 16,367,524 kB
   (about 15.6 GiB), also below the 20 GiB reference screen; outer physical and pre-artifact
   available RAM were not reported. This is virtualized AMD-model evidence, not physical
-  AMD acceptance. Current #52 head `c360e99` includes #64; modules run #679 and launcher
-  run #282 passed, while image run #104 is in progress. Candidate package hashes from run
-  #91 still need comparison with #104 before adding fixed expected-digest checks. PR #57
-  head `2a4a23f` image run #108 is in progress, with modules run #697
-  queued and its launcher check passed. PR #58 image run #90 failed, with modules run #597
-  queued; neither result provides a current cross-host acceptance pass. Follow-up PR #64's
+  AMD acceptance. At that time #52 head `c360e99` included #64; modules run #679 and launcher run #282
+  passed while image run #104 was in progress. That snapshot is historical, not the current
+  #52 head. Candidate hashes from run #91 were still under review then; follow-up PR #75
+  later adds fixed package digests and built-in VirtIO checks, separate from runs #138/#140.
+  PR #57 head `2a4a23f` run #108 and PR #58 run #90 are also historical and do not
+  constitute current cross-host acceptance. Follow-up PR #64's
   synchronized head `5570fae` passed run #95 on its #52 branch: all four jobs passed for the
   pinned image, real PureDarwin disk/HFS+ and collection build, ARM64 guest preparation, and
   x86-64 TCG boot. The Ubuntu 24.04.5 x86-64 AWS-hosted virtual runner reported 4 CPUs,
@@ -111,6 +111,49 @@ manifest or cross-host matrix. #62's modules run #613 passed Linux 6.12 and ARM6
 jobs, while its x86-64 FKI, SPDX, and QEMU matrix jobs were cancelled. PR #64's separate
 run #95 CI result is described above; it is on the #52 branch and has not been integrated
 into main. These are useful complementary TCG results, not native x86_64 acceptance.
+
+PR #52 head `8d41fa9` passed its current CI workflow in run [#138](https://github.com/Personed/xnulinux/actions/runs/45891610133). All four jobs succeeded: pinned PureDarwin image build, real HFS+ disk and source XNU collection build, ARM64 Linux/FKI/XNU guest preparation, and x86-64 QEMU TCG boot. The guest and disk artifacts were downloaded from that same workflow run. The boot ran on an Ubuntu 24.04.5 Azure-hosted VM under Microsoft virtualization with 4 vCPUs, Intel Xeon Platinum 8573C, QEMU 8.2.2, `MemTotal: 16366484 kB`, and `MemAvailable: 15398364 kB` before artifact downloads (`14878964 kB` at boot). It used 6 GiB QEMU RAM, Linux `mem=2G`, a 3,072 MiB FKI carve-out at `0xc0000000`, and 2,816 MiB XNU RAM. The log recorded the Darwin command, guest-requested halt, XNU unload, and Linux power-off; the harness required QEMU exit 0. Peak QEMU RSS was 3,835,984 KiB (3.66 GiB), below the 6,144 MiB cap. This is a successful virtualized CI profile, not physical Intel/AMD PC acceptance or a host/guest memory minimum. It predates #72's TTBR1 guard and #75's package/hash follow-up, and it does not validate the native x86_64/Tahoe runtime.
+PR #72 then validated the ARM64 TTBR1 geometry guard in run [#140](https://github.com/Personed/xnulinux/actions/runs/45891917494): image, real HFS+ disk and source XNU collection, guest preparation, and the reduced TCG boot all succeeded. The boot used the same 6 GiB / `mem=2G` / 3,072 MiB FKI / 2,816 MiB XNU profile on an Ubuntu 24.04.5 AWS/KVM VM (4 vCPUs, Intel Xeon 6975P-C, QEMU 8.2.2). It reported `MemTotal: 16078392 kB`, `MemAvailable: 15173240 kB` before artifacts (`14787768 kB` at boot), and 3,826,452 KiB (3.65 GiB) peak QEMU RSS. The console command, guest `halt`, XNU unload, Linux power-off, and QEMU exit 0 passed. Run #140 tested commit `e61f578`; its Git tree `3421056` is identical to #52 branch commit `3b47444`, so this run validates the guard-enabled code in that #52 tree for the normal 4 KiB/48-bit guest geometry. The run did not inject an incompatible TTBR1 geometry and does not establish rejection behavior for invalid geometries. It remains virtualized branch evidence, not bare-metal or native x86_64 acceptance.
+
+The retained same-run manifests record the input and output hashes used by both boots. These are the SHA-256 values from `guest-manifest.txt` and `build-manifest.txt` inside each run's `puredarwin-e2e-guest` artifact:
+
+```text
+#138 guest-manifest.txt
+arm64_guest_kernel_image_deb_sha256=fa46ed1dc9e13d1c15772122e2cf18622e8cf0aa27b280f6fcb1ccfa196d9048
+arm64_guest_kernel_modules_deb_sha256=27cdb8fd11379b622264b224b1f59ae7ecf2b27f387b6a2d0e4a383eae9c3688
+arm64_guest_vmlinuz_sha256=d90fc73284ec528262411c81d4371a7c2543140a0561a166f6b80ff322cc25f3
+arm64_guest_kernel_config_sha256=124f25a7f41f186fc8e9a9538e4df81147411ab87e0ebdc70cb3bbb04b998a15
+arm64_guest_kernel_modules_tree_sha256=f64e7630e97992ef6f969c4e3b5430bf281360b65fc718720b36e452f8e9233b
+arm64_guest_image_sha256=02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6
+arm64_guest_initramfs_sha256=6cc95da4dcf89f7a1f6a0af138fac066fb302f4c32d39be888b2f7829abccf6a
+arm64_guest_fki_module_sha256=ed380792ac2ddcfc798e523eb250930c7ff53a7c1533a5f95399b8107f23f806
+arm64_guest_xnu_module_sha256=96295de4b1eaaf4767cf721d2c67ca41fe795336086528f0881e1ac11c4a7e7c
+#138 build-manifest.txt
+puredarwin_compressed_image_sha256=71a800d533015ef7c62bca0ca7cf27fcc4914a1fbb1d8b5fdb528d9bfca58335
+puredarwin_disk_sha256=2f11444f34326be943c9062ca64497b6665b3eb827487cf65cb5179325809c8c
+free_collection_sha256=dfb2344cc735e8534435bd87259208e7b4d4ba650c2a9352be017d41a4225879
+xnu_kernel_sha256=0b108521db2990e3ca1727fd67fd4d0292b35414c07e770c81a10e9e18191958
+
+
+#140 guest-manifest.txt
+arm64_guest_kernel_image_deb_sha256=fa46ed1dc9e13d1c15772122e2cf18622e8cf0aa27b280f6fcb1ccfa196d9048
+arm64_guest_kernel_modules_deb_sha256=27cdb8fd11379b622264b224b1f59ae7ecf2b27f387b6a2d0e4a383eae9c3688
+arm64_guest_vmlinuz_sha256=d90fc73284ec528262411c81d4371a7c2543140a0561a166f6b80ff322cc25f3
+arm64_guest_kernel_config_sha256=124f25a7f41f186fc8e9a9538e4df81147411ab87e0ebdc70cb3bbb04b998a15
+arm64_guest_kernel_modules_tree_sha256=f64e7630e97992ef6f969c4e3b5430bf281360b65fc718720b36e452f8e9233b
+arm64_guest_image_sha256=02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6
+arm64_guest_initramfs_sha256=431c6a2dcdbb77fc1131a8359149a59ad5f4aa5867eff3cf182175cf8a24e322
+arm64_guest_fki_module_sha256=83f25673db60a4d3246f30c7e10d9f053334d7122d2384e2d9dc0e1551cbe20d
+arm64_guest_xnu_module_sha256=96295de4b1eaaf4767cf721d2c67ca41fe795336086528f0881e1ac11c4a7e7c
+#140 build-manifest.txt
+puredarwin_compressed_image_sha256=66dd9f201ba4d0df24785865236ae3b252e6d0e5529fb8731a188e07b74f658b
+puredarwin_disk_sha256=84fc7065d5a9bfb87a8db4fe1c3e7c5f485a0c1b23cdcb7beccdd426f03528a1
+free_collection_sha256=a75c376745786254a827db587a96bd359ccc274db8685f9ed276c734d1536889
+xnu_kernel_sha256=a708781c01b971a7837e70ae1118e70ccf5d513db64948c92b92f744c6e34f94
+```
+
+Both boot logs contain `XNULINUX_E2E_XNU_UNLOADED`; neither log or harness records a separate FKI-unload marker. These runs therefore verify the XNU unload marker but do not establish FKI unload.
+
 - **Native x86-64 hosted XNU on Intel/AMD Linux:** this is the project target for Tahoe 26.
   The x86_64 FKI host-backend build merged in [#48](https://github.com/Personed/xnulinux/pull/48) and passed compilation while preserving ARM64; it advertises no XNU execution capability.
   The fail-closed x86_64 XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47) still provides no execution support.

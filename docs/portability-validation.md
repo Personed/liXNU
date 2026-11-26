@@ -68,8 +68,8 @@ Report the profile alongside the stage:
   resident or that the host avoided swap/overcommit. Current #36
   head `97727ac` adds a file-backed range check; run #74 failed in `kclink` before boot because file-backed
   `__TEXT_EXEC` and `__KLD` overlap at `0x3854000-0x3858000`, so run #72 is historical observation and not acceptance.
-  Status checked 2026-11-26 17:06 UTC: PR #50 proposes relocating `__KLD`/`__LAST` and relinking; current head is
-  `eb01aba`, [run #89](https://github.com/Personed/xnulinux/actions/runs/45860811942) and modules run #595 are queued,
+  Status checked 2026-11-26 17:11 UTC: PR #50 proposes relocating `__KLD`/`__LAST` and relinking; current head is
+  `eb01aba`, [run #89](https://github.com/Personed/xnulinux/actions/runs/45860811942) is in progress and modules run #595 are queued,
   and launcher run #221 passed. PR #52 pins the guest inputs and is rebased onto `eb01aba`; [run #91](https://github.com/Personed/xnulinux/actions/runs/45861689004)
   is in progress, modules run #600 is queued, and launcher run #224 passed. It uses an immutable Ubuntu snapshot,
   but fixed expected hashes for downloaded packages and package-availability validation are pending. PR #57 is also
@@ -85,9 +85,12 @@ Report the profile alongside the stage:
   QEMU command, document that the Python RAM sample precedes artifact hash validation, and preserve raw-byte
   SHA-256 for malformed UTF-8
   manifests. Review still asks for coverage of the macOS `vm_stat` unavailable-pages case.
-  PR #62 reports a local Linux 6.8 cross-build and console/halt run. Its current modules run #613 passed the
-  Linux 6.12 build and ARM64 smoke jobs, while the x86-64 FKI, SPDX, and QEMU matrix jobs were cancelled. Treat
-  this as supporting local evidence only; it does not replace an integrated #36/#46 run. After these changes
+  PR #62 now reports a local rerun with the exact #52 guest package `7.0.0-44.44~24.04.1`. `fki.ko` and
+  `xnu.ko` built against its headers, and the QEMU TCG harness reached the Darwin console, accepted guest
+  `halt`, unloaded both modules, and powered Linux off, using a locally relocated collection checked with
+  #50's `--check`. This is end-to-end local evidence, but not the synchronized #50/#52 CI manifest or the
+  cross-host run. Its current modules run #613 passed Linux 6.12 and ARM64 smoke jobs, while x86-64 FKI,
+  SPDX, and QEMU matrix jobs were cancelled. After these changes
   are synchronized, repeat the console/halt flow and host matrix with matching guest input hashes. An earlier
   Windows job (#71) started QEMU 11.1.0 but hit an
   ARM64 write-permission fault in `macho_copy` while loading `xnu.ko` with the older #44 kernel layout; it did not

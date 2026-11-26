@@ -107,9 +107,9 @@ At head `5312b29`, [run #72](https://github.com/Personed/xnulinux/actions/runs/4
 unload, power-off, and QEMU-exit markers on Ubuntu 24.04 x86-64. It is not a valid acceptance pass: independent
 byte comparison confirmed the historical collection's `__TEXT_EXEC`/`__KLD` overlap at `0x3854000-0x3858000`,
 with output bytes matching `__KLD` rather than `__TEXT_EXEC`. Current #36 head `97727ac` adds a file-backed range
-check; run #74 failed before boot on that overlap. Status below was checked 2026-11-26 17:06 UTC.
+check; run #74 failed before boot on that overlap. Status below was checked 2026-11-26 17:11 UTC.
 PR #50 proposes relocating `__KLD`/`__LAST` and relinking; its current head is `eb01aba`,
-[run #89](https://github.com/Personed/xnulinux/actions/runs/45860811942) and modules run #595 are queued,
+[run #89](https://github.com/Personed/xnulinux/actions/runs/45860811942) is in progress and modules run #595 are queued,
 and launcher run #221 passed. PR #52 pins the ARM64 guest kernel and records input hashes; it is rebased
 onto `eb01aba`, [run #91](https://github.com/Personed/xnulinux/actions/runs/45861689004) is in progress,
 modules run #600 is queued, and launcher run #224 passed. The workflow uses an immutable Ubuntu snapshot,
@@ -132,10 +132,13 @@ performance, GUI, networking, or Tahoe/KVM claim. See
 [PR #3](https://github.com/Personed/xnulinux/pull/3) for Windows/macOS/Linux host setup and
 [`docs/portability-validation.md`](docs/portability-validation.md) for stage-specific evidence.
 
-The ARM64 FKI compatibility change in [PR #62](https://github.com/Personed/xnulinux/pull/62) reports
-a local Linux 6.8 cross-build and console/halt run. On its current head, modules run #613 passed the
-Linux 6.12 and ARM64 smoke jobs, while the x86-64 FKI, SPDX, and QEMU matrix jobs were cancelled; this
-does not replace the integrated #36/#46 acceptance.
+The ARM64 FKI compatibility change in [PR #62](https://github.com/Personed/xnulinux/pull/62) now reports
+a local rerun with the exact #52 guest kernel package `7.0.0-44.44~24.04.1`. Both modules built against
+its headers, and the QEMU TCG harness reached the Darwin console, accepted guest `halt`, unloaded `xnu`
+and `fki`, and powered Linux off, using a locally relocated collection checked with #50's `--check`.
+This is end-to-end local evidence, but not yet the synchronized #50/#52 CI manifest or cross-host run.
+On its current head, modules run #613 passed Linux 6.12 and ARM64 smoke jobs, while x86-64 FKI, SPDX,
+and QEMU matrix jobs were cancelled.
 
 Shipping it as a hosted service (what is distributed, what a user installs to run Apple's macOS) is in
 [`docs/hosted-service.md`](docs/hosted-service.md).

@@ -18,6 +18,14 @@ Port the hosted-XNU runtime to native x86_64 Linux PCs while preserving the work
 - Measure Intel and AMD requirements independently. Record the tested Linux kernel, CPU features, memory, page size, XNU build, and furthest boot stage. A QEMU/KVM macOS guest or TCG ARM64 guest does not establish the native module port.
 - Keep user-visible support tables precise: ARM64 direct hosted XNU is the existing supported path; x86_64 native hosting remains experimental until full target and host-integrity checks pass.
 
+## Complementary QEMU TCG and PureDarwin checks
+
+- Retain the QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin flow as an optional portability profile and development harness. It does not replace the native x86_64/Tahoe 26 goal and does not test the native x86_64 module path.
+- Report firmware, Linux boot, FKI configuration, carve-out allocation/reuse, XNU module probe, XNU carve-out use, PureDarwin console, guest-issued halt, module unload, Linux guest power-off, and QEMU exit as distinct stages. A module build or probe is not XNU execution; a PureDarwin console is not macOS desktop support.
+- The #36 reference profile assigns 16 GiB to the ARM64 guest and screens for 20 GiB total host RAM plus 4 GiB available before artifact preparation. Record the host values separately from guest RAM and identify the measurement phase. This screen is not a universal minimum or a performance claim.
+- Keep #36/#46 CI results separate from the local pinned-kernel result in #62. Preserve the overlap and kernel-input caveats, and do not describe the TCG route as accepted until the current integrated artifacts pass the console/halt/unload/power-off checks and the host matrix.
+- Record detailed stage limits, host capacity, input hashes, and current evidence in [`docs/portability-validation.md`](docs/portability-validation.md). Keep the support table and PR title/body aligned with the native x86_64 project goal.
+
 ## Required PR coordination
 
 Project work is coordinated continuously through pull request comments. For **every task**:
@@ -30,7 +38,7 @@ Project work is coordinated continuously through pull request comments. For **ev
 
 ## Merge policy
 
-The project owner explicitly authorized merging pull requests as soon as all required automated checks are green; do not wait for a human review. Never merge while a required check is pending or failed. Use auto-merge when it is available and enforces the checks; otherwise monitor the checks and merge directly once they are green. If a repository rule independently requires human approval and blocks a merge, report the exact restriction and continue other work; do not disable repository protections without separate authorization.
+The project owner explicitly authorized direct merging as soon as all required checks for the current head are green and GitHub reports the PR mergeable; do not wait for human review. Never merge while a required check is pending or failed. If a repository protection actually blocks the merge by requiring human approval, record the exact restriction and continue independent work. Do not disable repository protections.
 
 Do not leave parallel agents to infer ownership from the code. Use the PR comments to divide overlapping work and confirm interface changes. Continue independent work while waiting on a reply; record unresolved dependencies in the PR.
 

@@ -5,6 +5,7 @@
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -342,6 +343,98 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                 capture.read_text(encoding="utf-8").splitlines(),
                 [str(alternate_vm.resolve()), str(alternate_vm.resolve()), "dev.c"],
             )
+
+    def test_xnu_rebuild_builds_required_puredarwin_kexts_without_kernelcache(self):
+        def run_rebuild(fail_kext=None):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                dvm = root / "Droid VM workspace"
+                poc = root / "xnulinux checkout"
+                fake_bin = root / "bin"
+                shutil.copytree(ROOT / "xnu-patches", poc / "xnu-patches")
+                for name in ("XnuCPU", "XnuDisk", "XnuDrm"):
+                    shutil.copytree(ROOT / "kexts" / name, poc / "kexts" / name)
+                (dvm / "out/k27/xnu").mkdir(parents=True)
+                (dvm / "k27").mkdir()
+                (dvm / "toolchains/sdks").mkdir(parents=True)
+                fake_bin.mkdir()
+
+                kernel_builder = dvm / "k27/build-kernel27.sh"
+                kernel_builder.write_text(
+                    "#!/bin/sh\n"
+                    "mkdir -p out/k27\n"
+                    "printf 'fixture kernel\\n' > out/k27/kernel-k27.macho\n",
+                    encoding="utf-8",
+                )
+                kernel_builder.chmod(0o755)
+
+                git = fake_bin / "git"
+                git.write_text(
+                    "#!/bin/sh\n"
+                    "case \"$3\" in\n"
+                    "  checkout) exit 1 ;;\n"
+                    "  apply) exit 0 ;;\n"
+                    "  *) exit 88 ;;\n"
+                    "esac\n",
+                    encoding="utf-8",
+                )
+                git.chmod(0o755)
+
+                python = fake_bin / "python3"
+                python.write_text(
+                    "#!/bin/sh\n"
+                    "[ \"$1\" = scripts/build-native-kext.py ] || exit 88\n"
+                    "printf '%s\\n' \"$2\" >> \"$KEXT_CAPTURE\"\n"
+                    "[ \"${FAIL_KEXT:-}\" != \"$2\" ] || exit 42\n",
+                    encoding="utf-8",
+                )
+                python.chmod(0o755)
+
+                sudo = fake_bin / "sudo"
+                sudo.write_text(
+                    "#!/bin/sh\n"
+                    "case \"$1\" in install|cp) exit 0 ;; esac\n"
+                    "exec \"$@\"\n",
+                    encoding="utf-8",
+                )
+                sudo.chmod(0o755)
+
+                capture = root / "kext-builds.txt"
+                capture.touch()
+                env = os.environ.copy()
+                env.update(
+                    {
+                        "DVM": str(dvm),
+                        "KEXT_CAPTURE": str(capture),
+                        "PATH": str(fake_bin) + os.pathsep + env["PATH"],
+                        "POC": str(poc),
+                    }
+                )
+                if fail_kext is None:
+                    env.pop("FAIL_KEXT", None)
+                else:
+                    env["FAIL_KEXT"] = fail_kext
+
+                result = subprocess.run(
+                    ["bash", str(ROOT / "scripts/vm-xnu-rebuild.sh")],
+                    cwd=ROOT,
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    check=False,
+                )
+                calls = capture.read_text(encoding="utf-8").splitlines()
+                return result, calls
+
+        result, calls = run_rebuild()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(calls, ["XnuCPU", "XnuDisk", "XnuDrm"])
+
+        result, calls = run_rebuild(fail_kext="XnuDisk")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(calls, ["XnuCPU", "XnuDisk"])
+        self.assertIn("kext XnuDisk is required for the PureDarwin collection", result.stdout)
 
 
 if __name__ == "__main__":

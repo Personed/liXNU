@@ -23,6 +23,8 @@ Use [Calamares](https://calamares.io/docs/install/) as the first graphical insta
 
 Expose **Install xnulinux** separately from the default live entry. Require an explicit target, show a summary of planned disk changes, and require confirmation before writes. Start on a blank test disk in UEFI mode; validate cancel/no writes and first reboot without USB before supporting dual boot, encryption, or Secure Boot. The installer is a proposal and ships only after the selected runtime and installation path are validated.
 
+Use `xnulinux doctor` from the Linux host as a read-only diagnostic input for the live session and installer preflight. Its current checks can report architecture, page size, RAM, and available tools, but its exit status does not certify native PC compatibility. Gate installation on the matching runtime's separately validated requirements, not on QEMU availability or `doctor` alone.
+
 ## Desktop and installer design
 
 For a validated setup using a separately supplied compatible macOS system, the macOS desktop itself is the intended default session, not a Linux imitation. The redistributable Live USB cannot assume that macOS is present: its default session must be separately labeled and must reflect what its bundled components can actually start. PureDarwin console alone is not the macOS desktop and does not satisfy the full Live USB milestone.

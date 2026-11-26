@@ -33,6 +33,14 @@ test -L "$dangling"
 test -p "$fifo"
 printf 'existing regular, symlink, dangling symlink and FIFO destinations preserved\n'
 
+successful_stage="$work/success-staging.img"
+successful_output="$work/success-output.img"
+printf 'completed image bytes\n' > "$successful_stage"
+publish_file_no_replace "$successful_stage" "$successful_output"
+test ! -e "$successful_stage"
+test "$(cat "$successful_output")" = 'completed image bytes'
+printf 'new image published and staging name removed\n'
+
 # Simulate a directory appearing after validation but immediately before the
 # POSIX link syscall; it must not receive the staging image.
 race_stage="$work/race-staging.img"

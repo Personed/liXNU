@@ -12,6 +12,89 @@ GIB = 1024 * MIB
 ALIGN_2M = 2 * MIB
 
 
+def memory_headroom(total_bytes):
+    """Reserve space at the top of RAM for EFI, firmware, and the initrd."""
+    if total_bytes >= 12 * GIB:
+        return 1024 * MIB
+    if total_bytes >= 6 * GIB:
+        return 512 * MIB
+    return 256 * MIB
+
+
+def parse_mem_size(value):
+    """Parse Linux mem= sizes using the kernel's binary K/M/G/T suffixes."""
+    match = re.fullmatch(r"([0-9]+)([KMGTP]?)", value.strip(), re.IGNORECASE)
+    if not match:
+        raise ValueError(f"invalid LINUX_MEM value {value!r} (expected e.g. 7G or 7168M)")
+    amount = int(match.group(1))
+    suffix = match.group(2).upper()
+    power = {"": 0, "K": 1, "M": 2, "G": 3, "T": 4, "P": 5}[suffix]
+    size = amount * (1024 ** power)
+    if size <= 0:
+        raise ValueError("LINUX_MEM must be greater than zero")
+    return size
+
+
+def validate_layout(ranges, linux_mem, carve_base, carve_mb, ram_mb=None):
+    """Reject a final host memory layout that cannot safely reserve the FKI carve-out."""
+    if not ranges:
+        raise ValueError("no System RAM entries found in iomem")
+
+    linux_bytes = parse_mem_size(linux_mem)
+    try:
+        base = int(carve_base, 0)
+    except ValueError as exc:
+        raise ValueError(f"invalid CARVE_BASE value {carve_base!r} (expected e.g. 0x200000000)") from exc
+    try:
+        size_mb = int(carve_mb, 10)
+    except ValueError as exc:
+        raise ValueError(f"invalid CARVE_MB value {carve_mb!r} (expected a positive integer)") from exc
+
+    if base < 0:
+        raise ValueError("CARVE_BASE must be a nonnegative physical address")
+    if base % ALIGN_2M:
+        raise ValueError("CARVE_BASE must be aligned to 2 MiB")
+    if size_mb < 1024 or size_mb % 2:
+        raise ValueError("CARVE_MB must be an even number of at least 1024 MiB")
+
+    carve_end = base + size_mb * MIB
+    total_bytes = sum(end - start for start, end in ranges)
+    headroom = memory_headroom(total_bytes)
+    containing = next(((start, end) for start, end in ranges if start <= base and carve_end <= end), None)
+    if containing is None:
+        raise ValueError(
+            f"carve-out [{base:#x}, {carve_end:#x}) is not contained in one System RAM range"
+        )
+    start, end = containing
+    usable_end = align_down(end - headroom, ALIGN_2M)
+    if base < align_up(start, ALIGN_2M) or carve_end > usable_end:
+        raise ValueError(
+            f"carve-out [{base:#x}, {carve_end:#x}) overlaps the reserved RAM headroom; "
+            "choose another CARVE_BASE or reduce CARVE_MB"
+        )
+
+    linux_ram_below_carve = sum(max(0, min(region_end, base) - region_start) for region_start, region_end in ranges)
+    if linux_bytes > linux_ram_below_carve:
+        raise ValueError(
+            f"LINUX_MEM={linux_mem} needs {linux_bytes // MIB} MiB below CARVE_BASE, "
+            f"but only {linux_ram_below_carve // MIB} MiB of System RAM is below it; "
+            "lower LINUX_MEM or move CARVE_BASE higher"
+        )
+
+    if ram_mb is not None:
+        try:
+            requested_ram_mb = int(ram_mb, 10)
+        except ValueError as exc:
+            raise ValueError(f"invalid RAM_MB value {ram_mb!r} (expected a positive integer)") from exc
+        overhead_mb = 256 if size_mb >= 4096 else 128
+        max_ram_mb = min(7900, size_mb - overhead_mb)
+        if requested_ram_mb <= 0 or requested_ram_mb > max_ram_mb:
+            raise ValueError(
+                f"RAM_MB={requested_ram_mb} exceeds the supported limit of {max_ram_mb} MiB "
+                f"for CARVE_MB={size_mb}"
+            )
+
+
 def parse_iomem(text):
     """Return sorted, merged list of (start, end_exclusive) System RAM ranges."""
     ranges = []
@@ -69,12 +152,7 @@ def compute_layout(ranges):
 
     # Leave headroom at the top of the target block for EFI/firmware/initrd regions.
     t_size = t_end - t_start
-    if total_bytes >= 12 * GIB:
-        headroom = 1024 * MIB
-    elif total_bytes >= 6 * GIB:
-        headroom = 512 * MIB
-    else:
-        headroom = 256 * MIB
+    headroom = memory_headroom(total_bytes)
 
     if t_size <= headroom + 1024 * MIB:
         raise ValueError(
@@ -153,12 +231,23 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--iomem", default="/proc/iomem", help="Path to iomem file")
     p.add_argument("--json", action="store_true", help="Output JSON instead of shell vars")
+    p.add_argument("--validate", action="store_true", help="Validate an explicit final memory layout")
+    p.add_argument("--linux-mem", help="Linux mem= limit to validate, e.g. 7G")
+    p.add_argument("--carve-base", help="FKI carve-out base to validate, e.g. 0x200000000")
+    p.add_argument("--carve-mb", help="FKI carve-out size in MiB to validate")
+    p.add_argument("--ram-mb", help="Optional explicit XNU RAM size in MiB to validate")
     args = p.parse_args()
 
     try:
         with open(args.iomem, "r", encoding="utf-8") as f:
-            text = f.read()
-        layout = compute_layout(parse_iomem(text))
+            ranges = parse_iomem(f.read())
+        if args.validate:
+            if not args.linux_mem or not args.carve_base or not args.carve_mb:
+                p.error("--validate requires --linux-mem, --carve-base, and --carve-mb")
+            validate_layout(ranges, args.linux_mem, args.carve_base, args.carve_mb, args.ram_mb)
+            print("detect-mem: memory layout is valid")
+            return
+        layout = compute_layout(ranges)
     except (OSError, ValueError) as exc:
         print(f"detect-mem: {exc}", file=sys.stderr)
         sys.exit(1)

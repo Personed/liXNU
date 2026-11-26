@@ -60,7 +60,7 @@ class TestDetectMem(unittest.TestCase):
         iomem = (
             "80000000-17fffffff : System RAM\n"
             "200000000-31fffffff : System RAM\n"
-            "800000000-a3fffffff : System RAM\n"
+            "800010000-a4000ffff : System RAM\n"
         )
         ranges = detect_mem.parse_iomem(iomem)
         layout = detect_mem.compute_layout(ranges)
@@ -68,7 +68,25 @@ class TestDetectMem(unittest.TestCase):
         carve_end = carve_base + layout["carve_mb"] * detect_mem.MIB
         self.assertEqual(layout["linux_mem"], "8G")
         self.assertTrue(any(start <= carve_base and carve_end <= end for start, end in ranges))
-        self.assertEqual(carve_base, ranges[-1][0])
+        self.assertEqual(carve_base, detect_mem.align_up(ranges[-1][0], detect_mem.ALIGN_2M))
+
+    def test_validate_detected_16g_layout(self):
+        ranges = detect_mem.parse_iomem("40000000-43fffffff : System RAM\n")
+        detect_mem.validate_layout(ranges, "7G", "0x200000000", "8156", "7900")
+
+    def test_reject_linux_mem_that_reaches_into_carve_out(self):
+        ranges = detect_mem.parse_iomem("40000000-43fffffff : System RAM\n")
+        with self.assertRaisesRegex(ValueError, "lower LINUX_MEM or move CARVE_BASE higher"):
+            detect_mem.validate_layout(ranges, "8G", "0x200000000", "8156")
+
+    def test_validate_explicit_carve_and_linux_overrides(self):
+        ranges = detect_mem.parse_iomem("40000000-43fffffff : System RAM\n")
+        detect_mem.validate_layout(ranges, "8G", "0x240000000", "2048", "1800")
+
+    def test_reject_ram_mb_larger_than_carve_supports(self):
+        ranges = detect_mem.parse_iomem("40000000-43fffffff : System RAM\n")
+        with self.assertRaisesRegex(ValueError, "supported limit of 1920 MiB"):
+            detect_mem.validate_layout(ranges, "8G", "0x240000000", "2048", "1921")
 
     def test_masked_iomem_raises(self):
         iomem = "00000000-00000000 : System RAM\n00000000-00000000 : System RAM\n"

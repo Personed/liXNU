@@ -64,15 +64,11 @@ elif [ "${BUILD_NATIVE_KEXTS:-0}" = 1 ]; then
   # The free collection has no Apple kc27.bin to drive kc27-layout.py. Fit the
   # kernel's marker segments to the source-built __TEXT_EXEC before making its
   # free collection; kclink places each segment at its own vmaddr.
-  segaddrs_before=$(mktemp)
-  cp k27/segaddrs.sh "$segaddrs_before"
-  python3 "$POC/scripts/free-kc/fit_kernel_segments.py" out/k27/kernel-k27.macho k27/segaddrs.sh
-  if ! cmp -s "$segaddrs_before" k27/segaddrs.sh; then
-    echo "free collection kernel slots moved: linking the kernel again"
-    rm -f "$segaddrs_before"
+  fit_log=out/k27/kernel-slot-fit.log
+  python3 "$POC/scripts/free-kc/fit_kernel_segments.py" out/k27/kernel-k27.macho k27/segaddrs.sh 2>&1 | tee "$fit_log"
+  if grep -q '^relink kernel:' "$fit_log"; then
+    echo "free collection kernel slots need a relink"
     JOBS="${JOBS:-12}" bash k27/build-kernel27.sh 2>&1 | tee out/k27/xnulinux-relink.log | tail -15
-  else
-    rm -f "$segaddrs_before"
   fi
   python3 "$POC/scripts/free-kc/fit_kernel_segments.py" --check out/k27/kernel-k27.macho k27/segaddrs.sh
 fi

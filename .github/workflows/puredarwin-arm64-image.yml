@@ -154,7 +154,7 @@ jobs:
           logs="$RUNNER_TEMP/puredarwin-xnu-build-diagnostics"
           mkdir -p "$logs"
           dvm="$HOME/w/dvm/out/k27"
-          for path in "$dvm/xnulinux-rebuild.log" "$dvm/build-bootstrap.log" "$dvm/build-raw.log"; do
+          for path in "$dvm/xnulinux-rebuild.log" "$dvm/xnulinux-relink.log" "$dvm/kernel-slot-fit.log" "$dvm/build-bootstrap.log" "$dvm/build-raw.log"; do
             if [ -f "$path" ]; then
               cp "$path" "$logs/"
             fi

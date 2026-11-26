@@ -24,7 +24,9 @@ def fit_offsets(segments, kernel_header, offsets):
         if segment.name in by_name:
             raise ValueError(f'kernel has duplicate {segment.name} segments')
         by_name[segment.name] = segment
-    missing = [name for name in ('__TEXT_EXEC', *MARKERS, '__KLDDATA') if name not in by_name]
+    # __LAST can be a zero-sized linker marker and may not be emitted as a
+    # Mach-O segment at all. Its address still lives in segaddrs.sh.
+    missing = [name for name in ('__TEXT', '__TEXT_EXEC', '__KLD', '__KLDDATA') if name not in by_name]
     if missing:
         raise ValueError(f'kernel is missing required segments: {", ".join(missing)}')
 
@@ -32,9 +34,6 @@ def fit_offsets(segments, kernel_header, offsets):
     for name in MARKERS:
         if name not in result:
             raise ValueError(f'linker address list has no {name} address')
-        actual = by_name[name].vmaddr - kernel_header
-        if actual != result[name]:
-            raise ValueError(f'kernel {name} is linked at {actual:#x}, but segaddrs.sh specifies {result[name]:#x}')
 
     text_exec = by_name['__TEXT_EXEC']
     text_exec_start = text_exec.vmaddr - kernel_header
@@ -58,11 +57,25 @@ def fit_offsets(segments, kernel_header, offsets):
             raise ValueError(f'kernel segments {name} ({start:#x}-{end:#x}) and '
                              f'{next_name} ({next_start:#x}-{next_end:#x}) overlap after relink placement')
 
-    last_end = result['__LAST'] + by_name['__LAST'].vmsize
+    last = by_name.get('__LAST')
+    last_end = result['__LAST'] + (last.vmsize if last else 0)
     klddata_start = by_name['__KLDDATA'].vmaddr - kernel_header
     if last_end > klddata_start:
         raise ValueError(f'kernel __LAST ends at {last_end:#x}, beyond __KLDDATA at {klddata_start:#x}')
     return result
+
+
+def relink_needed(segments, kernel_header, fitted):
+    """Whether the current Mach-O has not yet been linked at the fitted markers."""
+    by_name = {segment.name: segment for segment in segments}
+    for name in MARKERS:
+        segment = by_name.get(name)
+        # An absent or empty __LAST is a valid representation of its marker.
+        if name == '__LAST' and (segment is None or not segment.vmsize):
+            continue
+        if segment is None or segment.vmaddr - kernel_header != fitted[name]:
+            return True
+    return False
 
 
 def parse_link_offsets(text):
@@ -116,16 +129,20 @@ def main():
     original = args.segaddrs.read_text()
     offsets = parse_link_offsets(original)
     fitted = fit_offsets(kernel.segments, kernel_header, offsets)
+    stale_kernel = relink_needed(kernel.segments, kernel_header, fitted)
     if args.check:
-        if fitted != offsets:
-            raise SystemExit('linker addresses still need adjustment')
+        if fitted != offsets or stale_kernel:
+            raise SystemExit('kernel linker addresses still need adjustment or relinking')
         print('kernel segment ranges are disjoint and __LAST ends before __KLDDATA')
         return
 
-    if fitted == offsets:
+    changed = fitted != offsets
+    if changed:
+        args.segaddrs.write_text(render_link_offsets(original, fitted))
+    if changed or stale_kernel:
+        print('relink kernel: fitted marker addresses or linked Mach-O are stale')
+    else:
         print('kernel segment linker addresses already fit')
-        return
-    args.segaddrs.write_text(render_link_offsets(original, fitted))
     for name in MARKERS:
         if fitted[name] != offsets[name]:
             print(f'moved {name}: {offsets[name]:#x} -> {fitted[name]:#x}')

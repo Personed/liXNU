@@ -95,6 +95,7 @@ run_as_root chown 65534:65534 "$foreign_stage" "$foreign_stage/sentinel"
 replace_bin=$tmp/replace-bin
 mkdir -- "$replace_bin"
 real_mkdir=$(command -v mkdir)
+foreign_stage_marker=$tmp/foreign-stage-path
 cat >"$replace_bin/mkdir" <<'WRAPPER'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -105,25 +106,42 @@ case "$last" in
   */.puredarwin-root.*)
     mv -- "$last" "$last.original"
     mv -- "@FOREIGN_STAGE@" "$last"
+    printf '%s\n' "$last" >"@STAGE_MARKER@"
     ;;
 esac
 WRAPPER
 attack_output=$output_dir/attack-output.tar.gz
-sed -i "s|@REAL_MKDIR@|$real_mkdir|g; s|@FOREIGN_STAGE@|$foreign_stage|g" "$replace_bin/mkdir"
+replacement_log=$tmp/foreign-stage-export.log
+sed -i "s|@REAL_MKDIR@|$real_mkdir|g; s|@FOREIGN_STAGE@|$foreign_stage|g; s|@STAGE_MARKER@|$foreign_stage_marker|g" "$replace_bin/mkdir"
 chmod +x "$replace_bin/mkdir"
 if PATH="$replace_bin:$PATH" \
-  "$script" "$image" "$attack_output" >/dev/null 2>&1; then
+  "$script" "$image" "$attack_output" >"$replacement_log" 2>&1; then
   echo 'Exporter accepted a replaced staging directory.' >&2
   exit 1
 fi
-foreign_replacement=$(find "$output_dir" -maxdepth 1 -type d -name '.puredarwin-root.*' ! -name '*.original' -print -quit)
-[ -n "$foreign_replacement" ]
-[ ! -L "$foreign_replacement" ]
-[ "$(run_as_root stat -c '%u' -- "$foreign_replacement")" = 65534 ]
-[ "$(run_as_root cat "$foreign_replacement/sentinel")" = 'foreign stage sentinel' ]
-[ ! -e "$attack_output" ]
-replaced_dir=$(find "$output_dir" -maxdepth 1 -type d -name '.puredarwin-root.*.original' -print -quit)
-[ -n "$replaced_dir" ]
+if [ ! -s "$foreign_stage_marker" ]; then
+  cat "$replacement_log" >&2
+  echo 'The staging mkdir wrapper did not complete its foreign-owner replacement.' >&2
+  exit 1
+fi
+foreign_replacement=$(cat "$foreign_stage_marker")
+if [ ! -d "$foreign_replacement" ] || [ -L "$foreign_replacement" ]; then
+  cat "$replacement_log" >&2
+  echo 'Foreign-owner replacement is missing or is not a real directory.' >&2
+  exit 1
+fi
+foreign_owner=$(run_as_root stat -c '%u' -- "$foreign_replacement")
+if [ "$foreign_owner" != 65534 ]; then
+  echo "Foreign-owner replacement has UID $foreign_owner, expected 65534." >&2
+  exit 1
+fi
+if [ "$(run_as_root cat "$foreign_replacement/sentinel")" != 'foreign stage sentinel' ]; then
+  echo 'Foreign-owner replacement sentinel changed.' >&2
+  exit 1
+fi
+[ ! -e "$attack_output" ] || { echo 'Exporter published output into the replaced path.' >&2; exit 1; }
+replaced_dir=$foreign_replacement.original
+[ -d "$replaced_dir" ] || { echo 'Original staging directory was not preserved for cleanup.' >&2; exit 1; }
 run_as_root rm -rf -- "$replaced_dir" "$foreign_replacement"
 
 expect_refusal() {

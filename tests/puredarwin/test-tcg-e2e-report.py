@@ -3,6 +3,8 @@
 """Regression tests for the cross-host PureDarwin boot report."""
 
 import hashlib
+import importlib.util
+import io
 import json
 import os
 import platform
@@ -11,10 +13,17 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "tests" / "puredarwin" / "run-tcg-e2e.py"
 INIT_REPORT = ROOT / "tests" / "puredarwin" / "init-host-report.sh"
+PYTHON_MEMORY_SAMPLES = (
+    5 * 1024 ** 3 + 101,
+    6 * 1024 ** 3 + 202,
+    7 * 1024 ** 3 + 303,
+)
 
 
 def input_files(directory: Path, *, with_disk: bool) -> tuple[Path, Path, Path, Path]:
@@ -73,6 +82,37 @@ def fake_qemu(path: Path) -> Path:
     return path
 
 
+def run_runner_with_memory_samples(arguments: list[str], env: dict[str, str]) -> int:
+    spec = importlib.util.spec_from_file_location(
+        "puredarwin_tcg_e2e_runner_under_test", RUNNER
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load PureDarwin TCG runner")
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    host_facts = [
+        {
+            "system": "Linux",
+            "release": "report-test",
+            "version": "report-test",
+            "architecture": "x86_64",
+            "processor": "report-test",
+            "logical_cpus": 2,
+            "memory_total_bytes": 32 * 1024 ** 3,
+            "memory_available_bytes": available,
+        }
+        for available in PYTHON_MEMORY_SAMPLES
+    ]
+    with (
+        mock.patch.dict(os.environ, env, clear=False),
+        mock.patch.object(sys, "argv", [str(RUNNER), *arguments]),
+        mock.patch.object(runner, "host_facts", side_effect=host_facts),
+        redirect_stdout(io.StringIO()),
+        redirect_stderr(io.StringIO()),
+    ):
+        return runner.main()
+
+
 class TcgE2eReportTests(unittest.TestCase):
     def test_posix_preflight_reports_decimal_byte_counts_and_phase(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -92,22 +132,26 @@ class TcgE2eReportTests(unittest.TestCase):
             # Pass the actual POSIX producer output through the runner before it overwrites the report.
             kernel, initramfs, disk, _ = input_files(temp / "artifacts", with_disk=True)
             qemu = fake_qemu(temp / "qemu-system-aarch64")
-            result = subprocess.run(
-                [sys.executable, str(RUNNER), str(kernel), str(initramfs), str(disk), str(temp / "serial.log"),
+            result = run_runner_with_memory_samples(
+                [str(kernel), str(initramfs), str(disk), str(temp / "serial.log"),
                  "--timeout-seconds", "5", "--qemu", str(qemu)],
-                env=env, capture_output=True, text=True, check=False,
+                env,
             )
             final_report = json.loads(report_path.read_text(encoding="utf-8"))
             summary = Path(env["GITHUB_STEP_SUMMARY"]).read_text(encoding="utf-8")
             final_host = final_report["host"]
-            self.assertEqual(result.returncode, 1)  # The fake QEMU emits no guest markers.
+            self.assertEqual(result, 1)  # The fake QEMU emits no guest markers.
             self.assertEqual(
                 final_host["memory_available_before_artifact_preparation_bytes"],
                 host["memory_available_before_artifact_preparation_bytes"],
             )
-            self.assertIsInstance(final_host["memory_available_at_runner_start_bytes"], int)
-            self.assertIsInstance(final_host["memory_available_before_qemu_bytes"], int)
-            self.assertIsInstance(final_host["memory_available_after_qemu_attempt_bytes"], int)
+            python_samples = (
+                final_host["memory_available_at_runner_start_bytes"],
+                final_host["memory_available_before_qemu_bytes"],
+                final_host["memory_available_after_qemu_attempt_bytes"],
+            )
+            self.assertEqual(python_samples, PYTHON_MEMORY_SAMPLES)
+            self.assertEqual(len(set(python_samples)), 3)
             self.assertIn("at Python runner start", summary)
 
     def test_missing_disk_hash_records_failure_instead_of_raising(self):

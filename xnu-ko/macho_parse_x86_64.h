@@ -69,7 +69,9 @@ struct xnu_macho_x86_64_info {
  * unsupported. Nonzero max_valid_pointer values must agree across nonempty
  * starts records. The sole segment-count exception accepts one zero-VM
  * segment immediately before a final __LINKEDIT only when its starts slot is
- * empty.
+ * empty. A file-backed CTF exception requires a zero-VM SG_NORELOC segment
+ * with read-only protections and one bounded (__CTF,__ctf) section; it is not
+ * included in mapped VM counts.
  * Dyld-info extents are only bounds-checked and flagged. Unknown optional
  * commands are counted. Callers must not infer loader/fixup support from
  * success. On every failure with a non-NULL output pointer, zero the complete

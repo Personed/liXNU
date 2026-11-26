@@ -8,12 +8,13 @@
 _Static_assert(sizeof(struct xnu_macho_x86_64_info) <= 2048,
 	       "parser result must stay bounded for kernel stack callers");
 
-#define FILE_BYTES 4096U
+#define FILE_BYTES 16384U
 #define HEADER_SIZE 32U
 #define PAGEZERO_OFF HEADER_SIZE
 #define PAGEZERO_SIZE 72U
 #define TEXT_OFF (PAGEZERO_OFF + PAGEZERO_SIZE)
 #define TEXT_SIZE (72U + 80U)
+#define CTF_SEGMENT_SIZE (72U + 80U)
 #define SECTION_OFF (TEXT_OFF + 72U)
 #define THREAD_OFF (TEXT_OFF + TEXT_SIZE)
 #define THREAD_SIZE (8U + 8U + 42U * 4U)
@@ -262,7 +263,7 @@ static void append_chained_fixups_two_segments(unsigned char *file,
 
 	put_name(low_segment + 8, "__LOW");
 	put_u64(low_segment + 24, 0x800);
-	put_u64(low_segment + 32, 0x1000);
+	put_u64(low_segment + 32, 0x800); /* ends exactly where __TEXT starts */
 	put_u64(low_segment + 40, 0x300);
 	put_u64(low_segment + 48, 0x100);
 	put_u32(low_segment + 56, 3);
@@ -313,31 +314,43 @@ static void append_chained_fixups_conflicting_max_valid_pointer(
 static void append_chained_fixups_ctf_omission(unsigned char *file)
 {
 	unsigned char *ctf = file + COMMANDS_END;
-	unsigned char *linkedit = ctf + 72;
+	unsigned char *ctf_section = ctf + 72;
+	unsigned char *linkedit = ctf + CTF_SEGMENT_SIZE;
 	unsigned char *fixups_command = linkedit + 72;
-	unsigned char *payload = file + 1024;
+	unsigned char *payload = file + 0x2000;
 	unsigned char *starts = payload + 28;
 	unsigned char *text_starts = starts + 16;
 
 	put_u32(ctf, LC_SEGMENT_64);
-	put_u32(ctf + 4, 72);
+	put_u32(ctf + 4, CTF_SEGMENT_SIZE);
 	put_name(ctf + 8, "__CTF");
 	put_u64(ctf + 24, 0x3000);
+	put_u64(ctf + 40, 0x1000);
+	put_u64(ctf + 48, 0x1000); /* page-rounded CTF payload with padding */
+	put_u32(ctf + 56, 1);
+	put_u32(ctf + 60, 1);
+	put_u32(ctf + 64, 1);
+	put_u32(ctf + 68, 4); /* SG_NORELOC */
+	put_name(ctf_section, "__ctf");
+	put_name(ctf_section + 16, "__CTF");
+	put_u64(ctf_section + 32, 0x3000);
+	put_u64(ctf_section + 40, 0x80); /* actual CTF bytes before segment padding */
+	put_u32(ctf_section + 48, 0x1000);
 	put_u32(linkedit, LC_SEGMENT_64);
 	put_u32(linkedit + 4, 72);
 	put_name(linkedit + 8, "__LINKEDIT");
 	put_u64(linkedit + 24, 0x3000);
 	put_u64(linkedit + 32, 0x1000);
-	put_u64(linkedit + 40, 0x300);
+	put_u64(linkedit + 40, 0x2000);
 	put_u64(linkedit + 48, 0x100);
 	put_u32(linkedit + 56, 1);
 	put_u32(linkedit + 60, 1);
 	put_u32(fixups_command, LC_DYLD_CHAINED_FIXUPS);
 	put_u32(fixups_command + 4, 16);
-	put_u32(fixups_command + 8, 1024);
+	put_u32(fixups_command + 8, 0x2000);
 	put_u32(fixups_command + 12, 72);
 	put_u32(file + 16, 6);
-	put_u32(file + 20, COMMAND_BYTES + 160);
+	put_u32(file + 20, COMMAND_BYTES + CTF_SEGMENT_SIZE + 72U + 16U);
 	put_u32(payload + 4, 28);
 	put_u32(payload + 8, 72);
 	put_u32(payload + 12, 72);
@@ -358,13 +371,76 @@ static void append_chained_fixups_ctf_nonzero(unsigned char *file)
 {
 	append_chained_fixups_ctf_omission(file);
 	put_u64(file + COMMANDS_END + 32, 0x1000);
-	put_u64(file + COMMANDS_END + 72 + 24, 0x4000);
+	put_u64(file + COMMANDS_END + CTF_SEGMENT_SIZE + 24, 0x4000);
+}
+
+static void append_chained_fixups_ctf_without_noreloc(unsigned char *file)
+{
+	append_chained_fixups_ctf_omission(file);
+	put_u32(file + COMMANDS_END + 68, 0);
+}
+
+static void append_chained_fixups_ctf_wrong_section_name(unsigned char *file)
+{
+	append_chained_fixups_ctf_omission(file);
+	put_name(file + COMMANDS_END + 72, "__other");
+}
+
+static void append_chained_fixups_ctf_wrong_section_offset(unsigned char *file)
+{
+	append_chained_fixups_ctf_omission(file);
+	put_u32(file + COMMANDS_END + 72 + 48, 0x1008);
+}
+
+static void append_chained_fixups_ctf_writable(unsigned char *file)
+{
+	append_chained_fixups_ctf_omission(file);
+	put_u32(file + COMMANDS_END + 56, 3);
+}
+
+static void append_chained_fixups_ctf_section_exceeds_file_payload(
+	unsigned char *file)
+{
+	append_chained_fixups_ctf_omission(file);
+	put_u64(file + COMMANDS_END + 72 + 40, 0x2000);
 }
 
 static void append_chained_fixups_zero_vm_other_name(unsigned char *file)
 {
 	append_chained_fixups_ctf_omission(file);
 	put_name(file + COMMANDS_END + 8, "__OTHER");
+	put_u64(file + COMMANDS_END + 48, 0);
+	put_u32(file + COMMANDS_END + 56, 0);
+	put_u32(file + COMMANDS_END + 60, 0);
+	put_u32(file + COMMANDS_END + 68, 0);
+	put_u64(file + COMMANDS_END + 72 + 40, 0);
+	put_name(file + COMMANDS_END + 72 + 16, "__OTHER");
+}
+
+static void append_empty_duplicate_text(unsigned char *file,
+				       unsigned int command_offset)
+{
+	unsigned char *text = file + command_offset;
+
+	put_u32(text, LC_SEGMENT_64);
+	put_u32(text + 4, 72);
+	put_name(text + 8, "__TEXT");
+	put_u64(text + 24, 0x4000);
+}
+
+static void append_empty_duplicate_text_without_fixups(unsigned char *file)
+{
+	append_empty_duplicate_text(file, COMMANDS_END);
+	put_u32(file + 16, 4);
+	put_u32(file + 20, COMMAND_BYTES + 72);
+}
+
+static void append_fixups_with_duplicate_text(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	append_empty_duplicate_text(file, COMMANDS_END + 16);
+	put_u32(file + 16, 5);
+	put_u32(file + 20, COMMAND_BYTES + 16 + 72);
 }
 
 static void append_chained_fixups_prefix_valid(unsigned char *file)
@@ -641,7 +717,8 @@ static int expect_multi_chained_fixups_rejected(void)
 }
 
 static int expect_ctf_omission(const char *name,
-			       void (*mutate)(unsigned char *))
+			       void (*mutate)(unsigned char *),
+			       unsigned long long expected_ctf_filesize)
 {
 	unsigned char file[FILE_BYTES];
 	unsigned char original[FILE_BYTES];
@@ -652,13 +729,16 @@ static int expect_ctf_omission(const char *name,
 	mutate(file);
 	memcpy(original, file, sizeof(file));
 	result = xnu_macho_x86_64_parse(file, FILE_BYTES, &info);
-	if (result || info.segment_count != 4 || info.vm_low != 0x1000 ||
+	if (result || info.segment_count != 4 || info.mapped_segment_count != 2 ||
+	    info.vm_low != 0x1000 ||
 	    info.vm_high != 0x4000 || info.entry != 0x1100 ||
 	    info.chained_starts_segment_count != 3 ||
 	    info.chained_starts_nonempty_segment_count != 1 ||
 	    info.segments[1].chained_pointer_format != 11 ||
 	    info.segments[1].chained_page_count != 2 ||
-	    info.segments[2].vmsize ||
+	    info.segments[2].vmsize || info.segments[2].fileoff != 0x1000 ||
+	    info.segments[2].filesize != expected_ctf_filesize ||
+	    info.segments[2].section_count != 1 ||
 	    memcmp(info.segments[3].name, "__LINKEDIT", 10) ||
 	    memcmp(file, original, sizeof(file))) {
 		fprintf(stderr, "FAIL: %s (result=%d starts=%u segments=%u)\n",
@@ -707,6 +787,23 @@ static int expect_page_prefix_fixups(void)
 	    info.segments[1].chained_page_count != 1) {
 		fprintf(stderr, "FAIL: starts page prefix remains one page (result=%d count=%u)\n",
 			result, info.segments[1].chained_page_count);
+		return 1;
+	}
+	return 0;
+}
+
+static int expect_duplicate_text_without_fixups(void)
+{
+	unsigned char file[FILE_BYTES];
+	struct xnu_macho_x86_64_info info;
+	int result;
+
+	make_valid_image(file, CPU_SUBTYPE_X86_64_ALL);
+	append_empty_duplicate_text_without_fixups(file);
+	result = xnu_macho_x86_64_parse(file, FILE_BYTES, &info);
+	if (result || info.segment_count != 3 || info.entry != 0x1100) {
+		fprintf(stderr, "FAIL: duplicate __TEXT without chained fixups (result=%d)\n",
+			result);
 		return 1;
 	}
 	return 0;
@@ -769,7 +866,7 @@ static void pagezero_command_too_small(unsigned char *f) { put_u32(f + PAGEZERO_
 static void pagezero_command_too_large(unsigned char *f) { put_u32(f + PAGEZERO_OFF + 4, 0xffffffffU); }
 static void text_nsects_too_high(unsigned char *f) { put_u32(f + TEXT_OFF + 64, 2); }
 static void text_filesize_exceeds_vmsize(unsigned char *f) { put_u64(f + TEXT_OFF + 48, 0x3000); }
-static void text_file_range_outside_image(unsigned char *f) { put_u64(f + TEXT_OFF + 40, 0x1000); }
+static void text_file_range_outside_image(unsigned char *f) { put_u64(f + TEXT_OFF + 40, FILE_BYTES); }
 static void text_vm_range_overflows(unsigned char *f) { put_u64(f + TEXT_OFF + 24, 0xfffffffffffff000ULL); }
 static void invalid_protection(unsigned char *f) { put_u32(f + TEXT_OFF + 56, 1); }
 static void section_vm_range_outside_segment(unsigned char *f)
@@ -992,6 +1089,27 @@ int main(void)
 	failures += expect_rejected("nonzero omitted segment before LINKEDIT",
 				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
 				    FILE_BYTES, append_chained_fixups_ctf_nonzero);
+	failures += expect_rejected("file-only CTF requires SG_NORELOC",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_ctf_without_noreloc);
+	failures += expect_rejected("file-only CTF section name is fixed",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES,
+				    append_chained_fixups_ctf_wrong_section_name);
+	failures += expect_rejected("file-only CTF section begins at fileoff",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES,
+				    append_chained_fixups_ctf_wrong_section_offset);
+	failures += expect_rejected("file-only CTF is read-only",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_ctf_writable);
+	failures += expect_rejected("CTF section stays inside padded file bytes",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES,
+				    append_chained_fixups_ctf_section_exceeds_file_payload);
+	failures += expect_rejected("duplicate __TEXT with chained fixups",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_fixups_with_duplicate_text);
 	failures += expect_rejected("segment plan exceeds its bounded capacity",
 				    -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP,
 				    FILE_BYTES, too_many_segments);
@@ -1013,11 +1131,12 @@ int main(void)
 				    XNU_MACHO_X86_64_HAS_CHAINED_FIXUPS, 1, 0);
 	failures += expect_multi_chained_fixups_rejected();
 	failures += expect_page_prefix_fixups();
+	failures += expect_duplicate_text_without_fixups();
 	failures += expect_lower_segment_fixups();
 	failures += expect_ctf_omission("zero-sized CTF omission matches dyld",
-					append_chained_fixups_ctf_omission);
+					append_chained_fixups_ctf_omission, 0x1000);
 	failures += expect_ctf_omission("zero-sized omitted name is not constrained",
-					append_chained_fixups_zero_vm_other_name);
+					append_chained_fixups_zero_vm_other_name, 0);
 	failures += expect_segment_plan_capacity();
 	failures += expect_metadata("dyld-info extents are flagged",
 				    append_dyld_info_valid,

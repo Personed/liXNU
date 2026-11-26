@@ -57,6 +57,8 @@
 #define VM_PROT_READ 1U
 #define VM_PROT_WRITE 2U
 #define VM_PROT_EXECUTE 4U
+#define SG_NORELOC 0x4U
+#define S_REGULAR 0x0U
 #define SECTION_TYPE_MASK 0xffU
 #define S_ZEROFILL 0x1U
 #define S_GB_ZEROFILL 0xcU
@@ -133,6 +135,12 @@ static int is_zerofill(xnu_macho_u32 flags)
 
 	return type == S_ZEROFILL || type == S_GB_ZEROFILL ||
 	       type == S_THREAD_LOCAL_ZEROFILL;
+}
+
+static int is_file_only_ctf(const struct segment_info *segment)
+{
+	return fixed_name_is(segment->name, "__CTF", 5) && !segment->vmsize &&
+	       segment->filesize;
 }
 
 static int file_range_ok(unsigned long file_size, xnu_macho_u32 offset,
@@ -457,6 +465,7 @@ static int parse_segment(const unsigned char *file, unsigned long file_size,
 	xnu_macho_u32 maxprot;
 	xnu_macho_u32 i;
 	unsigned long sections_size;
+	int file_only_ctf;
 
 	if (command_size < SEGMENT_COMMAND_64_SIZE)
 		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
@@ -471,6 +480,7 @@ static int parse_segment(const unsigned char *file, unsigned long file_size,
 	segment->initprot = read_u32le(file + command_off + 60);
 	segment->nsects = read_u32le(file + command_off + 64);
 	segment->flags = read_u32le(file + command_off + 68);
+	file_only_ctf = is_file_only_ctf(segment);
 
 	if (segment->nsects >
 	    (command_size - SEGMENT_COMMAND_64_SIZE) / SECTION_64_SIZE)
@@ -478,9 +488,15 @@ static int parse_segment(const unsigned char *file, unsigned long file_size,
 	sections_size = (unsigned long)segment->nsects * SECTION_64_SIZE;
 	if (sections_size != command_size - SEGMENT_COMMAND_64_SIZE)
 		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
-	if (segment->filesize > segment->vmsize ||
+	if ((segment->filesize > segment->vmsize &&
+	     !(file_only_ctf && segment->flags == SG_NORELOC)) ||
 	    segment->fileoff > file_size ||
 	    segment->filesize > file_size - (unsigned long)segment->fileoff)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	if (file_only_ctf &&
+	    (segment->flags != SG_NORELOC || segment->nsects != 1 ||
+	     segment->maxprot != VM_PROT_READ ||
+	     segment->initprot != VM_PROT_READ))
 		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
 	if (segment->vmaddr > ~0ULL - segment->vmsize)
 		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
@@ -509,9 +525,18 @@ static int parse_segment(const unsigned char *file, unsigned long file_size,
 		if (addr < segment->vmaddr)
 			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
 		section_delta = addr - segment->vmaddr;
-		if (section_delta > segment->vmsize ||
-		    size > segment->vmsize - section_delta || addr > vm_end)
+		if (file_only_ctf) {
+			if (!fixed_name_is(section, "__ctf", 5) ||
+			    addr != segment->vmaddr ||
+			    size > ~0ULL - addr ||
+			    !size || size > segment->filesize ||
+			    offset != segment->fileoff || flags != S_REGULAR ||
+			    reloff || nreloc)
+				return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+		} else if (section_delta > segment->vmsize ||
+			   size > segment->vmsize - section_delta || addr > vm_end) {
 			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+		}
 		if (align >= 64)
 			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
 
@@ -628,9 +653,8 @@ int xnu_macho_x86_64_parse(const void *input, unsigned long file_size,
 			if (out->segment_count >= XNU_MACHO_X86_64_MAX_SEGMENTS)
 				return reject(out, -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP);
 			if (fixed_name_is(segment.name, "__TEXT", 6)) {
-				if (++text_segment_count != 1)
-					return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
-				preferred_load_address = segment.vmaddr;
+				if (++text_segment_count == 1)
+					preferred_load_address = segment.vmaddr;
 			}
 			plan_segment = &out->segments[out->segment_count];
 			export_segment_plan(plan_segment, &segment);

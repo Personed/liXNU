@@ -72,6 +72,17 @@ class QemuLauncherTest(unittest.TestCase):
             ):
                 qemu_vm.build_command(self.args)
 
+    def test_explicit_display_backend_without_any_graphics_backend_is_actionable(self):
+        self.args.display_backend = "sdl"
+        with mock.patch.object(qemu_vm.platform, "system", return_value="Linux"), \
+             mock.patch.object(qemu_vm.subprocess, "run", return_value=mock.Mock(stdout="vnc\n")):
+            with self.assertRaisesRegex(
+                ValueError,
+                "install a QEMU build with GTK, SDL, or Cocoa support, or omit --graphical",
+            ) as result:
+                qemu_vm.build_command(self.args)
+        self.assertNotIn("select an available backend", str(result.exception))
+
     def test_windows_without_sdl_gets_actionable_graphics_error(self):
         self.args.display_backend = "sdl"
         with mock.patch.object(qemu_vm.platform, "system", return_value="Windows"), \

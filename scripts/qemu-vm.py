@@ -57,7 +57,12 @@ def choose_display_backend(qemu, host, requested=None):
     }
     if requested is not None and requested not in available:
         choices = ", ".join(sorted(available)) or "none detected"
-        if host == "Windows" and "sdl" not in available:
+        if not available and host != "Windows":
+            recovery = (
+                "install a QEMU build with GTK, SDL, or Cocoa support, "
+                "or omit --graphical"
+            )
+        elif host == "Windows" and requested == "sdl" and "sdl" not in available:
             alternative = (
                 f"; try an available backend with --display-backend ({choices}) "
                 "if it is supported by this QEMU build"

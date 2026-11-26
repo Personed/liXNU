@@ -207,6 +207,7 @@ def main() -> int:
         return 1
 
     print(f"QEMU peak RSS: {peak_rss_kib} KiB ({peak_rss_kib / 1048576:.2f} GiB)", flush=True)
+    print(f"QEMU exit status: {returncode}", flush=True)
     if timed_out:
         print(f"TCG boot timed out after {args.timeout_seconds} seconds", file=sys.stderr)
         return 1

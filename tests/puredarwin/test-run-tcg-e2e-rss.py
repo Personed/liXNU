@@ -3,11 +3,15 @@
 """Regression tests for exact child RSS measurement in run-tcg-e2e.py."""
 
 import importlib.util
+import contextlib
+import io
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
+from unittest import mock
 
 
 MODULE_PATH = Path(__file__).with_name("run-tcg-e2e.py")
@@ -56,6 +60,38 @@ class RssMeasurementTest(unittest.TestCase):
         self.assertLess(elapsed, 10)
         self.assertNotEqual(returncode, 0)
         self.assertGreater(peak_rss_kib, 0)
+
+    def test_timeout_output_reports_qemu_exit_status(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            kernel = root / "Image"
+            initramfs = root / "initramfs.cpio.gz"
+            disk = root / "pd.img"
+            serial_log = root / "serial.log"
+            for path in (kernel, initramfs, disk):
+                path.write_bytes(b"test")
+
+            def fake_run(command, **_kwargs):
+                if command == ["lscpu"]:
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                return subprocess.CompletedProcess(command, 0, "QEMU emulator version 8.2.2", "")
+
+            output = io.StringIO()
+            arguments = [
+                "run-tcg-e2e.py", str(kernel), str(initramfs), str(disk), str(serial_log),
+                "--timeout-seconds", "1",
+            ]
+            with (
+                mock.patch.object(run_tcg_e2e.shutil, "which", return_value="/fake/qemu"),
+                mock.patch.object(run_tcg_e2e.subprocess, "run", side_effect=fake_run),
+                mock.patch.object(run_tcg_e2e, "run_with_timeout", return_value=(-15, 1024, True)),
+                mock.patch.object(sys, "argv", arguments),
+                contextlib.redirect_stdout(output),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                self.assertEqual(run_tcg_e2e.main(), 1)
+
+            self.assertIn("QEMU exit status: -15", output.getvalue())
 
 
 if __name__ == "__main__":

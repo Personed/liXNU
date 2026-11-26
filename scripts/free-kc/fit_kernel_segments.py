@@ -24,9 +24,9 @@ def fit_offsets(segments, kernel_header, offsets):
         if segment.name in by_name:
             raise ValueError(f'kernel has duplicate {segment.name} segments')
         by_name[segment.name] = segment
-    # __LAST can be a zero-sized linker marker and may not be emitted as a
-    # Mach-O segment at all. Its address still lives in segaddrs.sh.
-    missing = [name for name in ('__TEXT', '__TEXT_EXEC', '__KLD', '__KLDDATA') if name not in by_name]
+    # __LAST may be zero-sized, but XNU still needs its address in the linked
+    # Mach-O, so the linker marker must be present even when it carries no bytes.
+    missing = [name for name in ('__TEXT', '__TEXT_EXEC', '__KLD', '__LAST', '__KLDDATA') if name not in by_name]
     if missing:
         raise ValueError(f'kernel is missing required segments: {", ".join(missing)}')
 
@@ -60,8 +60,8 @@ def fit_offsets(segments, kernel_header, offsets):
             raise ValueError(f'kernel segments {name} ({start:#x}-{end:#x}) and '
                              f'{next_name} ({next_start:#x}-{next_end:#x}) overlap after relink placement')
 
-    last = by_name.get('__LAST')
-    last_end = result['__LAST'] + (last.vmsize if last else 0)
+    last = by_name['__LAST']
+    last_end = result['__LAST'] + last.vmsize
     klddata_start = by_name['__KLDDATA'].vmaddr - kernel_header
     if last_end > klddata_start:
         raise ValueError(f'kernel __LAST ends at {last_end:#x}, beyond __KLDDATA at {klddata_start:#x}')
@@ -73,10 +73,6 @@ def relink_needed(segments, kernel_header, fitted):
     by_name = {segment.name: segment for segment in segments}
     for name in MARKERS:
         segment = by_name.get(name)
-        # An absent __LAST is a valid representation of its marker, but an
-        # emitted zero-sized segment still carries the address XNU consumes.
-        if name == '__LAST' and segment is None:
-            continue
         if segment is None or segment.vmaddr - kernel_header != fitted[name]:
             return True
     return False

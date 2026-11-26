@@ -56,10 +56,10 @@ class KernelSegmentTests(unittest.TestCase):
         fitted = fit_offsets(segments, header, {'__KLD': 0x3854000, '__LAST': 0x3860000})
         self.assertEqual(fitted, {'__KLD': 0x38d4000, '__LAST': 0x38d8000})
 
-    def test_missing_last_segment_can_be_fitted(self):
+    def test_missing_last_segment_is_rejected(self):
         header, segments = self.kernel_segments(kld_size=0x4000, include_last=False)
-        fitted = fit_offsets(segments, header, {'__KLD': 0x3854000, '__LAST': 0x3860000})
-        self.assertEqual(fitted, {'__KLD': 0x38d4000, '__LAST': 0x38d8000})
+        with self.assertRaisesRegex(ValueError, r'kernel is missing required segments: .*__LAST'):
+            fit_offsets(segments, header, {'__KLD': 0x3854000, '__LAST': 0x3860000})
 
     def test_updated_linker_script_with_stale_kernel_requests_relink(self):
         header, segments = self.kernel_segments(kld_size=0x4000, last_size=0)
@@ -80,11 +80,19 @@ class KernelSegmentTests(unittest.TestCase):
         segments[-1].vmaddr = header + fitted['__LAST']
         self.assertFalse(relink_needed(segments, header, fitted))
 
-    def test_missing_last_does_not_make_already_relinked_kernel_stale(self):
+    def test_missing_last_marker_requests_relink(self):
         header, segments = self.kernel_segments(kld_size=0x4000, include_last=False)
         fitted = {'__KLD': 0x38d4000, '__LAST': 0x38d8000}
         segments[2].vmaddr = header + fitted['__KLD']
-        self.assertFalse(relink_needed(segments, header, fitted))
+        self.assertTrue(relink_needed(segments, header, fitted))
+
+    def test_final_kernel_slot_check_output_is_appended_to_fit_log(self):
+        rebuild = (ROOT / 'scripts' / 'vm-xnu-rebuild.sh').read_text(encoding='utf-8')
+        self.assertIn(
+            'fit_kernel_segments.py" --check out/k27/kernel-k27.macho k27/segaddrs.sh '
+            '2>&1 | tee -a "$fit_log"',
+            rebuild,
+        )
 
     def test_rewrites_only_marker_addresses_in_linker_script(self):
         source = 'a __TEXT_EXEC 0x2df0000; a __KLD 0x3854000; a __LAST 0x3860000; o=0x3cc4000;\n'

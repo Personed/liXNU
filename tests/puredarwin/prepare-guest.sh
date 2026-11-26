@@ -14,6 +14,7 @@ for input in "$1" "$2" "$3" "$4" "$5" "$6"; do
 done
 
 kernel=$1 busybox=$2 fki=$3 xnu=$4 kc=$5 conf=$6 modules=$7 out=$8
+source "$(dirname -- "$0")/virtio-modules.sh"
 if [ ! -d "$modules" ]; then
   printf 'Cannot read kernel modules directory: %s\n' "$modules" >&2
   exit 2
@@ -46,7 +47,8 @@ PYTHON
 
 root=$work/root
 mkdir -p "$root/bin" "$root/lib/modules" "$root/lib/firmware/xnu"
-if ! "$busybox" --list | grep -qx modprobe; then
+busybox_applets=$("$busybox" --list)
+if ! grep -qx modprobe <<<"$busybox_applets"; then
   echo 'Static BusyBox must include the modprobe applet for virtio disk modules.' >&2
   exit 1
 fi
@@ -55,14 +57,23 @@ cp -- "$fki" "$root/fki.ko"
 cp -- "$xnu" "$root/xnu.ko"
 cp -- "$kc" "$root/lib/firmware/xnu/kc-free.bin"
 cp -- "$conf" "$root/pd.conf"
-cp -a -- "$modules" "$root/lib/modules/"
+copy_modules=false
+for driver in virtio_mmio virtio_blk; do
+  if [ -n "$(virtio_module_path "$modules" "$driver")" ]; then
+    copy_modules=true
+    break
+  fi
+done
 cp -- "$(dirname -- "$0")/init" "$root/init"
 chmod 0755 "$root/bin/busybox" "$root/init"
-find "$root/lib/modules" -type f -name '*.ko.zst' -print0 |
-  while IFS= read -r -d '' module; do zstd --decompress --rm "$module"; done
-find "$root/lib/modules" -type f -name '*.ko.xz' -print0 |
-  while IFS= read -r -d '' module; do xz --decompress -- "$module"; done
-depmod -b "$root" "$(basename -- "$modules")"
+if [ "$copy_modules" = true ]; then
+  cp -a -- "$modules" "$root/lib/modules/"
+  find "$root/lib/modules" -type f -name '*.ko.zst' -print0 |
+    while IFS= read -r -d '' module; do zstd --decompress --rm "$module"; done
+  find "$root/lib/modules" -type f -name '*.ko.xz' -print0 |
+    while IFS= read -r -d '' module; do xz --decompress -- "$module"; done
+  depmod -b "$root" "$(basename -- "$modules")"
+fi
 
 (cd "$root" && find . -print0 | cpio --quiet --null -o -H newc --owner=0:0) |
   gzip -1 > "$out/initramfs.cpio.gz"

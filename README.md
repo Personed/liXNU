@@ -93,7 +93,7 @@ Working on two arm64 Linux setups:
 | Linux host | Guest/system | Status |
 |---|---|---|
 | ARM64 with PAC and 4 KiB pages | macOS 27 ARM64 | Existing supported path; tested on Apple Silicon Linux VMs and NVIDIA DGX Spark as described above. |
-| Intel/AMD x86-64 with QEMU TCG and 16 GiB guest RAM plus host RAM | ARM64 Linux, then PureDarwin ARM64 console | Experimental; full console boot and guest-requested halt are awaiting the current CI run. No macOS desktop or performance claim. |
+| Intel/AMD x86-64 with QEMU TCG and the reduced 6 GiB CI profile | ARM64 Linux, then PureDarwin ARM64 console | Experimental; #69 run #115 completed the console boot and guest-requested halt on this profile, while the current #52 head still needs its own run. The 16 GiB full profile is not a repeatable standard-runner target: one older-head run succeeded, but later hosted-runner attempts failed before guest boot while allocating RAM. Treat 16 GiB as a candidate for later testing on a sufficiently provisioned host. No physical-PC memory minimum, macOS desktop, or performance claim. |
 | Intel x86_64 with VT-x/KVM and required CPU features | macOS Tahoe 26 x86_64 | Experimental QEMU/KVM launcher; physical Intel desktop boot and host-integrity acceptance remain. |
 | AMD x86_64 with AMD-V/KVM and required CPU features | macOS Tahoe 26 x86_64 | Experimental QEMU/KVM launcher; requires AMD OpenCore kernel patches and physical AMD acceptance. |
 
@@ -129,7 +129,9 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
   does not need VT-x or AMD-V. QEMU 10 or newer is used by the documented launcher profile.
 - For the full PureDarwin console profile, allocate 16 GiB to the guest and keep additional physical RAM available for
   the host. The guest Linux kernel must use 4 KiB pages, expose ARM pointer authentication, and run at EL1. The profile
-  reserves 8,156 MiB for FKI and 7,900 MiB for XNU.
+  reserves 8,156 MiB for FKI and 7,900 MiB for XNU. Required hosted CI uses a separate reduced smoke profile: 6 GiB
+  QEMU RAM, Linux `mem=2G`, a 3,072 MiB FKI carve-out, and 2,816 MiB of XNU RAM. The full 16 GiB profile is not a
+  standard hosted-runner acceptance target and should be tested later on a host with sufficient memory.
 - The end-to-end Actions profile currently runs on Ubuntu 24.04 x86-64. Windows and macOS hosts have UEFI launcher
   coverage; the complete PureDarwin boot on those host operating systems is not yet validated. TCG may be too slow for
   practical desktop use, and this profile does not establish graphics, networking, or macOS support.
@@ -213,6 +215,8 @@ result. For AMD, OpenCore must already contain AMD kernel patches. The current x
 GitHub Actions uses QEMU's software emulation (TCG) on x86-64 Linux, x86-64 Windows, and ARM64 macOS
 to boot ARM64 Ubuntu with pointer authentication, load `fki.ko`, reserve memory outside Linux's RAM map,
 allocate and free the same 16 MiB carve-out twice, and verify that `xnu.ko` reaches its firmware loader.
+The pinned ARM64 kernel is 7.0.0; device-PFN translation returns `-EOPNOTSUPP` on Linux 6.10 and 6.11, which are
+outside the current acceptance profile and do not have a GPU-bridge fallback in this path.
 On Linux, build the probe against the supplied ARM64 kernel headers and run the check with QEMU, GNU cpio,
 Python 3 and zstd:
 

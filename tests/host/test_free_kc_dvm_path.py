@@ -33,9 +33,11 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             poc_target = root / "repo with spaces"
             poc_link = root / "poc with spaces"
             work = launch / "relative work"
+            poc_checkout = launch / "poc"
             launch.mkdir()
             (cdpath / "vm with spaces").mkdir(parents=True)
             (cdpath / "relative work").mkdir(parents=True)
+            (cdpath / "poc").mkdir(parents=True)
             fake_bin.mkdir()
             for relative in (
                 "build/netinc",
@@ -61,6 +63,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             ):
                 (poc_target / relative).touch()
             poc_link.symlink_to(poc_target, target_is_directory=True)
+            poc_checkout.symlink_to(poc_link, target_is_directory=True)
             kernel_framework = (
                 vm
                 / "out/x12377/build/xnu/k27h-dst/System/Library/Frameworks/Kernel.framework/Versions/A"
@@ -141,7 +144,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                     "FAKE_MBEDTLS_REV": mbedtls_revision,
                     "FREE_KC_WORK": "relative work",
                     "OUT": str(output),
-                    "POC": "../poc with spaces",
+                    "POC": "poc",
                     "PATH": str(fake_bin) + os.pathsep + env["PATH"],
                 }
             )
@@ -164,10 +167,10 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             self.assertGreater(len(kcc_calls), 1)
 
             corecrypto = kcc_calls[0]
-            self.assertEqual(corecrypto[0], str(poc_link.absolute() / "scripts/free-kc/kcc.py"))
+            self.assertEqual(corecrypto[0], str(poc_checkout / "scripts/free-kc/kcc.py"))
             self.assertNotIn("--macos", corecrypto)
             self.assertEqual(corecrypto[1], str(work.resolve() / "obj/corecrypto"))
-            self.assertEqual(corecrypto[2:4], ["-I", str(poc_link.absolute() / "kexts/free/corecrypto")])
+            self.assertEqual(corecrypto[2:4], ["-I", str(poc_checkout / "kexts/free/corecrypto")])
             self.assertEqual(corecrypto[4:6], ["-I", str(work.resolve() / "src/mbedtls/include")])
             source_list = re.search(
                 r"^MBEDTLS_SOURCES=(.+)$",
@@ -187,7 +190,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             self.assertEqual(kclink[1], str(work.resolve() / "kc-template.bin"))
             self.assertEqual(kclink[3], str(work.resolve() / "kc-free.bin"))
             self.assertEqual(kclink[4], "--native")
-            self.assertIn(str(poc_link.absolute() / "kexts/XnuCPU/XnuCPU.json"), kclink)
+            self.assertIn(str(poc_checkout / "kexts/XnuCPU/XnuCPU.json"), kclink)
             self.assertEqual(output.read_text(encoding="utf-8"), "fake kernel collection\n")
 
     def test_default_poc_ignores_competing_cdpath_checkout(self):

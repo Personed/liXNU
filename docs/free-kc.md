@@ -53,8 +53,8 @@ kernel has; and a kext's load tag.
    The [ARM64 image workflow](../.github/workflows/puredarwin-arm64-image.yml) builds this pinned AFK revision
    on an x86-64 runner, verifies the release SHA-256 and retains the compressed image artifact for three days. This
    records a pinned build input and checks artifact integrity; it does not establish byte-for-byte reproducibility
-   between independent builds because image UUID/GUID values can vary. It also does not pair the image with `kc-free.bin`
-   or validate an xnulinux boot.
+   between independent builds because image UUID/GUID values can vary. The full-run job below pairs it with the source-
+   built collection and records the boot result.
 2. Run the following on Linux or macOS to make the HFS+ disk and save its UUIDs after a successful build.
 
    ```sh
@@ -91,10 +91,18 @@ kernel has; and a kext's load tag.
    `fsck.hfsplus` on the first partition exposed by `losetup --partscan`, not on `pd.img`. If the check fails, repair the
    volume before booting it again.
 3. In the VM, after `scripts/vm-xnu-rebuild.sh`: `scripts/free-kc/build.sh`, which writes `/lib/firmware/xnu/kc-free.bin`.
+   `scripts/vm-xnu-build.sh` checks out DroidVM at pinned revision
+   `524d27bf57ae92375aa39e3a81e11727c08973ff`; set `DVM_REV` explicitly only when intentionally building against a
+   different DroidVM commit, and record that commit with the output.
 4. Boot it: `MAC_CONF=pd.conf DISK=pd.img IMAGE=xnu/kc-free.bin TRUSTCACHE= GPU=off scripts/xnulinux-boot.sh`. The console
    (`CONSOLE_IN`) is PureDarwin's zsh. Its `halt` and `reboot` end the run. For a service-managed boot, use
    `sudo systemctl start xnulinux.service` instead of the manual command, after configuring the service for this disk;
    this restores its supervision and automatic restart after a disk check.
+
+The [PureDarwin ARM64 image workflow](../.github/workflows/puredarwin-arm64-image.yml) also builds the HFS+ disk on Linux,
+builds XNU and `kc-free.bin`, then boots the real PureDarwin console in an ARM64 Linux guest under x86-64 QEMU TCG. The
+CI summary records the exact guest profile and artifact digests; the serial log is retained for 30 days. This check
+covers the console and a guest-requested clean halt, not a desktop, graphics, networking, or performance claim.
 
 ## Apple's kexts, linked on the user's machine
 

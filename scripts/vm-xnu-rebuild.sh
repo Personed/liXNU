@@ -5,7 +5,8 @@
 # (k27/segaddrs.sh) follow the kernel's size: when kc27-layout.py moves them, the kernel is linked again.
 set -e -o pipefail	# a failed kernel build stops here: never repackage the previous kernel
 POC=${POC:-$(cd "$(dirname "$0")/.." && pwd)}	# this repository: its patches, kexts and linker
-cd ~/w/dvm
+DVM=${DVM:-$HOME/w/dvm}
+cd "$DVM"
 export PATH=$PATH:/usr/lib/llvm-21/bin
 T=out/k27/xnu
 # back to the tree's own sources: every file the patches touched last time (.linux64-patched) or touch now, then the
@@ -34,13 +35,13 @@ mirror() {	# mirror SRC DST: DST holds exactly SRC's files
 rm -rf $T/osfmk/corecrypto $T/osfmk/arm64/corecrypto
 mirror "$P"/corecrypto/include/corecrypto $T/EXTERNAL_HEADERS/corecrypto
 mirror "$P"/corecrypto/kernel $T/osfmk/xnulinux_crypto
-t=$SECONDS; JOBS=12 bash k27/build-kernel27.sh 2>&1 | tail -15; echo "kernel: $((SECONDS - t)) s"
+t=$SECONDS; JOBS="${JOBS:-12}" bash k27/build-kernel27.sh 2>&1 | tail -15; echo "kernel: $((SECONDS - t)) s"
 if [ -e out/kc/kc27.bin ]; then
   cp k27/segaddrs.sh /tmp/segaddrs.before
   python3 k27/kc27-layout.py out/kc/kc27.bin out/k27/kernel-k27.macho --write k27/segaddrs.sh | tail -2
   if ! cmp -s /tmp/segaddrs.before k27/segaddrs.sh; then
     echo "kernel slots moved: linking the kernel again"
-    JOBS=12 bash k27/build-kernel27.sh 2>&1 | tail -3
+    JOBS="${JOBS:-12}" bash k27/build-kernel27.sh 2>&1 | tail -3
   fi
   # xnulinux's own kexts (kexts/*/NAME.json + NAME.cpp), built against the k27 kernel's objects and linked into the collection
   NATIVE=()

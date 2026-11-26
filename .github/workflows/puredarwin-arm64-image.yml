@@ -5,8 +5,14 @@ on:
     paths:
       - '.github/workflows/puredarwin-arm64-image.yml'
       - 'docs/free-kc.md'
+      - 'docs/qemu.md'
+      - 'docs/portability-validation.md'
+      - 'scripts/free-kc/**'
+      - 'scripts/vm-xnu-build.sh'
+      - 'scripts/vm-xnu-rebuild.sh'
       - 'scripts/puredarwin-root.sh'
       - 'scripts/mk-puredarwin-disk.sh'
+      - 'tests/puredarwin/**'
   workflow_dispatch:
 permissions:
   contents: read
@@ -60,3 +66,206 @@ jobs:
             ${{ runner.temp }}/puredarwin-*.img.zst.sha256
           if-no-files-found: error
           retention-days: 3
+
+  puredarwin-build:
+    name: Build the real PureDarwin disk and collection
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the pinned PureDarwin image
+        uses: actions/download-artifact@v4
+        with:
+          name: puredarwin-arm64-virt
+          path: ${{ runner.temp }}/puredarwin-image
+      - name: Install Linux disk tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq e2fsprogs fdisk hfsprogs util-linux zstd
+          sudo modprobe hfsplus 2>/dev/null || true
+          grep -qw hfsplus /proc/filesystems
+      - name: Export the real userland and build its HFS+ disk
+        run: |
+          set -euo pipefail
+          image=$(find "$RUNNER_TEMP/puredarwin-image" -maxdepth 1 -type f -name '*.img.zst' -print -quit)
+          test -n "$image"
+          (
+            cd "$(dirname "$image")"
+            sha256sum --check "$(basename "$image").sha256"
+          )
+          mkdir -p "$RUNNER_TEMP/puredarwin-e2e-inputs"
+          zstd --decompress --stdout "$image" > "$RUNNER_TEMP/puredarwin-e2e-inputs/puredarwin.img"
+          bash scripts/puredarwin-root.sh \
+            "$RUNNER_TEMP/puredarwin-e2e-inputs/puredarwin.img" \
+            "$RUNNER_TEMP/puredarwin-e2e-inputs/root.tar.gz"
+          bash scripts/mk-puredarwin-disk.sh \
+            "$RUNNER_TEMP/puredarwin-e2e-inputs/root.tar.gz" \
+            "$RUNNER_TEMP/puredarwin-e2e-inputs/pd.img" \
+            > "$RUNNER_TEMP/puredarwin-e2e-inputs/pd.conf"
+          chmod 0644 "$RUNNER_TEMP/puredarwin-e2e-inputs/pd.img" \
+            "$RUNNER_TEMP/puredarwin-e2e-inputs/pd.conf"
+          cat "$RUNNER_TEMP/puredarwin-e2e-inputs/pd.conf"
+          rm -f "$RUNNER_TEMP/puredarwin-e2e-inputs/puredarwin.img" \
+            "$RUNNER_TEMP/puredarwin-e2e-inputs/root.tar.gz"
+      - name: Build the source XNU kernel and free collection
+        env:
+          JOBS: "2"
+          DVM_REV: 524d27bf57ae92375aa39e3a81e11727c08973ff
+          OUT: ${{ runner.temp }}/puredarwin-e2e-inputs/kc-free.bin
+        run: |
+          bash scripts/vm-xnu-build.sh
+          bash scripts/free-kc/build.sh
+          cp "$HOME/w/dvm/out/k27/kernel-k27.macho" "$RUNNER_TEMP/puredarwin-e2e-inputs/kernel.macho"
+          repo_sha=$(git rev-parse HEAD)
+          image_sha=$(find "$RUNNER_TEMP/puredarwin-image" -maxdepth 1 -type f -name '*.img.zst' -exec sha256sum {} \; | awk '{print $1}')
+          disk_sha=$(sha256sum "$RUNNER_TEMP/puredarwin-e2e-inputs/pd.img" | awk '{print $1}')
+          kc_sha=$(sha256sum "$RUNNER_TEMP/puredarwin-e2e-inputs/kc-free.bin" | awk '{print $1}')
+          kernel_sha=$(sha256sum "$RUNNER_TEMP/puredarwin-e2e-inputs/kernel.macho" | awk '{print $1}')
+          {
+            echo "xnulinux_repo_commit=$repo_sha"
+            echo "droidvm_source_revision=$DVM_REV"
+            echo 'puredarwin_source_revision=b3b4b2812fdd1c5c251dc3089b5a1a9e00d29970'
+            echo "puredarwin_compressed_image_sha256=$image_sha"
+            echo "puredarwin_disk_sha256=$disk_sha"
+            echo "free_collection_sha256=$kc_sha"
+            echo "xnu_kernel_sha256=$kernel_sha"
+          } > "$RUNNER_TEMP/puredarwin-e2e-inputs/manifest.txt"
+          cat "$RUNNER_TEMP/puredarwin-e2e-inputs/manifest.txt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain the guest disk inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: puredarwin-e2e-disk
+          path: |
+            ${{ runner.temp }}/puredarwin-e2e-inputs/pd.img
+            ${{ runner.temp }}/puredarwin-e2e-inputs/pd.conf
+          if-no-files-found: error
+          retention-days: 3
+      - name: Retain the source-built kernel collection
+        uses: actions/upload-artifact@v4
+        with:
+          name: puredarwin-e2e-kernel
+          path: |
+            ${{ runner.temp }}/puredarwin-e2e-inputs/kc-free.bin
+            ${{ runner.temp }}/puredarwin-e2e-inputs/kernel.macho
+            ${{ runner.temp }}/puredarwin-e2e-inputs/pd.conf
+            ${{ runner.temp }}/puredarwin-e2e-inputs/manifest.txt
+          if-no-files-found: error
+          retention-days: 3
+
+  arm64-guest:
+    name: Prepare an ARM64 Linux guest with FKI and XNU
+    needs: puredarwin-build
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the source-built PureDarwin collection
+        uses: actions/download-artifact@v4
+        with:
+          name: puredarwin-e2e-kernel
+          path: ${{ runner.temp }}/puredarwin-e2e-inputs
+      - name: Install matching ARM64 kernel headers and image tools
+        run: |
+          sudo apt-get update -qq
+          pkg=$(apt-cache search --names-only '^linux-headers-[0-9.]+-[0-9]+-generic$' | awk '{print $1}' | sort -V | tail -1)
+          test -n "$pkg" || { echo 'No Ubuntu generic ARM64 headers found' >&2; exit 1; }
+          sudo apt-get install -y -qq "$pkg" busybox-static cpio kmod xz-utils zstd
+          echo "KERNEL_RELEASE=${pkg#linux-headers-}" >> "$GITHUB_ENV"
+          echo "KDIR=/usr/src/$pkg" >> "$GITHUB_ENV"
+          echo "Selected kernel headers: $pkg"
+      - name: Build FKI and XNU against the guest kernel
+        run: |
+          make -s -C "$KDIR" M="$GITHUB_WORKSPACE/fki-ko" modules
+          make -s -C "$KDIR" M="$GITHUB_WORKSPACE/xnu-ko" \
+            KBUILD_EXTRA_SYMBOLS="$GITHUB_WORKSPACE/fki-ko/Module.symvers" modules
+      - name: Prepare the direct-boot guest initramfs
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/puredarwin-e2e-guest" "$RUNNER_TEMP/linux-packages"
+          cd "$RUNNER_TEMP/linux-packages"
+          apt-get download "linux-image-unsigned-$KERNEL_RELEASE" "linux-modules-$KERNEL_RELEASE"
+          mkdir kernel
+          for package in ./*.deb; do dpkg-deb -x "$package" kernel; done
+          modules="kernel/lib/modules/$KERNEL_RELEASE"
+          test -d "$modules"
+          kernel_config="kernel/boot/config-$KERNEL_RELEASE"
+          grep -q '^CONFIG_ARM64_4K_PAGES=y' "$kernel_config"
+          "$GITHUB_WORKSPACE/tests/puredarwin/prepare-guest.sh" \
+            "kernel/boot/vmlinuz-$KERNEL_RELEASE" \
+            "$(command -v busybox)" \
+            "$GITHUB_WORKSPACE/fki-ko/fki.ko" \
+            "$GITHUB_WORKSPACE/xnu-ko/xnu.ko" \
+            "$RUNNER_TEMP/puredarwin-e2e-inputs/kc-free.bin" \
+            "$RUNNER_TEMP/puredarwin-e2e-inputs/pd.conf" \
+            "$modules" \
+            "$RUNNER_TEMP/puredarwin-e2e-guest"
+          cp "$RUNNER_TEMP/puredarwin-e2e-inputs/manifest.txt" \
+            "$RUNNER_TEMP/puredarwin-e2e-guest/build-manifest.txt"
+          config_sha=$(sha256sum "$kernel_config" | awk '{print $1}')
+          {
+            echo "arm64_guest_kernel_release=$KERNEL_RELEASE"
+            echo 'arm64_guest_page_size=4096 (CONFIG_ARM64_4K_PAGES=y)'
+            echo 'arm64_guest_pac=runtime checked through /proc/cpuinfo paca and FKI_CAP_PAC'
+            echo 'arm64_guest_exception_level=EL1 (QEMU virt,virtualization=off)'
+            echo "arm64_guest_kernel_config_sha256=$config_sha"
+          } > "$RUNNER_TEMP/puredarwin-e2e-guest/guest-manifest.txt"
+      - name: Retain the ARM64 Linux guest inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: puredarwin-e2e-guest
+          path: ${{ runner.temp }}/puredarwin-e2e-guest/
+          if-no-files-found: error
+          retention-days: 3
+
+  puredarwin-tcg-boot:
+    name: Boot PureDarwin under x86-64 QEMU TCG
+    needs: [puredarwin-build, arm64-guest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the ARM64 Linux guest inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: puredarwin-e2e-guest
+          path: ${{ runner.temp }}/puredarwin-e2e-guest
+      - name: Download the PureDarwin system disk
+        uses: actions/download-artifact@v4
+        with:
+          name: puredarwin-e2e-disk
+          path: ${{ runner.temp }}/puredarwin-e2e-disk
+      - name: Install QEMU ARM system emulation
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-arm
+      - name: Boot PureDarwin and require guest userspace plus clean halt
+        run: |
+          python3 tests/puredarwin/run-tcg-e2e.py \
+            "$RUNNER_TEMP/puredarwin-e2e-guest/Image" \
+            "$RUNNER_TEMP/puredarwin-e2e-guest/initramfs.cpio.gz" \
+            "$RUNNER_TEMP/puredarwin-e2e-disk/pd.img" \
+            "$RUNNER_TEMP/puredarwin-tcg-serial.log"
+          {
+            echo '## x86-64 host to PureDarwin ARM64 console boot'
+            echo
+            echo "- Host: $(uname -a)"
+            echo "- Host OS: $(. /etc/os-release && echo "$PRETTY_NAME")"
+            echo "- Host CPU: $(lscpu | awk -F: '/Model name/ {gsub(/^[[:space:]]+/, "", $2); print $2; exit}')"
+            echo "- Host CPUs / RAM: $(getconf _NPROCESSORS_ONLN) CPUs / $(awk '/^MemTotal:/ {print $2 " " $3}' /proc/meminfo)"
+            echo "- QEMU: $(qemu-system-aarch64 --version | head -1)"
+            cat "$RUNNER_TEMP/puredarwin-e2e-guest/guest-manifest.txt"
+            cat "$RUNNER_TEMP/puredarwin-e2e-guest/build-manifest.txt"
+            echo '- Accelerator: QEMU TCG; hardware virtualization is not required.'
+            echo '- Guest profile: ARM64 Linux, 4 KiB pages, PAC, EL1, 16 GiB RAM; `mem=7G`; FKI carve-out at `0x200000000` (8156 MiB); XNU RAM 7900 MiB.'
+            echo '- Required evidence: real PureDarwin console command output, guest-requested `halt`, XNU module unload, and Linux guest power-off.'
+            echo '- This does not validate macOS, graphics, networking, performance, or PCs without enough memory for this profile.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain the serial boot log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puredarwin-tcg-boot-log
+          path: ${{ runner.temp }}/puredarwin-tcg-serial.log
+          if-no-files-found: ignore
+          retention-days: 30

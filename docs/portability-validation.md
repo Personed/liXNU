@@ -21,10 +21,33 @@ Report the profile alongside the stage:
   from the Linux guest. The ARM64 QEMU path in [#3] uses TCG, including on Intel/AMD hosts;
   distinguish it from the Apple Silicon krunkit path. The module smoke test in [#1]
   is a separate check. Neither substitutes for the PureDarwin test below.
+- **Intel/AMD x86-64 PC through QEMU TCG:** QEMU emulates an ARM64 Linux host. The acceptance
+  profile uses `qemu-system-aarch64`, `-machine virt,virtualization=off`, `-accel tcg`,
+  `-cpu max`, 16 GiB guest RAM, and 2 guest CPUs. It gives Linux `mem=7G` and maps an
+  8,156 MiB FKI carve-out at physical address `0x200000000`, with 7,900 MiB for XNU.
+  The guest kernel must use 4 KiB pages, expose pointer authentication (`paca`), and run
+  at EL1. TCG does not require Intel VT-x or AMD-V. Keep extra physical RAM available
+  for the host alongside the 16 GiB guest allocation. PCs without sufficient memory,
+  QEMU's ARM system emulator, or time for software emulation may not be practical for
+  this profile.
 - **x86-64 guest on Intel/AMD Linux:** [#16] describes a distinct experimental QEMU/KVM
   path, not a port of the ARM64 XNU/FKI modules. Report KVM and TCG separately; a Linux
   test guest is not evidence of an x86-64 Darwin or macOS boot. The PureDarwin run below
   applies only to the ARM64 FKI path.
+
+## x86-64 QEMU TCG acceptance profile
+
+The full-run job in the [PureDarwin ARM64 image workflow](../.github/workflows/puredarwin-arm64-image.yml) builds the
+pinned image and kernel collection, creates the HFS+ disk on Linux, and boots an ARM64 Linux guest with QEMU TCG on an
+x86-64 runner. It requires the real PureDarwin console to run `uname -s` and print `XNULINUX_USERLAND_OK`, then requires
+the guest's own `halt`, XNU module unload, and Linux power-off. The Actions summary records the runner and QEMU versions
+plus the PureDarwin image, disk, collection and XNU digests; the serial log artifact is kept for 30 days.
+
+This CI profile directly boots Linux with an initramfs. The separate [QEMU UEFI launcher in #3] validates the persistent
+VM launch path. Neither check establishes a graphical PureDarwin or macOS desktop, GPU acceleration, networking, KVM
+acceleration, or acceptable performance on every PC. FKI requires PAC, 4 KiB pages and EL1; it refuses unsupported
+profiles such as a Linux kernel running at EL2/VHE or a CPU without pointer authentication. An x86 host must use TCG
+because Intel/AMD KVM cannot virtualize the ARM64 guest CPU.
 
 ## First end-to-end check for a new FKI host profile
 

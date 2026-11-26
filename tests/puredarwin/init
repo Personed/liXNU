@@ -1,0 +1,98 @@
+#!/bin/busybox sh
+# SPDX-License-Identifier: GPL-2.0-only
+set -eu
+
+export PATH=/bin:/sbin
+/bin/busybox --install -s /bin
+mkdir -p /dev /proc /sys /tmp
+mount -t devtmpfs devtmpfs /dev
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+
+fail() {
+  echo "XNULINUX_E2E_FAIL: $*" >/dev/console
+  [ ! -f /tmp/kernel.log ] || cat /tmp/kernel.log >/dev/console
+  poweroff -f
+  sleep 1
+  exit 1
+}
+
+echo 'XNULINUX_E2E: ARM64 Linux initramfs ready' >/dev/console
+echo "XNULINUX_E2E_GUEST: $(uname -a)" >/dev/console
+test "$(uname -m)" = aarch64 || fail 'guest architecture is not aarch64'
+grep -qw paca /proc/cpuinfo || fail 'QEMU CPU does not expose pointer authentication'
+test -s /lib/firmware/xnu/kc-free.bin || fail 'missing free kernel collection'
+test -s /pd.conf || fail 'missing disk UUID configuration'
+. /pd.conf
+: "${ROOT_UUID:?missing ROOT_UUID}"
+: "${BOOT_UUID:?missing BOOT_UUID}"
+
+for module in virtio_mmio virtio_blk; do
+  if find "/lib/modules/$(uname -r)" -type f -name "$module.ko" -print -quit | grep -q .; then
+    modprobe "$module" || fail "could not load the $module disk driver"
+  fi
+done
+
+# Forward Linux kernel messages to the guest's serial console and keep a copy
+# for detecting the real Darwin shell prompt and guest halt.
+/bin/busybox cat /dev/kmsg | /bin/busybox tee /tmp/kernel.log >/dev/console &
+kmsg_pid=$!
+: > /tmp/console-in
+dd if=/dev/zero of=/tmp/keystore bs=1048576 count=1
+
+insmod /fki.ko carve_base=0x200000000 carve_mb=8156 || fail 'could not load FKI'
+test -c /dev/xnu-hostcall || fail 'FKI host-call device is missing'
+for _ in $(seq 1 30); do
+  [ -b /dev/vda ] && break
+  sleep 1
+done
+test -b /dev/vda || fail 'PureDarwin disk is not available at /dev/vda'
+
+echo 'XNULINUX_E2E: loading source-built XNU and PureDarwin collection' >/dev/console
+insmod /xnu.ko mode=3 cpus=1 ram_mb=7900 image=xnu/kc-free.bin disk=/dev/vda \
+  root_uuid="$ROOT_UUID" boot_uuid="$BOOT_UUID" preboot_uuid="$BOOT_UUID" \
+  console_in=/tmp/console-in keystore=/tmp/keystore \
+  bootargs='amfi_get_out_of_my_way=1 lp-sip0=2050 bt-transport-override=10' \
+  >/tmp/xnu-insmod.log 2>&1 &
+xnu_pid=$!
+
+# Don't send input until PureDarwin's interactive zsh prompt is visible.
+prompt=0
+for _ in $(seq 1 5400); do
+  if grep -Eq 'fki: darwin console: .*[#$>] $' /tmp/kernel.log; then
+    prompt=1
+    break
+  fi
+  if ! kill -0 "$xnu_pid" 2>/dev/null; then
+    cat /tmp/xnu-insmod.log >/dev/console
+    fail 'xnu.ko exited before the PureDarwin shell prompt'
+  fi
+  sleep 1
+done
+[ "$prompt" = 1 ] || fail 'PureDarwin shell prompt did not appear within 90 minutes'
+
+printf '%s\n' 'uname -s' 'printf "XNULINUX_%s\n" USERLAND_OK' 'halt' >>/tmp/console-in
+
+ended=0
+for _ in $(seq 1 300); do
+  if ! kill -0 "$xnu_pid" 2>/dev/null; then
+    ended=1
+    break
+  fi
+  sleep 1
+done
+[ "$ended" = 1 ] || fail 'guest halt did not return from xnu.ko within five minutes'
+wait "$xnu_pid" || fail 'xnu.ko failed after the guest halt'
+grep -Fq 'fki: darwin console: Darwin' /tmp/kernel.log || fail 'Darwin uname output was not observed'
+grep -Fq 'fki: darwin console: XNULINUX_USERLAND_OK' /tmp/kernel.log || fail 'Darwin userspace marker was not observed'
+grep -Fq 'xnu: the hosted system halted' /tmp/kernel.log || fail 'host issued no guest halt confirmation'
+
+rmmod xnu || fail 'xnu.ko did not unload after guest halt'
+[ ! -d /sys/module/xnu ] || fail 'xnu.ko remained loaded after cleanup'
+rmmod fki || fail 'fki.ko did not unload after XNU'
+[ ! -e /dev/xnu-hostcall ] || fail 'FKI host-call device remained after cleanup'
+kill "$kmsg_pid" 2>/dev/null || true
+echo 'XNULINUX_E2E_PUREDARWIN_USERLAND_OK'
+echo 'XNULINUX_E2E_GUEST_HALT_OK'
+echo 'XNULINUX_E2E_XNU_UNLOADED'
+poweroff -f

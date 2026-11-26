@@ -4,6 +4,8 @@
 # it) and the xnu-12377 kernel from source.
 set -ex
 POC=$(cd "$(dirname "$0")/.." && pwd)
+DVM=${DVM:-$HOME/w/dvm}
+DVM_REV=${DVM_REV:-524d27bf57ae92375aa39e3a81e11727c08973ff}
 export DEBIAN_FRONTEND=noninteractive
 if [ ! -x /usr/lib/llvm-21/bin/clang ]; then
   wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
@@ -12,10 +14,25 @@ if [ ! -x /usr/lib/llvm-21/bin/clang ]; then
 fi
 sudo -E apt-get install -y -qq build-essential autoconf automake libtool pkg-config git python3 python3-yaml python3-packaging \
   cmake ninja-build meson bison flex m4 unifdef tcsh pax libbsd-dev uuid-dev libssl-dev zlib1g-dev cpio xz-utils zstd llvm-21 clang-21 lld-21 \
-  libmd-dev linux-headers-$(uname -r) 7zip p7zip-full >/dev/null
-mkdir -p ~/w && cd ~/w
-[ -d dvm ] || git clone -q https://github.com/Droid-VM/macOS-DroidVM dvm
-cd dvm
+  libmd-dev 7zip p7zip-full >/dev/null
+mkdir -p "$(dirname "$DVM")"
+DVM=$(cd "$(dirname "$DVM")" && pwd)/$(basename "$DVM")
+if [ ! -e "$DVM" ]; then
+  git init -q "$DVM"
+  git -C "$DVM" remote add origin https://github.com/Droid-VM/macOS-DroidVM.git
+  git -C "$DVM" fetch -q --depth 1 origin "$DVM_REV"
+  git -C "$DVM" checkout -q --detach FETCH_HEAD
+elif [ ! -d "$DVM/.git" ]; then
+  echo "DVM path exists but is not a Git checkout: $DVM" >&2
+  exit 1
+fi
+current_dvm_rev=$(git -C "$DVM" rev-parse HEAD)
+if [ "$current_dvm_rev" != "$DVM_REV" ]; then
+  echo "DVM is at $current_dvm_rev; expected pinned revision $DVM_REV (set DVM_REV explicitly to use another revision)." >&2
+  exit 1
+fi
+export DVM DVM_REV
+cd "$DVM"
 HOST_MULTIARCH=$(dpkg-architecture -qDEB_HOST_MULTIARCH 2>/dev/null || printf '%s-linux-gnu' "$(uname -m)")
 python3 - "$HOST_MULTIARCH" <<'PY'
 import sys
@@ -46,7 +63,7 @@ patch_cctools() {
     grep -n -B3 'thread_state_data_t\[' "$T"
   done
 }
-python3 scripts/setup-env.py toolchain --jobs 12
+python3 scripts/setup-env.py toolchain --jobs "${JOBS:-12}"
 patch_cctools
 # libclang_rt.cc_kext comes from the CLTools package (unpacked only; Darling is not needed for it)
 A=toolchains/linux/appleclang; mkdir -p $A
@@ -60,7 +77,7 @@ D=out/k27/xnu/SETUP/decomment/decomment.c
 sed -i -E 's/^([[:space:]]*)char([[:space:]]+bufchar;)/\1int\2/' $D
 grep -qE '^[[:space:]]*int[[:space:]]+bufchar;' $D || { echo "decomment.c: no int bufchar after the patch" >&2; exit 1; }
 rm -f out/x12377/build/xnu/hdrs-obj/SETUP/decomment/decomment
-python3 scripts/setup-env.py x12377 --jobs 12
+python3 scripts/setup-env.py x12377 --jobs "${JOBS:-12}"
 # the first kernel build is the rebuild's: xnu-patches and xnulinux's corecrypto go into the tree before anything of it
 # is compiled (XNU's own corecrypto never is)
-bash "$POC"/scripts/vm-xnu-rebuild.sh
+JOBS="${JOBS:-12}" bash "$POC"/scripts/vm-xnu-rebuild.sh

@@ -139,6 +139,38 @@ class TestCliAndInstaller(unittest.TestCase):
             self.assertIn("refusing system-wide install", result.stderr)
             self.assertFalse((prefix / "bin" / "xnulinux").exists())
 
+    def test_system_install_succeeds_from_public_root_owned_checkout(self):
+        if not hasattr(os, "geteuid") or os.geteuid() != 0:
+            self.skipTest("requires root to exercise system-wide install checks")
+        with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
+            public_root = pathlib.Path(tmp)
+            public_root.chmod(0o755)
+            checkout = public_root / "public-checkout"
+            scripts = checkout / "scripts"
+            scripts.mkdir(parents=True, mode=0o755)
+            checkout.chmod(0o755)
+            scripts.chmod(0o755)
+            fixture_installer = scripts / "install.sh"
+            shutil.copy2(INSTALLER, fixture_installer)
+            fixture_cli = scripts / "xnulinux"
+            fixture_cli.write_text("#!/bin/sh\nprintf 'fixture-doctor-ok\\n'\n", encoding="utf-8")
+            fixture_cli.chmod(0o755)
+
+            prefix = public_root / "system-prefix"
+            installed = prefix / "bin" / "xnulinux"
+            result = subprocess.run(
+                [str(fixture_installer), "--prefix", str(prefix)], capture_output=True, text=True
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(installed.is_file())
+            self.assertEqual(installed.stat().st_mode & 0o777, 0o755)
+            self.assertIn(str(checkout / "scripts" / "xnulinux"), installed.read_text(encoding="utf-8"))
+            launched = subprocess.run(
+                [str(installed), "doctor"], cwd=public_root, capture_output=True, text=True
+            )
+            self.assertEqual(launched.returncode, 0, launched.stderr)
+            self.assertEqual(launched.stdout, "fixture-doctor-ok\n")
+
 
 if __name__ == "__main__":
     unittest.main()

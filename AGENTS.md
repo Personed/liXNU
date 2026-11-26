@@ -38,8 +38,9 @@ For x86_64 launcher or documentation changes, run the relevant checks:
 
 ```sh
 bash tests/x86_64/test-launcher.sh
+bash tests/x86_64/test-qemu-overlay-symlink.sh
 bash tests/x86_64/test-tcg-smoke.sh
-for script in scripts/x86_64/xnulinux-boot.sh tests/x86_64/test-launcher.sh tests/x86_64/tcg-smoke.sh tests/x86_64/test-tcg-smoke.sh; do bash -n "$script"; done
+for script in scripts/x86_64/xnulinux-boot.sh tests/x86_64/test-launcher.sh tests/x86_64/test-qemu-overlay-symlink.sh tests/x86_64/tcg-smoke.sh tests/x86_64/test-tcg-smoke.sh; do bash -n "$script"; done
 git diff --check
 ```
 

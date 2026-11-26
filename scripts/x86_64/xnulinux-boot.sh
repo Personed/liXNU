@@ -199,6 +199,11 @@ for existing_overlay in "$STATE_DIR"/disk-*.qcow2; do
   EXISTING_OVERLAY_REALPATH="$(realpath -e -- "$existing_overlay")" \
     || fail "could not resolve existing disk overlay: $existing_overlay"
   if [[ "$EXISTING_OVERLAY_REALPATH" == "$DISK_PATH" ]]; then
+    EXISTING_OVERLAY_META="${existing_overlay%.qcow2}.base"
+    if [[ "$DISK_FORMAT" == qcow2 && -f "$EXISTING_OVERLAY_META" && ! -L "$EXISTING_OVERLAY_META" ]] \
+        && grep -Eq '^backing file:[[:space:]]+' <<<"$QEMU_IMG_INFO"; then
+      fail "DISK points to an xnulinux-managed overlay in STATE_DIR: $existing_overlay (use the original base image with this state directory, or choose a separate STATE_DIR to fork the image)"
+    fi
     [[ "$existing_overlay" != "$DISK_OVERLAY" ]] \
       || fail "DISK path collides with its overlay path: $DISK_PATH"
     continue

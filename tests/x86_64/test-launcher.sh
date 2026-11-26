@@ -351,6 +351,18 @@ PRIMARY_OVERLAY="$(find "$STATE_DIR" -maxdepth 1 -type f -name 'disk-*.qcow2' -p
 EXTERNAL_OVERLAY="$TMP_DIR/external disk overlay.qcow2"
 mv -- "$PRIMARY_OVERLAY" "$EXTERNAL_OVERLAY"
 ln -s -- "$EXTERNAL_OVERLAY" "$PRIMARY_OVERLAY"
+for overlay_base in "$PRIMARY_OVERLAY" "$EXTERNAL_OVERLAY"; do
+  MANAGED_OVERLAY_OUTPUT="$TMP_DIR/managed-overlay-$(basename -- "$overlay_base").out"
+  QEMU_LOG_BEFORE_MANAGED_OVERLAY="$(sha256sum -- "$QEMU_LOG" | awk '{print $1}')"
+  if env "${BASE_ENV[@]}" DISK="$overlay_base" DISK_FORMAT=qcow2 QEMU_IMG_BACKED_DISK="$EXTERNAL_OVERLAY" \
+    ACCEL=tcg "$LAUNCHER" >"$MANAGED_OVERLAY_OUTPUT" 2>&1; then
+    fail "managed overlay selected through $overlay_base unexpectedly started as a base disk"
+  fi
+  assert_contains "$MANAGED_OVERLAY_OUTPUT" 'DISK points to an xnulinux-managed overlay in STATE_DIR'
+  [[ "$(sha256sum -- "$QEMU_LOG" | awk '{print $1}')" == "$QEMU_LOG_BEFORE_MANAGED_OVERLAY" ]] \
+    || fail 'selecting an overlay through its symlink or destination reached QEMU'
+  [[ "$(<"$QEMU_IMG_COUNT")" == 1 ]] || fail 'selecting an overlay as its base created another overlay'
+done
 env "${BASE_ENV[@]}" ACCEL=tcg "$LAUNCHER" >"$TMP_DIR/symlinked-overlay.out" 2>&1 || {
   cat "$TMP_DIR/symlinked-overlay.out" >&2
   fail 'valid symlinked disk overlay was rejected'

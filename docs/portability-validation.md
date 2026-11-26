@@ -42,12 +42,21 @@ Report the profile alongside the stage:
   result, host-integrity checks before and after, and guest-initiated shutdown. The ARM64
   collection and FKI carve-out fields below do not apply to this profile. See
   [`tests/x86_64/README.md`](../tests/x86_64/README.md) for host prerequisites and limits.
-- **x86-64 PC → QEMU TCG → ARM64 Linux → PureDarwin console:** end-to-end acceptance is
-  tracked in [#36]. Its CI profile uses an x86-64 Ubuntu runner, QEMU TCG, a 16 GiB ARM64
-  Linux guest with `mem=7G`, an 8,156 MiB FKI carve-out at `0x200000000`, and 7,900 MiB
-  for XNU. It requires a Darwin console command result, guest-issued halt, module unload,
-  and Linux power-off. The current head is awaiting CI; this profile does not claim support
-  or practical speed on every PC, nor does it validate a desktop, GPU, networking, or macOS/KVM.
+- **x86-64 PC → QEMU TCG → ARM64 Linux → PureDarwin console:** acceptance is tracked
+  in [#36]. The reference job runs on an Ubuntu 24.04 x86-64 runner with QEMU TCG and a
+  16 GiB ARM64 Linux guest using `mem=7G`, 4 KiB pages, PAC at EL1, an 8,156 MiB FKI
+  carve-out at `0x200000000`, and 7,900 MiB for XNU. Record host CPU model/core count,
+  OS/version, total and available physical RAM, QEMU version, guest kernel release, and
+  the complete guest kernel `.config` or its SHA-256; do not combine host RAM with the
+  16 GiB guest allocation in the report. The guest kernel is selected by the #36 workflow
+  from Ubuntu's latest generic ARM64 package and its release/config digest is recorded;
+  pinning the kernel package or repository snapshot is still needed for identical reruns.
+  The first run built the pinned image and HFS+ disk but failed at `kclink` on a
+  `__TEXT_EXEC`/`__PRELINK_INFO` overlap. Follow-up [#44](https://github.com/Personed/xnulinux/pull/44)
+  moves the segment boundary; its full run is pending, so no console or clean-halt pass is
+  recorded yet. Windows and macOS full-console checks are also pending. This profile does
+  not claim a universal minimum, support or practical speed on every PC, a desktop,
+  GPU/networking, or macOS/KVM.
 
 ## First end-to-end check for a new ARM64 FKI host profile
 
@@ -118,13 +127,14 @@ Report the profile alongside the stage:
 ```text
 Repo commit(s) / PR(s):
 Profile (x86-64 TCG/PureDarwin, native ARM64, ARM64 hosted macOS desktop, or separate x86_64 Tahoe/KVM experiment):
-Outer machine + CPU / OS + version:
+Outer machine + CPU model/core count / OS + version:
+Host physical RAM total / available RAM before the guest:
 Runtime + version / accelerator:
 TCG Linux stage and result (if applicable; do not label as a macOS result):
 
 ARM64 FKI/PureDarwin profile (only when applicable):
-Linux distro / kernel / page size / PAC / userspace type:
-Memory / FKI carve-out / hosted CPUs:
+Linux distro/image / kernel release / full .config or SHA-256 / page size / PAC / userspace type:
+Guest RAM allocation / Linux mem= / FKI carve-out / hosted CPUs:
 FKI configuration / carve-out allocation and reuse result:
 XNU collection revision / digest and matching PureDarwin disk digest:
 XNU stage and contiguous DRAM interval / configured carve-out comparison:

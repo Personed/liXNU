@@ -99,13 +99,14 @@ Working on two arm64 Linux setups:
 | Intel/AMD x86_64 with QEMU TCG | ARM64 Linux → FKI/XNU → PureDarwin console | Active x86-64 portability target; full acceptance is tracked in #36. The current profile uses 16 GiB guest RAM plus host overhead and does not claim every PC or practical TCG speed. |
 | Intel/AMD x86_64 with VT-x/AMD-V and QEMU/KVM | User-prepared macOS Tahoe 26 x86_64 | Separate experimental path; physical desktop and host-integrity acceptance remain unverified. |
 
-QEMU TCG does not require VT-x/AMD-V. The end-to-end workflow in #36 builds a real PureDarwin disk and free collection,
-boots ARM64 Linux on x86-64, and requires a Darwin console command, guest-issued halt, module unload, and Linux power-off.
-Its current head is still awaiting CI; the profile does not establish compatibility or performance on every PC, a GUI,
-networking, or Tahoe/KVM support. The separate Tahoe/KVM path still needs physical desktop and host-integrity checks. See
-[PR #3](https://github.com/Personed/xnulinux/pull/3) for the Windows, macOS, and Linux QEMU host setup, and [`docs/portability-validation.md`](docs/portability-validation.md) for stage-specific evidence
-for setup and stage-specific evidence.
-
+QEMU TCG does not require VT-x/AMD-V. The reference profile allocates 16 GiB to the ARM64 Linux guest and needs
+additional physical RAM for the host OS and QEMU; report the host's total and available RAM separately from guest RAM.
+The first #36 run built the pinned image and HFS+ disk, but `kclink` failed because `__TEXT_EXEC` overlapped
+`__PRELINK_INFO`. Follow-up #44 moves that boundary and is rebuilding; no PureDarwin console or clean-halt result is
+verified yet. The full console job currently runs on Ubuntu x86-64 only; Windows and macOS still need the same guest
+console and halt checks. The result does not claim a universal minimum, performance on every PC, a GUI, networking, or
+Tahoe/KVM support. See [PR #3](https://github.com/Personed/xnulinux/pull/3) for Windows/macOS/Linux host setup and
+[`docs/portability-validation.md`](docs/portability-validation.md) for stage-specific evidence.
 Shipping it as a hosted service (what is distributed, what a user installs to run Apple's macOS) is in
 [`docs/hosted-service.md`](docs/hosted-service.md).
 
@@ -127,11 +128,11 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 
 ### x86_64 QEMU TCG path
 
-- An x86-64 PC with QEMU 10 or newer. TCG does not require VT-x or AMD-V; it can run on Intel and AMD hosts.
-- An ARM64 Linux image and enough host RAM for the guest plus QEMU/Linux overhead. The full PureDarwin acceptance profile
-  in #36 uses 16 GiB of guest RAM; smaller Linux/FKI profiles are separate and do not validate the PureDarwin boot.
-- The full x86-64 TCG route, its guest kernel, FKI carve-out, and validation limits are documented in
-  [`docs/portability-validation.md`](docs/portability-validation.md).
+- The host setup for Windows/macOS/Linux is documented in [PR #3](https://github.com/Personed/xnulinux/pull/3). Current CI reaches UEFI on Linux and Windows x86-64 and macOS Apple Silicon; Intel macOS and Windows ARM64 are not in that launcher matrix.
+- QEMU 10 or newer with AArch64 system emulation, matching AArch64 UEFI code and variables, and Python 3. VT-x/AMD-V is not required.
+- The PureDarwin reference profile allocates 16 GiB to the ARM64 Linux guest plus additional physical RAM for the host OS and QEMU. Smaller Linux/FKI profiles do not validate PureDarwin. Record physical host RAM and available RAM separately from guest RAM; this is a measured profile, not a universal minimum.
+- Use an ARM64 Linux kernel with 4 KiB pages and PAC at EL1, built with matching FKI/XNU modules. The #36 workflow currently selects the latest Ubuntu generic ARM64 kernel available at run time and records its release and configuration digest; pinning the package or repository snapshot is still needed for identical reruns.
+- The full x86-64 TCG route, tested guest profile, kernel reporting fields, FKI carve-out, and stage limits are documented in [`docs/portability-validation.md`](docs/portability-validation.md).
 
 ### Separate experimental x86_64 QEMU/KVM path
 

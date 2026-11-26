@@ -83,6 +83,24 @@ jobs:
         run: |
           qemu-system-aarch64 --version
           python tests/qemu/boot.py qemu-guest
+  build-linux-6-12:
+    # Debian 13 keeps the older 6.12 API path covered on native ARM64.
+    runs-on: ubuntu-24.04-arm
+    container: debian:trixie
+    steps:
+      - name: Install Git for checkout
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Build with Debian 13 Linux 6.12 headers
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq build-essential linux-headers-arm64
+          kdir=$(find /usr/src -mindepth 1 -maxdepth 1 -type d -name 'linux-headers-*-arm64' | sort -V | tail -1)
+          case "$kdir" in */linux-headers-6.12.*-arm64) ;; *) echo "expected Debian 13 Linux 6.12 headers; got $kdir" >&2; exit 1;; esac
+          echo "headers: $kdir"
+          make -C "$kdir" M="$GITHUB_WORKSPACE/fki-ko" modules
   spdx:
     runs-on: ubuntu-24.04
     steps:

@@ -141,6 +141,11 @@ if [ ! -d "$foreign_replacement" ] || [ -L "$foreign_replacement" ]; then
   echo 'Foreign-owner replacement is missing or is not a real directory.' >&2
   exit 1
 fi
+if ! grep -F 'Refusing an unsafe private staging directory:' "$replacement_log" >/dev/null; then
+  cat "$replacement_log" >&2
+  echo 'Exporter did not reject the replacement during its staging-owner check.' >&2
+  exit 1
+fi
 foreign_owner=$(run_as_root stat -c '%u' -- "$foreign_replacement")
 if [ "$foreign_owner" != 65534 ]; then
   echo "Foreign-owner replacement has UID $foreign_owner, expected 65534." >&2

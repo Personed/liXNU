@@ -295,7 +295,14 @@ def run_with_timeout(command: list[str], timeout_seconds: int) -> tuple[int, Opt
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog=(
+            "All inputs must come from one workflow run. Place guest-manifest.txt and "
+            "build-manifest.txt beside the kernel Image; they are required to verify the "
+            "kernel, initramfs, and disk hashes before QEMU starts."
+        ),
+    )
     parser.add_argument("kernel", type=Path)
     parser.add_argument("initramfs", type=Path)
     parser.add_argument("disk", type=Path)
@@ -359,13 +366,31 @@ def main() -> int:
         "XNULINUX_E2E_XNU_UNLOADED",
         "reboot: Power down",
     )
+    args.serial_log.parent.mkdir(parents=True, exist_ok=True)
+    host = host_facts()
+    if host["architecture"].lower() not in ("x86_64", "amd64"):
+        print(f"x86-64 host required; got {host['architecture']}", file=sys.stderr)
+        return 1
+    print(f"Host: {host['system']} {host['release']} ({host['architecture']})")
+    print(f"Host CPU: {host['processor']}; logical CPUs: {host['logical_cpus']}")
+    print(f"Host total RAM before QEMU: {host['memory_total_bytes']} bytes")
+    print(f"Host available RAM before QEMU: {host['memory_available_bytes']} bytes")
+    version = subprocess.run([qemu, "--version"], check=False, text=True, capture_output=True)
+    version_text = version.stdout or version.stderr
+    qemu_version = version_text.splitlines()[0] if version_text else "unknown"
+    print(f"QEMU: {qemu_version}")
+
     try:
         input_hashes = verify_input_hashes(args.kernel, args.initramfs, args.disk)
     except (OSError, ValueError) as error:
         print(f"TCG boot input validation failed: {error}", file=sys.stderr)
+        save_boot_report(
+            args=args, host=host, qemu_version=qemu_version, input_hashes={},
+            returncode=None, peak_rss_kib=None, timed_out=False,
+            missing=["input manifest validation"], error=str(error),
+        )
         return 1
 
-    args.serial_log.parent.mkdir(parents=True, exist_ok=True)
     command = [
         qemu,
         "-name", "xnulinux-puredarwin-e2e",
@@ -394,20 +419,8 @@ def main() -> int:
             "loglevel=1"
         ),
     ]
-    host = host_facts()
-    if host["architecture"].lower() not in ("x86_64", "amd64"):
-        print(f"x86-64 host required; got {host['architecture']}", file=sys.stderr)
-        return 1
-    print(f"Host: {host['system']} {host['release']} ({host['architecture']})")
-    print(f"Host CPU: {host['processor']}; logical CPUs: {host['logical_cpus']}")
-    print(f"Host total RAM before QEMU: {host['memory_total_bytes']} bytes")
-    print(f"Host available RAM before QEMU: {host['memory_available_bytes']} bytes")
     for name, digest in input_hashes.items():
         print(f"Input {name}: {digest}")
-    version = subprocess.run([qemu, "--version"], check=False, text=True, capture_output=True)
-    version_text = version.stdout or version.stderr
-    qemu_version = version_text.splitlines()[0] if version_text else "unknown"
-    print(f"QEMU: {qemu_version}")
     print(
         "Profile: ARM64 QEMU virt, TCG, "
         f"{args.qemu_memory} guest RAM, Linux mem={args.linux_memory}, "

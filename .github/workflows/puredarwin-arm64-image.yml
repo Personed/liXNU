@@ -335,7 +335,7 @@ jobs:
           retention-days: 30
 
   puredarwin-tcg-boot:
-    name: Boot PureDarwin under x86-64 QEMU TCG (${{ matrix.label }})
+    name: ${{ matrix.job_name }}
     needs: [puredarwin-build, arm64-guest]
     strategy:
       fail-fast: false
@@ -343,10 +343,13 @@ jobs:
         include:
           - label: ubuntu-24.04
             runner: ubuntu-24.04
+            job_name: Boot PureDarwin under x86-64 QEMU TCG
           - label: windows-2025
             runner: windows-2025
+            job_name: Boot PureDarwin under x86-64 QEMU TCG (windows-2025)
           - label: macos-15-intel
             runner: macos-15-intel
+            job_name: Boot PureDarwin under x86-64 QEMU TCG (macos-15-intel)
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
     env:

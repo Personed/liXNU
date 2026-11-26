@@ -18,6 +18,9 @@ from typing import Optional
 
 
 QEMU_VIRT_RAM_BASE = 0x40000000
+# cortex-a710 is available from QEMU 8.2 onward and keeps PAuth without QEMU 11's
+# version-dependent max CPU S1PIE encoding, which the hosted-XNU path does not implement.
+DEFAULT_QEMU_CPU = "cortex-a710"
 MEMORY_SUFFIXES = {
     "": 1,
     "K": 1024,
@@ -177,6 +180,7 @@ def save_boot_report(
         "qemu_version": qemu_version,
         "profile": {
             "accelerator": "TCG",
+            "qemu_cpu": args.qemu_cpu,
             "qemu_memory": args.qemu_memory,
             "linux_memory": args.linux_memory,
             "fki_carve_base": hex(int(args.fki_carve_base, 0)),
@@ -212,7 +216,7 @@ def save_boot_report(
             f"- CPU: {host['processor']} ({host['logical_cpus']} logical CPUs)",
             f"- RAM before QEMU: {total} total bytes; {available} available bytes",
             f"- QEMU: {qemu_version}",
-            f"- Profile: {args.qemu_memory} guest RAM; Linux mem={args.linux_memory}; FKI {args.fki_carve_mb} MiB at {args.fki_carve_base}; XNU {args.xnu_ram_mb} MiB",
+            f"- Profile: {args.qemu_cpu} CPU; {args.qemu_memory} guest RAM; Linux mem={args.linux_memory}; FKI {args.fki_carve_mb} MiB at {args.fki_carve_base}; XNU {args.xnu_ram_mb} MiB",
             f"- Result: {'passed' if passed else 'failed'}; QEMU exit={returncode}; timeout={timed_out}; peak RSS={rss_text}",
             f"- RSS limit: {args.max_rss_mib} MiB; evaluated={peak_rss_kib is not None}",
             "- Input SHA-256:",
@@ -309,6 +313,10 @@ def main() -> int:
     parser.add_argument("serial_log", type=Path)
     parser.add_argument("--timeout-seconds", type=int, default=14400)
     parser.add_argument("--qemu", default="qemu-system-aarch64")
+    parser.add_argument(
+        "--qemu-cpu", default=DEFAULT_QEMU_CPU,
+        help="TCG CPU model; cortex-a710 keeps PAuth without QEMU-version-dependent S1PIE exposure",
+    )
     parser.add_argument("--qemu-memory", default="16G")
     parser.add_argument("--linux-memory", default="7G")
     parser.add_argument("--fki-carve-base", default="0x200000000")
@@ -332,6 +340,8 @@ def main() -> int:
         parser.error(f"QEMU executable not found: {args.qemu}")
     if args.timeout_seconds < 1:
         parser.error("--timeout-seconds must be positive")
+    if not args.qemu_cpu.strip():
+        parser.error("--qemu-cpu must not be empty")
     if args.fki_carve_mb < 1 or args.xnu_ram_mb < 1:
         parser.error("FKI carve-out and XNU RAM sizes must be positive")
     try:
@@ -402,7 +412,7 @@ def main() -> int:
         "-name", "xnulinux-puredarwin-e2e",
         "-machine", "virt,virtualization=off",
         "-accel", "tcg,thread=multi",
-        "-cpu", "max",
+        "-cpu", args.qemu_cpu,
         "-smp", "2",
         "-m", args.qemu_memory,
         "-nodefaults",
@@ -429,7 +439,7 @@ def main() -> int:
         print(f"Input {name}: {digest}")
     print(
         "Profile: ARM64 QEMU virt, TCG, "
-        f"{args.qemu_memory} guest RAM, Linux mem={args.linux_memory}, "
+        f"{args.qemu_cpu} CPU, {args.qemu_memory} guest RAM, Linux mem={args.linux_memory}, "
         f"{args.fki_carve_mb} MiB FKI carve-out at {carve_base_hex}, "
         f"XNU RAM {args.xnu_ram_mb} MiB"
     )

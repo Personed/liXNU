@@ -4,6 +4,7 @@
 
 import os
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -31,17 +32,27 @@ class TestCliAndInstaller(unittest.TestCase):
                 self.assertEqual(f.read(8), b"\x89PNG\r\n\x1a\n")
 
     def test_missing_optional_scripts_report_cleanly(self):
-        res_vnc = subprocess.run([str(CLI), "vnc"], capture_output=True, text=True)
-        self.assertNotEqual(res_vnc.returncode, 0)
-        self.assertIn("xnu-vnc.py", res_vnc.stderr)
+        with tempfile.TemporaryDirectory() as tmp:
+            # Isolated minimal tree without optional PR #3 / PR #9 scripts
+            scripts_dir = pathlib.Path(tmp) / "scripts"
+            scripts_dir.mkdir()
+            shutil.copy2(CLI, scripts_dir / "xnulinux")
+            (scripts_dir / "xnu-console.sh").write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+            env = {**os.environ, "XNULINUX_HOME": tmp}
 
-        res_vm = subprocess.run([str(CLI), "vm"], capture_output=True, text=True)
-        self.assertNotEqual(res_vm.returncode, 0)
-        self.assertIn("qemu-vm.py", res_vm.stderr)
+            res_vnc = subprocess.run([str(scripts_dir / "xnulinux"), "vnc"], env=env, capture_output=True, text=True)
+            self.assertNotEqual(res_vnc.returncode, 0)
+            self.assertIn("xnu-vnc.py", res_vnc.stderr)
 
-        res_con = subprocess.run([str(CLI), "console", "--local"], capture_output=True, text=True)
-        self.assertNotEqual(res_con.returncode, 0)
-        self.assertIn("--local", res_con.stderr)
+            res_vm = subprocess.run([str(scripts_dir / "xnulinux"), "vm"], env=env, capture_output=True, text=True)
+            self.assertNotEqual(res_vm.returncode, 0)
+            self.assertIn("qemu-vm.py", res_vm.stderr)
+
+            res_con = subprocess.run(
+                [str(scripts_dir / "xnulinux"), "console", "--local"], env=env, capture_output=True, text=True
+            )
+            self.assertNotEqual(res_con.returncode, 0)
+            self.assertIn("--local", res_con.stderr)
 
     def test_non_arm64_guards_boot_and_setup_mem(self):
         if os.uname().machine == "aarch64":
@@ -54,14 +65,17 @@ class TestCliAndInstaller(unittest.TestCase):
         self.assertNotEqual(res_mem.returncode, 0)
         self.assertIn("ARM64", res_mem.stderr)
 
-    def test_install_and_uninstall(self):
+    def test_install_relative_prefix_and_uninstall(self):
         with tempfile.TemporaryDirectory() as tmp:
-            subprocess.run([str(INSTALLER), "--prefix", tmp], check=True, capture_output=True, text=True)
-            installed = pathlib.Path(tmp) / "bin" / "xnulinux"
+            # Install using a relative --prefix, then run from another working directory
+            subprocess.run([str(INSTALLER), "--prefix", "relprefix"], cwd=tmp, check=True, capture_output=True, text=True)
+            installed = pathlib.Path(tmp) / "relprefix" / "bin" / "xnulinux"
             self.assertTrue(installed.is_file())
-            res = subprocess.run([str(installed), "doctor"], check=True, capture_output=True, text=True)
+            res = subprocess.run([str(installed), "doctor"], cwd="/", check=True, capture_output=True, text=True)
             self.assertIn("=== xnulinux PC check ===", res.stdout)
-            subprocess.run([str(INSTALLER), "--prefix", tmp, "--uninstall"], check=True, capture_output=True, text=True)
+            subprocess.run(
+                [str(INSTALLER), "--prefix", "relprefix", "--uninstall"], cwd=tmp, check=True, capture_output=True, text=True
+            )
             self.assertFalse(installed.exists())
 
 

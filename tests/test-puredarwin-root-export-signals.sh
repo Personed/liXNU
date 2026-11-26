@@ -156,6 +156,8 @@ if [ "${REPLACE_AFTER_IDENTITY:-0}" = 1 ] &&
   "$REAL_MKDIR" -m 0700 -- "$4"
   "$REAL_CHMOD" 0700 -- "$4"
   "$REAL_CHMOD" g-s -- "$4"
+  printf 'replacement archive sentinel\n' >"$4/root.tar.gz"
+  printf 'replacement check sentinel\n' >"$4/check.log"
   printf '%s\n' "$4.original" >"$TEST_STATE/replaced-stage"
   : >"$TEST_STATE/identity-replaced"
 fi
@@ -275,28 +277,23 @@ echo 'PureDarwin root exporter early staging signal cleanup test passed.'
 # Replace the recorded inode with a same-owner private directory after its
 # identity has been captured. The exporter must detect the mismatch before
 # invoking e2fsck or writing into the replacement.
-private_attacker_dir=$tmp/attacker-private
-mkdir -- "$private_attacker_dir"
-chmod 0700 "$private_attacker_dir"
-printf 'private sentinel\n' >"$private_attacker_dir/root.tar.gz"
-printf 'check sentinel\n' >"$private_attacker_dir/check.log"
 rm -f -- "$state/check-log" "$state/identity-replaced" "$state/replaced-stage"
 set +e
-REPLACE_AFTER_IDENTITY=1 ATTACKER_DIR=$private_attacker_dir \
-  "$script" "$image" "$output" >/dev/null 2>&1
+REPLACE_AFTER_IDENTITY=1 "$script" "$image" "$output" >/dev/null 2>&1
 status=$?
 set -e
 [ "$status" -ne 0 ] || { echo 'Exporter accepted a same-owner staging inode replacement' >&2; exit 1; }
-[ "$(cat "$private_attacker_dir/root.tar.gz")" = 'private sentinel' ]
-[ "$(cat "$private_attacker_dir/check.log")" = 'check sentinel' ]
 [ ! -e "$output" ]
 [ ! -e "$state/check-log" ] || { echo 'Exporter started filesystem validation through a replaced staging inode' >&2; exit 1; }
 replaced_stage=$(cat "$state/replaced-stage")
 [ -d "$replaced_stage" ]
-[ -d "$(cat "$state/archive-dir")" ]
-[ ! -L "$(cat "$state/archive-dir")" ]
+replacement_dir=$(cat "$state/archive-dir")
+[ -d "$replacement_dir" ]
+[ ! -L "$replacement_dir" ]
+[ "$(cat "$replacement_dir/root.tar.gz")" = 'replacement archive sentinel' ]
+[ "$(cat "$replacement_dir/check.log")" = 'replacement check sentinel' ]
 rm -rf -- "$replaced_stage"
-rm -rf -- "$(cat "$state/archive-dir")"
+rm -rf -- "$replacement_dir"
 
 echo 'PureDarwin root exporter same-owner inode replacement test passed.'
 

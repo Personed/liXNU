@@ -2,7 +2,10 @@
 
 ## Target and current boundary
 
-The active target is to run the latest Intel-compatible macOS (Tahoe 26) through a native x86_64 FKI/XNU path on Linux PCs, while retaining the existing direct ARM64 path for macOS 27. Intel and AMD are separate acceptance profiles. The QEMU/KVM macOS guest launcher is useful separately; its results do not validate this native port.
+The active target, explicitly selected by the owner and recorded in the project-goal discussion on #24, is to run the latest
+Intel-compatible macOS (Tahoe 26) through a native x86_64 FKI/XNU path on Linux PCs, while retaining the existing direct
+ARM64 path for macOS 27. Intel and AMD are separate acceptance profiles. The QEMU/KVM macOS guest launcher is useful
+separately; its results do not validate this native port.
 
 PR #48 adds the first x86_64 Linux-side FKI build hooks, with `fki_caps() == 0`. PR #47 adds an x86_64 `xnu.ko` target that refuses to load. Neither PR executes XNU. Keep both gates fail-closed until the architecture boundary below is implemented and verified.
 
@@ -24,10 +27,19 @@ The pinned XNU source tag used by the current build scripts contains `osfmk/i386
 ## Implementation order and acceptance gates
 
 1. **Pin the x86 build input.** Select the exact Tahoe-compatible XNU source/configuration, toolchain, and symbol-bearing x86_64 kernel collection. Record the architecture and source revision in CI artifacts. A successful ARM64 build or generic Mach-O parse is not sufficient.
-2. **Keep architecture selection explicit.** Build separate ARM64 and x86_64 module object lists and machine-layer patches. Make FKI capabilities describe generic context execution separately from PAC and other optional features. Keep the x86 module fail-closed until all later gates pass.
+2. **Keep architecture selection explicit.** Build separate ARM64 and x86_64 module object lists and machine-layer patches.
+   Make FKI capabilities describe generic context execution separately from PAC and other optional features. Default and
+   distributed x86 builds stay fail-closed. A development-only configuration may expose only capabilities whose
+   prerequisites have passed; mark it experimental and never make it the default through a test-only change.
 3. **Prove host-state entry/return in isolation.** Add a disposable x86_64 test for the assembly boundary before entering XNU. Exercise normal return and abort paths, stack alignment, saved registers/flags, Linux FS/GS and page-table state, IRQ/preemption state, and enabled XSAVE state. Verify the Linux task resumes correctly. Test both Intel and AMD CPU profiles; QEMU/KVM can provide early repeatable checks but not final hardware acceptance.
 4. **Prove memory and exception routing.** Add a bounded XNU address-space test and verify page-table isolation, TLB/PCID behavior, Linux host mappings, #PF recovery, and fatal-fault return. Test SMP and CPU hotplug only after the one-CPU case is stable.
-5. **Boot XNU with one CPU.** Supply x86 boot arguments and host calls, reach the firmware/console boundary, then a PureDarwin shell and clean halt. Record each stage separately; reaching the XNU entry is not a PureDarwin boot.
+5. **Boot XNU with one CPU.** After the isolated context, memory, and exception tests pass, use an explicit development-only
+   build to exercise native XNU entry. Supply x86 boot arguments and host calls, reach the firmware/console boundary, then
+   a PureDarwin shell and clean halt. Keep default/distributed builds fail-closed until the acceptance gates pass. Record
+   each stage separately; reaching the XNU entry is not a PureDarwin boot.
 6. **Validate the Tahoe desktop on hardware.** Boot a user-provided x86_64 Tahoe disk through the native module path on physical Intel and AMD Linux PCs separately. Record CPU model/features, Linux kernel/config, RAM, source and disk hashes, display/input/network/disk results, clean shutdown, and Linux host-integrity checks. Keep the ARM64 macOS 27 build and runtime smoke as a regression requirement.
 
-A gate passes only with its named evidence. Until the native XNU boot and host-integrity gates pass, describe x86_64 as in development and keep `fki_caps()` at zero. No Apple macOS image, firmware, or locally supplied SMC key belongs in this repository or its logs.
+A gate passes only with its named evidence. Keep default/distributed x86_64 builds at `fki_caps() == 0` until the native
+XNU boot and host-integrity gates pass. An experimental build must expose only capabilities whose prerequisites have been
+verified, and x86_64 remains in development until all acceptance gates pass. No Apple macOS image, firmware, or locally
+supplied SMC key belongs in this repository or its logs.

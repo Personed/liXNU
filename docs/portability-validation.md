@@ -67,12 +67,15 @@ Report the profile alongside the stage:
   Mach-O inspection found `__TEXT_EXEC` and `__KLD` ranges overlap in the built image. Current #36
   head `97727ac` adds a file-backed range check; run #74 failed in `kclink` before boot because file-backed
   `__TEXT_EXEC` and `__KLD` overlap at `0x3854000-0x3858000`, so run #72 does not validate that changed head. PR #50
-  proposes relocating `__KLD`/`__LAST` and relinking; current run #86 is rebuilding the pinned guest image. PR #52's
-  run #81 built its pinned guest image successfully and has the PureDarwin disk/collection job queued. Cross-host
+  proposes relocating `__KLD`/`__LAST` and relinking; its new run #86 is rebuilding the pinned guest image. PR #52's
+  run #81 built its pinned guest image successfully and has the PureDarwin disk/collection job queued, but #52 is
+  still based on an older #50 head and needs a rebase before its results validate the canonical relink. Cross-host
   Windows and Intel-macOS checks are proposed in [#46](https://github.com/Personed/xnulinux/pull/46); its run #79
   built the guest image and is building the PureDarwin disk/collection, but is based on the pre-relocation, pre-pin
   head. PR #58 adds pre-boot guest image/initramfs hash verification and host-only reports for early failures; its
-  run #85 is building the guest image. After these changes are synchronized, repeat the
+  run #85 is building the guest image. Review still requests a mocked macOS preflight regression and accurate
+  ordering of the Python RAM measurement before artifact hash validation and QEMU. After these changes are
+  synchronized, repeat the
   console/halt flow and host matrix with matching guest input hashes. An earlier Windows job (#71) started QEMU 11.1.0 but hit an
   ARM64 write-permission fault in `macho_copy` while loading `xnu.ko` with the older #44 kernel layout; it did not
   reach a Darwin marker, so this is not a Windows host pass or a Windows host limitation. PR #50 proposes relocating
@@ -156,7 +159,7 @@ Repo commit(s) / PR(s):
 Profile (x86-64 TCG/PureDarwin, native ARM64, ARM64 hosted macOS desktop, or separate x86_64 Tahoe/KVM experiment):
 Outer machine + CPU model/core count / OS + version:
 Host physical RAM total / available RAM before the guest:
-Host RAM measurement phase (native preflight before artifact setup / Python after preparation before QEMU / final report):
+Host RAM measurement phase (native preflight before downloads/setup / Python runner before artifact hash checks and QEMU / final report):
 20 GiB / 4 GiB capacity screen result and any limiting reason:
 Runtime + version / accelerator:
 TCG Linux stage and result (if applicable; do not label as a macOS result):

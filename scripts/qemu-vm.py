@@ -72,9 +72,14 @@ def choose_display_backend(qemu, host, requested=None):
                 "if supported by this QEMU build"
                 if available else ""
             )
+            switch_to_sdl = (
+                "; after installing SDL, retry with --display-backend sdl or "
+                "remove --display-backend to use the Windows default"
+                if requested != "sdl" else "; retry after enabling SDL support"
+            )
             recovery = (
                 "Windows graphical mode requires SDL for its default; install "
-                f"QEMU with SDL support{alternative}; {headless}"
+                f"QEMU with SDL support{alternative}{switch_to_sdl}; {headless}"
             )
         elif available:
             recovery = (

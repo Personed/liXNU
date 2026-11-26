@@ -117,11 +117,26 @@ class QemuLauncherTest(unittest.TestCase):
             with self.assertRaisesRegex(
                 ValueError,
                 "Windows graphical mode requires SDL for its default; install QEMU with SDL "
-                r"support; run headless after removing --graphical, --display-backend, "
+                r"support; after installing SDL, retry with --display-backend sdl or "
+                r"remove --display-backend to use the Windows default; run headless "
+                r"after removing --graphical, --display-backend, "
                 "and --window-title",
             ) as result:
                 qemu_vm.build_command(self.args)
         self.assertNotIn("omit --display-backend", str(result.exception))
+
+    def test_windows_missing_requested_backend_explains_sdl_retry(self):
+        self.args.display_backend = "cocoa"
+        with mock.patch.object(qemu_vm.platform, "system", return_value="Windows"), \
+             mock.patch.object(qemu_vm.subprocess, "run", return_value=mock.Mock(stdout="gtk\n")):
+            with self.assertRaisesRegex(
+                ValueError,
+                r"try an available backend with --display-backend \(gtk\).*after "
+                r"installing SDL, retry with --display-backend sdl or remove "
+                r"--display-backend to use the Windows default",
+            ) as result:
+                qemu_vm.build_command(self.args)
+        self.assertIn("requested display backend 'cocoa'", str(result.exception))
 
     def test_windows_can_select_an_available_non_sdl_backend(self):
         self.args.display_backend = "gtk"

@@ -183,15 +183,14 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
     def test_xnu_rebuild_uses_its_checkout_and_cdpath_dvm(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            launch = root / "launch"
             dev = root / "dev"
             stable = root / "stable"
+            stable_dev = stable / "dev"
             vm = root / "vm-real"
             alternate_vm = root / "vm-alternate"
             fake_bin = root / "bin"
-            launch.mkdir()
             fake_bin.mkdir()
-            for checkout, marker in ((dev, "dev.c"), (stable, "stable.c")):
+            for checkout, marker in ((dev, "dev.c"), (stable_dev, "stable.c")):
                 (checkout / "scripts").mkdir(parents=True)
                 (checkout / "xnu-patches/include").mkdir(parents=True)
                 (checkout / "xnu-patches/corecrypto/include/corecrypto").mkdir(parents=True)
@@ -236,7 +235,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             env = os.environ.copy()
             env.update(
                 {
-                    "CDPATH": "../stable",
+                    "CDPATH": "stable",
                     "DVM": "vm-link",
                     "DVM_CAPTURE": str(capture),
                     "PATH": str(fake_bin) + os.pathsep + env["PATH"],
@@ -244,8 +243,8 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             )
             env.pop("POC", None)
             result = subprocess.run(
-                ["bash", "../dev/scripts/vm-xnu-rebuild.sh"],
-                cwd=launch,
+                ["bash", "dev/scripts/vm-xnu-rebuild.sh"],
+                cwd=root,
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,

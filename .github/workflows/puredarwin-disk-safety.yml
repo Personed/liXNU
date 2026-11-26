@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: PureDarwin disk safety
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/puredarwin-disk-safety.yml'
+      - 'scripts/mk-puredarwin-disk.sh'
+      - 'tests/test-mk-puredarwin-disk-output.sh'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  output-safety:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: |
+          bash -n scripts/mk-puredarwin-disk.sh
+          bash -n tests/test-mk-puredarwin-disk-output.sh
+      - name: Existing destination regression
+        run: bash tests/test-mk-puredarwin-disk-output.sh

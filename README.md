@@ -99,14 +99,13 @@ Working on two arm64 Linux setups:
 | Linux host | Guest target | Status |
 |---|---|---|
 | ARM64 with PAC and 4 KiB pages | macOS 27 ARM64 (direct hosted XNU) | Existing supported path; tested on Apple Silicon Linux VMs and NVIDIA DGX Spark as described above. |
-| Intel x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | FKI host-backend module build passes; XNU execution and physical Intel acceptance are pending. |
-| AMD x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | FKI host-backend module build passes; XNU execution and physical AMD acceptance are pending. |
+| Intel x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | Target architecture; FKI/XNU port and physical Intel acceptance are pending. |
+| AMD x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | Target architecture; FKI/XNU port and physical AMD acceptance are pending. |
 | Intel/AMD x86_64 with QEMU/KVM | User-prepared macOS guest | Complementary launcher experiment; does not use the hosted-XNU modules or validate the native port. |
 | Intel/AMD x86_64 with QEMU TCG | ARM64 Linux (complementary test profile) | Linux/module evidence only; not a native x86_64 hosted-XNU result. |
 
-The x86_64 native target is not a support claim yet: the FKI host backend exposes no XNU execution capabilities, and
-the architecture-specific XNU execution path plus physical Intel and AMD desktop boots with Linux host-integrity checks
-remain to be completed. QEMU/KVM guest launch, x86_64 Linux TCG smoke,
+The x86_64 native target is not a support claim yet: the architecture-specific FKI/XNU port and physical Intel and AMD
+desktop boots with Linux host-integrity checks remain to be completed. QEMU/KVM guest launch, x86_64 Linux TCG smoke,
 and ARM64 module-probe results are separate checks and do not establish native x86_64 hosted-XNU support. See
 [`tests/x86_64/README.md`](tests/x86_64/README.md) and [`docs/portability-validation.md`](docs/portability-validation.md)
 for complementary launcher/tests and stage-specific evidence.

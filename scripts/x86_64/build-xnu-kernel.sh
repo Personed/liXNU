@@ -288,9 +288,16 @@ verify_trustcache_header() {
     TRUSTCACHE_HEADER_SOURCE='pinned-xcode-sdk'
   else
     local sdk_usr_include_header="$sdk_root/usr/include/TrustCache/API.h"
-    local sdk_header_candidates_file="$BUILD_ROOT/trustcache-sdk-header-candidates.txt"
-    local sdk_header_sorted_candidates_file="$BUILD_ROOT/trustcache-sdk-header-candidates.sorted.txt"
-    local sdk_header_scan_errors="$BUILD_ROOT/trustcache-sdk-header-scan-errors.log"
+    local sdk_header_scan_root="$BUILD_ROOT"
+    local sdk_header_scan_temp_root=''
+    if (( CHECK_ONLY )); then
+      sdk_header_scan_temp_root="$(mktemp -d "${TMPDIR:-/tmp}/xnulinux-trustcache-scan.XXXXXX")" \
+        || fail 'cannot create a temporary directory for the TrustCache SDK scan in --check mode'
+      sdk_header_scan_root="$sdk_header_scan_temp_root"
+    fi
+    local sdk_header_candidates_file="$sdk_header_scan_root/trustcache-sdk-header-candidates.txt"
+    local sdk_header_sorted_candidates_file="$sdk_header_scan_root/trustcache-sdk-header-candidates.sorted.txt"
+    local sdk_header_scan_errors="$sdk_header_scan_root/trustcache-sdk-header-scan-errors.log"
     local sdk_header_scan_status='complete'
     : > "$sdk_header_candidates_file"
     : > "$sdk_header_sorted_candidates_file"
@@ -308,6 +315,7 @@ verify_trustcache_header() {
       printf 'trustcache_header_scan_status=failed\ntrustcache_header_scan_candidates=%s\ntrustcache_header_scan_errors=%s\n' \
         "$sdk_header_candidates_file" "$sdk_header_scan_errors" >> "$KDK_DIAGNOSTIC_TARGET"
       [[ ! -s "$sdk_header_scan_errors" ]] || cat "$sdk_header_scan_errors" >&2
+      [[ -z "$sdk_header_scan_temp_root" ]] || rm -rf -- "$sdk_header_scan_temp_root"
       fail "full Xcode SDK TrustCache header scan failed; no absence claim is made (candidate list: $sdk_header_candidates_file; errors: $sdk_header_scan_errors)"
     fi
     mv "$sdk_header_sorted_candidates_file" "$sdk_header_candidates_file"
@@ -318,6 +326,7 @@ verify_trustcache_header() {
     printf 'trustcache_header_status=missing\ntrustcache_header_scan_status=complete\nchecked_target_search_paths=%s|%s\nunsupported_public_sdk_path=%s\nfull_sdk_header_scan=%s\n' \
       "$sdk_header" "$sdk_framework_header" "$sdk_usr_include_header" "$sdk_header_candidates_flat" \
       >> "$KDK_DIAGNOSTIC_TARGET"
+    [[ -z "$sdk_header_scan_temp_root" ]] || rm -rf -- "$sdk_header_scan_temp_root"
     fail "XNU source requires real TrustCache/API.h in the target's explicit include paths; none exists in the macOS $SDK_VERSION SDK and no matching KDK is available. Full SDK scan found: $sdk_header_candidates_flat. A copy under usr/include is not accepted because this target uses -nostdlibinc and does not search that tree; no header stub will be used (checked $sdk_header and $sdk_framework_header; unsupported path $sdk_usr_include_header)"
   fi
   TRUSTCACHE_HEADER_SHA256="$(shasum -a 256 "$TRUSTCACHE_HEADER" | awk '{print $1}')"

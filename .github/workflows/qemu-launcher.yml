@@ -19,6 +19,8 @@ jobs:
         run: python tests/qemu/test_launcher.py
       - name: Test Windows cleanup fallback
         run: python tests/qemu/test_uefi_launch.py UefiLaunchTest.test_windows_cleanup_kills_launcher_when_taskkill_times_out
+      - name: Test cleanup when taskkill cannot start
+        run: python tests/qemu/test_uefi_launch.py UefiLaunchTest.test_windows_cleanup_falls_back_when_taskkill_cannot_start
       - name: Install QEMU on Linux
         if: runner.os == 'Linux'
         run: |

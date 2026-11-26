@@ -150,6 +150,8 @@ class TcgE2eReportTests(unittest.TestCase):
                 final_host["memory_available_before_qemu_bytes"],
                 final_host["memory_available_after_qemu_attempt_bytes"],
             )
+            for sample in python_samples:
+                self.assertIs(type(sample), int)
             self.assertEqual(python_samples, PYTHON_MEMORY_SAMPLES)
             self.assertEqual(len(set(python_samples)), 3)
             self.assertIn("at Python runner start", summary)

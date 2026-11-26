@@ -191,9 +191,10 @@ static long hc_xlate_one(struct mm_struct *mm, unsigned long va, u64 *pa)
 		follow_pfnmap_end(&args);
 		return 0;
 	}
-	if (get_user_pages_remote(mm, va, 1, FOLL_WRITE, &pg, NULL) != 1)
+	if (get_user_pages_remote(mm, va, 1, FOLL_WRITE, &pg, NULL) != 1) {
 		return -EFAULT;
-	*pa = page_to_phys(pg);
+	}
+	*pa = PFN_PHYS(page_to_pfn(pg));
 	put_page(pg);		/* the mapping's owner (a GEM object) keeps the page */
 	return 0;
 }

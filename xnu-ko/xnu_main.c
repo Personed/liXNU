@@ -106,9 +106,9 @@ module_param(xo_compat, int, 0444);
 static char *el0_fips_sha256 = "";
 module_param(el0_fips_sha256, charp, 0444);
 
-__attribute__((target("branch-protection=none"), noreturn))
+XNU_BRANCH_PROTECTION_NONE __attribute__((noreturn))
 void xnu_world_pac_abort_el0(int err);
-__attribute__((target("branch-protection=none"), noreturn))
+XNU_BRANCH_PROTECTION_NONE __attribute__((noreturn))
 void xnu_world_pac_abort_el0(int err)
 {
 	static const char msg[] = "xnu: FATAL: fki_pac_swap failed in EL0 upcall\n";
@@ -2343,17 +2343,18 @@ static void xnu_cleanup(void)
 
 static int __init xnu_init(void)
 {
-	const void *data; unsigned long size;
+	const void *data; unsigned long size, caps;
 	int err;
 
 	if (fki_version() != FKI_VERSION)
 		return -22;
 	if (ram_mb <= 0 || ram_mb > 65536)
 		return -22;
-	el0_mode = !!(fki_caps() & FKI_CAP_EL0);
-	logkv("xnu: FKI caps", fki_caps());
-	if (el0_mode && !(fki_caps() & FKI_CAP_PAC)) {
-		logs("xnu: EL0 mode requires FKI_CAP_PAC");
+	caps = fki_caps();
+	el0_mode = !!(caps & FKI_CAP_EL0);
+	logkv("xnu: FKI caps", caps);
+	if (!(caps & FKI_CAP_PAC)) {
+		logs("xnu: FKI_CAP_PAC is required");
 		return -95;
 	}
 	/* every random number XNU takes comes from Linux's generator (the boot seeds, LINUX64_CALL_RANDOM): seeded first */

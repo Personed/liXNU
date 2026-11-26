@@ -52,6 +52,10 @@ jobs:
           assert manifest["build_process_translated"] is False, manifest
           assert manifest["target_architecture"] == "x86_64", manifest
           assert manifest["architecture"] == "x86_64", manifest
+          assert manifest["host_sdkroot"].endswith("/MacOSX.sdk"), manifest
+          assert manifest["host_sys_unistd_headers_match"] is True, manifest
+          assert manifest["host_sys_unistd_base_sha256"] == manifest["host_sys_unistd_overlay_sha256"], manifest
+          assert manifest["host_tool_base_unistd_probe"] == "passed", manifest
           PY
       - uses: actions/upload-artifact@v4
         with:
@@ -75,6 +79,9 @@ jobs:
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/libdispatch-build.log
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/x86_64-build.env
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/sdk-public-availability.sha256
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/host-sdk-diagnostic.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/host-tool-unistd-base-probe.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/host-tool-unistd-overlay-probe.log
           if-no-files-found: ignore
           retention-days: 5
   cross-build-on-arm64-host:
@@ -113,6 +120,10 @@ jobs:
           assert manifest["build_process_translated"] is False, manifest
           assert manifest["target_architecture"] == "x86_64", manifest
           assert manifest["architecture"] == "x86_64", manifest
+          assert manifest["host_sdkroot"].endswith("/MacOSX.sdk"), manifest
+          assert manifest["host_sys_unistd_headers_match"] is True, manifest
+          assert manifest["host_sys_unistd_base_sha256"] == manifest["host_sys_unistd_overlay_sha256"], manifest
+          assert manifest["host_tool_base_unistd_probe"] == "passed", manifest
           PY
       - uses: actions/upload-artifact@v4
         with:
@@ -136,5 +147,8 @@ jobs:
             ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/libdispatch-build.log
             ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/x86_64-build.env
             ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/sdk-public-availability.sha256
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/host-sdk-diagnostic.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/host-tool-unistd-base-probe.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/host-tool-unistd-overlay-probe.log
           if-no-files-found: ignore
           retention-days: 5

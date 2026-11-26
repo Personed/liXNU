@@ -95,7 +95,14 @@ LIBDISPATCH_SOURCE_DIR="$BUILD_ROOT/libdispatch-source"
 AVAILABILITY_SOURCE_DIR="$BUILD_ROOT/availability-versions"
 OUT_DIR="$BUILD_ROOT/out"
 BASE_SDK_DIR=''
+HOST_CLANG=''
+HOST_OS_VERSION=''
+HOST_SYS_UNISTD_BASE_SHA256=''
+HOST_SYS_UNISTD_OVERLAY_SHA256=''
 SDK_DIR="$OUT_DIR/sdk/MacOSX26.1.sdk"
+XNU_KERNEL_FRAMEWORK_DIR="$SDK_DIR/System/Library/Frameworks/Kernel.framework"
+XNU_KERNEL_PRIVATE_HEADERS="$XNU_KERNEL_FRAMEWORK_DIR/PrivateHeaders"
+XNU_KERNEL_HEADERS="$XNU_KERNEL_FRAMEWORK_DIR/Headers"
 OBJROOT="$OUT_DIR/obj"
 SYMROOT="$OUT_DIR/sym"
 DSTROOT="$OUT_DIR/dst"
@@ -116,6 +123,7 @@ LIBDISPATCH_ARCHIVE="$LIBDISPATCH_DSTROOT/usr/local/lib/kernel/libfirehose_kerne
 RESULT="$OUT_DIR/build-result.json"
 SDK_PUBLIC_AVAILABILITY_SHA256_FILE="$OUT_DIR/sdk-public-availability.sha256"
 SDK_PUBLIC_AVAILABILITY_SHA256=''
+HOST_SDK_DIAGNOSTIC_LOG="$OUT_DIR/host-sdk-diagnostic.log"
 
 sdk_availability_headers_sha256() {
   local sdk_root="$1" header material=''
@@ -164,6 +172,7 @@ verify_sdk() {
     || fail 'SDK overlay is missing the staged libfirehose_kernel archive'
   verify_machine_header_exports
   verify_public_availability_header
+  verify_public_sys_unistd_header
 }
 
 verify_machine_header_exports() {
@@ -196,6 +205,135 @@ verify_public_availability_header() {
       || fail 'Xcode SDK is missing one or more public availability headers'
     [[ "$base_sha256" == "$SDK_PUBLIC_AVAILABILITY_SHA256" ]] \
       || fail 'Xcode SDK public availability headers no longer match the recorded build baseline'
+  fi
+}
+
+verify_public_sys_unistd_header() {
+  [[ -n "$BASE_SDK_DIR" ]] || fail 'missing base Xcode SDK for public sys/unistd.h comparison'
+  local base_header="$BASE_SDK_DIR/usr/include/sys/unistd.h"
+  local overlay_header="$SDK_DIR/usr/include/sys/unistd.h"
+  [[ -s "$base_header" && -s "$overlay_header" ]] \
+    || fail 'base or target SDK is missing public sys/unistd.h'
+  cmp -s "$base_header" "$overlay_header" \
+    || fail 'target SDK overlay changed Xcode public sys/unistd.h'
+}
+
+run_host_tool_unistd_probe() {
+  local sdk_root="$1" output_file="${2:-/dev/stderr}"
+  printf '#include <unistd.h>\nint xnu_host_unistd_probe;\n' |
+    "$HOST_CLANG" -isysroot "$sdk_root" -mmacosx-version-min="$HOST_OS_VERSION" \
+      -g -O0 -I "$SOURCE_DIR" -I "$SOURCE_DIR/SETUP/config" -DYY_NO_INPUT -Wall \
+      -fsyntax-only -x c - >"$output_file" 2>&1
+}
+
+verify_host_tool_unistd_probe() {
+  local sdk_root="$1" label="$2" output_file="${3:-/dev/stderr}"
+  if ! run_host_tool_unistd_probe "$sdk_root" "$output_file"; then
+    fail "XNU host-tool <unistd.h> probe failed with $label SDK root $sdk_root"
+  fi
+}
+
+record_host_sdk_diagnostics() {
+  local base_unistd="$BASE_SDK_DIR/usr/include/sys/unistd.h"
+  local overlay_unistd="$SDK_DIR/usr/include/sys/unistd.h"
+  local base_probe_log="$OUT_DIR/host-tool-unistd-base-probe.log"
+  local overlay_probe_log="$OUT_DIR/host-tool-unistd-overlay-probe.log"
+  local headers_match='false' overlay_probe='failed'
+  [[ -s "$base_unistd" ]] || fail "base Xcode SDK is missing $base_unistd"
+  [[ -s "$overlay_unistd" ]] || fail "XNU SDK overlay is missing $overlay_unistd"
+  HOST_SYS_UNISTD_BASE_SHA256="$(shasum -a 256 "$base_unistd" | awk '{print $1}')"
+  HOST_SYS_UNISTD_OVERLAY_SHA256="$(shasum -a 256 "$overlay_unistd" | awk '{print $1}')"
+  if cmp -s "$base_unistd" "$overlay_unistd"; then
+    headers_match='true'
+  fi
+
+  : > "$base_probe_log"
+  verify_host_tool_unistd_probe "$BASE_SDK_DIR" 'base Xcode' "$base_probe_log"
+  if run_host_tool_unistd_probe "$SDK_DIR" "$overlay_probe_log"; then
+    overlay_probe='passed'
+  fi
+
+  {
+    printf 'host_clang=%s\n' "$HOST_CLANG"
+    printf 'host_os_version=%s\n' "$HOST_OS_VERSION"
+    printf 'host_sdkroot=%s\n' "$BASE_SDK_DIR"
+    printf 'target_sdkroot=%s\n' "$SDK_DIR"
+    printf 'sys_unistd_base_sha256=%s\n' "$HOST_SYS_UNISTD_BASE_SHA256"
+    printf 'sys_unistd_overlay_sha256=%s\n' "$HOST_SYS_UNISTD_OVERLAY_SHA256"
+    printf 'sys_unistd_headers_match=%s\n' "$headers_match"
+    printf 'host_tool_base_unistd_probe=passed\n'
+    printf 'host_tool_overlay_unistd_probe=%s\n' "$overlay_probe"
+    printf 'probe_flags=-isysroot <sdk-root> -mmacosx-version-min=%s -g -O0 -I %s -I %s/SETUP/config -DYY_NO_INPUT -Wall -fsyntax-only -x c\n' \
+      "$HOST_OS_VERSION" "$SOURCE_DIR" "$SOURCE_DIR"
+  } > "$HOST_SDK_DIAGNOSTIC_LOG"
+  if [[ "$headers_match" == false ]]; then
+    {
+      printf '\n--- sys/unistd.h base/overlay diff (first 100 lines) ---\n'
+      diff -u "$base_unistd" "$overlay_unistd" | sed -n '1,100p' || true
+    } >> "$HOST_SDK_DIAGNOSTIC_LOG"
+  fi
+  if [[ "$overlay_probe" == failed ]]; then
+    {
+      printf '\n--- overlay host-tool unistd probe failure ---\n'
+      cat "$overlay_probe_log"
+    } >> "$HOST_SDK_DIAGNOSTIC_LOG"
+  fi
+  printf 'Host-tool SDK diagnostics: base sys/unistd.h %s; overlay %s; base probe passed, overlay probe %s\n' \
+    "$([[ "$headers_match" == true ]] && printf 'matches overlay' || printf 'differs from overlay')" \
+    "$HOST_SYS_UNISTD_OVERLAY_SHA256" "$overlay_probe"
+  [[ "$headers_match" == true ]] \
+    || fail "XNU header staging replaced Xcode public sys/unistd.h; see $HOST_SDK_DIAGNOSTIC_LOG"
+}
+
+verify_xnu_host_tool_compile_commands() {
+  if ! python3 - "$LOG" "$BASE_SDK_DIR" "$SDK_DIR" "$HOST_CLANG" <<'PY'
+import pathlib
+import re
+import shlex
+import sys
+
+log_path = pathlib.Path(sys.argv[1])
+base_sdk = pathlib.Path(sys.argv[2]).resolve()
+target_sdk = pathlib.Path(sys.argv[3]).resolve()
+host_clang = pathlib.Path(sys.argv[4]).resolve()
+ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+required_sources = ("kextsymboltool.c", "mkheaders.c")
+commands = {source: [] for source in required_sources}
+for raw_line in log_path.read_text(errors="replace").splitlines():
+    line = ansi.sub("", raw_line)
+    try:
+        tokens = shlex.split(line)
+    except ValueError:
+        continue
+    if not tokens:
+        continue
+    for source in required_sources:
+        if any(token == source or token.endswith("/" + source) for token in tokens):
+            if "-c" in tokens:
+                commands[source].append(tokens)
+
+for source, invocations in commands.items():
+    if not invocations:
+        raise SystemExit(f"missing verbose host-tool clang invocation for {source} in {log_path}")
+    for tokens in invocations:
+        if pathlib.Path(tokens[0]).resolve() != host_clang:
+            raise SystemExit(f"{source} was not compiled by the pinned host clang: {tokens[0]}")
+        roots = [
+            str(pathlib.Path(tokens[i + 1]).resolve())
+            for i, token in enumerate(tokens[:-1]) if token == "-isysroot"
+        ]
+        if roots != [str(base_sdk)]:
+            raise SystemExit(f"{source} host clang sysroots are {roots}; expected {base_sdk}")
+        if str(target_sdk) in roots:
+            raise SystemExit(f"{source} host clang unexpectedly uses XNU target overlay {target_sdk}")
+        if "-g" not in tokens or "-O0" not in tokens:
+            raise SystemExit(f"{source} command is missing XNU's host-tool debug flags")
+        if source == "mkheaders.c" and "-DYY_NO_INPUT" not in tokens:
+            raise SystemExit("mkheaders.c command is missing XNU's YY_NO_INPUT define")
+    print(f"Verified {source}: host clang uses registered Xcode sysroot {base_sdk}")
+PY
+  then
+    fail 'XNU verbose host-tool compile commands did not use the registered Xcode SDK'
   fi
 }
 
@@ -254,40 +392,24 @@ def resolve_response_file(args, objroot):
     return path
 
 
-# Exercise tokenization and the full response-file path check with the escaped
-# Xcode path and hash-prefixed response-file names produced by Xcode builds.
-with tempfile.TemporaryDirectory() as fixture_dir:
-    fixture_objroot = pathlib.Path(fixture_dir).resolve()
-    fixture_response = fixture_objroot / "b52759a1-common-args.resp"
-    fixture_response.write_text(r"-isysroot /tmp/sdk\ path\ with\ spaces" + "\n")
-    fixture = (
-        r"/Applications/Xcode\ 26.1.1.app/Contents/Developer/Toolchains/"
-        r"XcodeDefault.xctoolchain/usr/bin/clang @"
-        + shlex.quote(str(fixture_response))
-        + r" -isysroot /tmp/sdk\ path -I/tmp/include\ path"
-    )
-    fixture_tokens = shlex.split(fixture)
-    if pathlib.PurePath(fixture_tokens[0]).name != "clang":
-        raise SystemExit("could not parse a clang command with an escaped Xcode path")
-    fixture_path = resolve_response_file(fixture_tokens[1:], fixture_objroot)
-    if fixture_path != fixture_response.resolve():
-        raise SystemExit("could not parse an Xcode response file with a hash-prefixed name")
-    if shlex.split(fixture_path.read_text()) != ["-isysroot", "/tmp/sdk path with spaces"]:
-        raise SystemExit("could not parse arguments from the hash-prefixed response file")
+def expand_response_arguments(args, response_path, response_args):
+    expanded = []
+    response_count = 0
+    for arg in args:
+        if arg.startswith("@"):
+            if pathlib.Path(arg[1:]).resolve() != response_path:
+                raise SystemExit(f"unexpected Firehose compiler response file: {arg[1:]}")
+            response_count += 1
+            expanded.extend(response_args)
+        else:
+            expanded.append(arg)
+    if response_count != 1:
+        raise SystemExit(f"expected one Firehose response-file reference, found {response_count}")
+    return expanded
 
-if len(compile_commands) != 1:
-    raise SystemExit(
-        f"expected one logged clang command for firehose_buffer.c, found {len(compile_commands)}"
-    )
-_, compile_tokens, clang_index = compile_commands[0]
-command_args = compile_tokens[clang_index + 1:]
-response_path = resolve_response_file(command_args, objroot)
 
-response_args = shlex.split(response_path.read_text(errors="replace"))
-argument_sets = (command_args, response_args)
-
-sysroots = []
-for args in argument_sets:
+def verify_sdk_and_overlay_search_paths(args, overlay_root, base_sdk_root):
+    sysroots = []
     for index, arg in enumerate(args):
         if arg == "-isysroot" and index + 1 < len(args):
             sysroots.append(args[index + 1])
@@ -295,11 +417,10 @@ for args in argument_sets:
             # Clang's joined form is -isysroot<dir>; preserve '=' as part of
             # the path so an unsupported -isysroot=<dir> cannot false-pass.
             sysroots.append(arg[len("-isysroot"):])
-if not sysroots or any(pathlib.Path(path).resolve() != base_sdk_root for path in sysroots):
-    raise SystemExit(f"Firehose compile uses SDKROOT {sysroots}; expected only {base_sdk_root}")
+    if not sysroots or any(pathlib.Path(path).resolve() != base_sdk_root for path in sysroots):
+        raise SystemExit(f"Firehose compile uses SDKROOT {sysroots}; expected only {base_sdk_root}")
 
-include_paths = []
-for args in argument_sets:
+    include_paths = []
     index = 0
     while index < len(args):
         arg = args[index]
@@ -310,19 +431,97 @@ for args in argument_sets:
             include_paths.append(arg[2:])
         index += 1
 
-required = {
-    sdk_root / "usr/local/include",
-    sdk_root / "usr/local/include/os",
-    sdk_root / "usr/local/include/firehose",
-}
-resolved_includes = {pathlib.Path(path).resolve() for path in include_paths}
-missing = sorted(str(path) for path in required - resolved_includes)
-if missing:
-    raise SystemExit(f"Firehose compiler is missing staged SDK include paths: {missing}")
+    resolved_include_paths = [pathlib.Path(path).resolve() for path in include_paths]
+    required_overlay_paths = {
+        overlay_root / "System/Library/Frameworks/Kernel.framework/PrivateHeaders",
+        overlay_root / "System/Library/Frameworks/Kernel.framework/Headers",
+        overlay_root / "usr/local/include",
+        overlay_root / "usr/local/include/os",
+        overlay_root / "usr/local/include/firehose",
+    }
+    resolved_required = {path.resolve() for path in required_overlay_paths}
+    missing = sorted(str(path) for path in resolved_required - set(resolved_include_paths))
+    if missing:
+        raise SystemExit(f"Firehose compiler is missing staged overlay include paths: {missing}")
+
+    for suffix in (
+        "System/Library/Frameworks/Kernel.framework/PrivateHeaders",
+        "System/Library/Frameworks/Kernel.framework/Headers",
+    ):
+        overlay_path = (overlay_root / suffix).resolve()
+        base_path = (base_sdk_root / suffix).resolve()
+        overlay_positions = [i for i, path in enumerate(resolved_include_paths) if path == overlay_path]
+        base_positions = [i for i, path in enumerate(resolved_include_paths) if path == base_path]
+        if not overlay_positions or not base_positions:
+            raise SystemExit(
+                f"Firehose compile must search both staged and base Kernel.framework headers: {suffix}"
+            )
+        if min(overlay_positions) >= min(base_positions):
+            raise SystemExit(
+                f"staged Kernel.framework headers do not precede base SDK headers: {suffix}"
+            )
+
+
+# Exercise tokenization and the full response-file path check with the escaped
+# Xcode path and hash-prefixed response-file names produced by Xcode builds.
+with tempfile.TemporaryDirectory() as fixture_dir:
+    fixture_objroot = pathlib.Path(fixture_dir).resolve()
+    fixture_response = fixture_objroot / "b52759a1-common-args.resp"
+    fixture_base_sdk = fixture_objroot / "Xcode SDK with spaces"
+    fixture_overlay = fixture_objroot / "staged SDK with spaces"
+    framework_suffixes = (
+        "System/Library/Frameworks/Kernel.framework/PrivateHeaders",
+        "System/Library/Frameworks/Kernel.framework/Headers",
+    )
+    fixture_includes = []
+    for suffix in framework_suffixes:
+        fixture_includes.extend(("-I", str(fixture_overlay / suffix)))
+    for suffix in (
+        "usr/local/include",
+        "usr/local/include/os",
+        "usr/local/include/firehose",
+        *framework_suffixes,
+    ):
+        fixture_includes.extend(("-I", str(fixture_overlay / suffix)))
+    for suffix in framework_suffixes:
+        fixture_includes.extend(("-I", str(fixture_base_sdk / suffix)))
+    fixture_arguments = ["-isysroot", str(fixture_base_sdk), *fixture_includes]
+    fixture_response.write_text(shlex.join(fixture_arguments) + "\n")
+    fixture = (
+        r"/Applications/Xcode\ 26.1.1.app/Contents/Developer/Toolchains/"
+        r"XcodeDefault.xctoolchain/usr/bin/clang @"
+        + shlex.quote(str(fixture_response))
+        + " -isysroot " + shlex.quote(str(fixture_base_sdk))
+        + r" -I/tmp/include\ path"
+    )
+    fixture_tokens = shlex.split(fixture)
+    if pathlib.PurePath(fixture_tokens[0]).name != "clang":
+        raise SystemExit("could not parse a clang command with an escaped Xcode path")
+    fixture_path = resolve_response_file(fixture_tokens[1:], fixture_objroot)
+    if fixture_path != fixture_response.resolve():
+        raise SystemExit("could not parse an Xcode response file with a hash-prefixed name")
+    expanded_fixture = expand_response_arguments(
+        fixture_tokens[1:], fixture_path, shlex.split(fixture_path.read_text())
+    )
+    verify_sdk_and_overlay_search_paths(
+        expanded_fixture, fixture_overlay, fixture_base_sdk
+    )
+
+if len(compile_commands) != 1:
+    raise SystemExit(
+        f"expected one logged clang command for firehose_buffer.c, found {len(compile_commands)}"
+    )
+_, compile_tokens, clang_index = compile_commands[0]
+command_args = compile_tokens[clang_index + 1:]
+response_path = resolve_response_file(command_args, objroot)
+
+response_args = shlex.split(response_path.read_text(errors="replace"))
+effective_args = expand_response_arguments(command_args, response_path, response_args)
+verify_sdk_and_overlay_search_paths(effective_args, sdk_root, base_sdk_root)
 
 print(f"Verified Firehose compiler response file: {response_path}")
 print(f"Verified Firehose base SDKROOT: {base_sdk_root}")
-print(f"Verified staged XNU header include paths: {sdk_root}")
+print(f"Verified staged XNU Kernel.framework precedence and include paths: {sdk_root}")
 PY
   then
     fail 'Firehose compile command did not use the Xcode base SDK and staged XNU header overlay'
@@ -377,6 +576,9 @@ verify_xcode_and_sdk() {
   [[ "$ACTUAL_XCODE_VERSION" == "Xcode $XCODE_VERSION "* ]] || fail "Xcode does not match pinned version $XCODE_VERSION"
   BASE_SDK_DIR="$(xcrun --sdk macosx --show-sdk-path)"
   [[ -n "$BASE_SDK_DIR" && -d "$BASE_SDK_DIR" ]] || fail 'Xcode did not resolve its macOS SDK'
+  HOST_CLANG="$(xcrun --sdk macosx --find clang)"
+  [[ -x "$HOST_CLANG" ]] || fail 'Xcode did not resolve its host clang'
+  HOST_OS_VERSION="$(sw_vers -productVersion)"
   verify_sdk_version "$BASE_SDK_DIR"
 }
 
@@ -391,6 +593,7 @@ if (( CHECK_ONLY )); then
   [[ "$SDK_PUBLIC_AVAILABILITY_SHA256" =~ ^[[:xdigit:]]{64}$ ]] \
     || fail 'recorded SDK public availability header SHA-256 is malformed'
   verify_sdk
+  verify_host_tool_unistd_probe "$BASE_SDK_DIR" 'base Xcode'
   xcodebuild -version
   xcrun --find clang >/dev/null
   xcrun --find ld >/dev/null
@@ -442,6 +645,7 @@ fi
 verify_availability_source
 
 verify_xcode_and_sdk
+verify_host_tool_unistd_probe "$BASE_SDK_DIR" 'base Xcode'
 CLANG="$(xcrun --find clang)"
 LD="$(xcrun --find ld)"
 IIG="$(xcrun --find iig)"
@@ -481,7 +685,7 @@ verify_public_availability_header
 mkdir -p "$XNU_HEADERS_OBJROOT" "$XNU_HEADERS_DSTROOT"
 printf 'Exporting XNU kernel headers from %s before private header installation\n' "$XNU_TAG"
 if make -C "$SOURCE_DIR" exporthdrs \
-  SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$SDK_DIR" \
+  SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$BASE_SDK_DIR" \
   SDKVERSION="$SDK_VERSION" PLATFORM=MacOSX \
   ARCH_CONFIGS=X86_64 MACHINE_CONFIGS=NONE KERNEL_CONFIGS=DEVELOPMENT \
   RC_DARWIN_KERNEL_VERSION="$KERNEL_VERSION" RC_ProjectSourceVersion="$SOURCE_VERSION" \
@@ -494,7 +698,7 @@ else
 fi
 printf 'Installing private headers from XNU %s before Firehose build\n' "$XNU_TAG"
 if make -C "$SOURCE_DIR" installhdrs \
-  SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$SDK_DIR" \
+  SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$BASE_SDK_DIR" \
   SDKVERSION="$SDK_VERSION" PLATFORM=MacOSX \
   ARCH_CONFIGS=X86_64 MACHINE_CONFIGS=NONE KERNEL_CONFIGS=DEVELOPMENT \
   RC_DARWIN_KERNEL_VERSION="$KERNEL_VERSION" RC_ProjectSourceVersion="$SOURCE_VERSION" \
@@ -505,11 +709,24 @@ else
   tail -n 100 "$XNU_HEADERS_LOG" >&2
   fail "XNU installhdrs failed; full log: $XNU_HEADERS_LOG"
 fi
-ditto "$XNU_HEADERS_DSTROOT" "$SDK_DIR"
+XNU_KERNEL_FRAMEWORK_DSTROOT="$XNU_HEADERS_DSTROOT/System/Library/Frameworks/Kernel.framework"
+XNU_PRIVATE_INCLUDE_DSTROOT="$XNU_HEADERS_DSTROOT/usr/local/include"
+[[ -d "$XNU_KERNEL_FRAMEWORK_DSTROOT" ]] \
+  || fail 'XNU installhdrs did not produce Kernel.framework headers'
+[[ -d "$XNU_PRIVATE_INCLUDE_DSTROOT" ]] \
+  || fail 'XNU installhdrs did not produce usr/local/include private headers'
+# Keep the SDK's public usr/include tree from installhdrs out of the target overlay.
+mkdir -p "$SDK_DIR/System/Library/Frameworks" "$SDK_DIR/usr/local"
+ditto "$XNU_KERNEL_FRAMEWORK_DSTROOT" "$XNU_KERNEL_FRAMEWORK_DIR"
+ditto "$XNU_PRIVATE_INCLUDE_DSTROOT" "$SDK_DIR/usr/local/include"
 [[ -s "$SDK_DIR/usr/local/include/os/atomic_private.h" ]] \
   || fail 'XNU installhdrs did not stage usr/local/include/os/atomic_private.h'
 [[ -s "$SDK_DIR/usr/local/include/firehose/tracepoint_private.h" ]] \
   || fail 'XNU installhdrs did not stage usr/local/include/firehose/tracepoint_private.h'
+[[ -d "$XNU_KERNEL_PRIVATE_HEADERS" ]] \
+  || fail 'XNU installhdrs did not stage Kernel.framework/PrivateHeaders'
+[[ -d "$XNU_KERNEL_HEADERS" ]] \
+  || fail 'XNU installhdrs did not stage Kernel.framework/Headers'
 [[ -x "$SDK_DIR/usr/local/libexec/availability.pl" ]] \
   || fail 'XNU header installation removed AvailabilityVersions availability.pl'
 mkdir -p "$SDK_DIR/usr/local/include/machine" "$SDK_DIR/usr/local/include/i386"
@@ -518,6 +735,7 @@ cp "$XNU_EXPORTED_OSFMK_HEADERS_DIR/i386/cpu_number.h" "$SDK_DIR/usr/local/inclu
 verify_machine_header_exports
 verify_firehose_header_closure
 verify_public_availability_header
+record_host_sdk_diagnostics
 
 mkdir -p "$LIBDISPATCH_BUILD_DIR/obj" "$LIBDISPATCH_BUILD_DIR/sym" "$LIBDISPATCH_DSTROOT"
 printf 'Building libfirehose_kernel from %s for x86_64\n' "$LIBDISPATCH_TAG"
@@ -525,7 +743,7 @@ if xcodebuild \
   -project "$LIBDISPATCH_SOURCE_DIR/libdispatch.xcodeproj" \
   -target libfirehose_kernel -configuration Release -sdk macosx \
   ARCHS=x86_64 VALID_ARCHS=x86_64 PRODUCT_NAME=firehose_kernel \
-  HEADER_SEARCH_PATHS="\$(inherited) $SDK_DIR/usr/local/include $SDK_DIR/usr/local/include/os $SDK_DIR/usr/local/include/firehose" \
+  HEADER_SEARCH_PATHS="$XNU_KERNEL_PRIVATE_HEADERS $XNU_KERNEL_HEADERS $SDK_DIR/usr/local/include $SDK_DIR/usr/local/include/os $SDK_DIR/usr/local/include/firehose \$(inherited)" \
   OBJROOT="$LIBDISPATCH_BUILD_DIR/obj" SYMROOT="$LIBDISPATCH_BUILD_DIR/sym" \
   DSTROOT="$LIBDISPATCH_DSTROOT" \
   install >"$LIBDISPATCH_LOG" 2>&1; then
@@ -560,6 +778,11 @@ machine_cpu_number_header_sha256=$MACHINE_CPU_NUMBER_SHA256
 i386_cpu_number_header_sha256=$I386_CPU_NUMBER_SHA256
 sdk=$SDK_DIR
 sdk_base=$BASE_SDK_DIR
+host_sdkroot=$BASE_SDK_DIR
+host_sys_unistd_base_sha256=$HOST_SYS_UNISTD_BASE_SHA256
+host_sys_unistd_overlay_sha256=$HOST_SYS_UNISTD_OVERLAY_SHA256
+host_sys_unistd_headers_match=$([[ "$HOST_SYS_UNISTD_BASE_SHA256" == "$HOST_SYS_UNISTD_OVERLAY_SHA256" ]] && printf true || printf false)
+host_tool_base_unistd_probe=passed
 sdk_version=$SDK_VERSION
 platform=MacOSX
 arch_config=X86_64
@@ -579,18 +802,20 @@ target_arch=x86_64
 EOF
 
 printf 'Building XNU %s for X86_64/NONE with %s\n' "$XNU_TAG" "$ACTUAL_XCODE_VERSION"
+rm -rf -- "$OBJROOT" "$SYMROOT" "$DSTROOT"
 if make -C "$SOURCE_DIR" build \
-  SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$SDK_DIR" \
+  SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$BASE_SDK_DIR" \
   SDKVERSION="$SDK_VERSION" PLATFORM=MacOSX \
   ARCH_CONFIGS=X86_64 MACHINE_CONFIGS=NONE KERNEL_CONFIGS=DEVELOPMENT \
   RC_DARWIN_KERNEL_VERSION="$KERNEL_VERSION" RC_ProjectSourceVersion="$SOURCE_VERSION" \
-  OBJROOT="$OBJROOT" SYMROOT="$SYMROOT" DSTROOT="$DSTROOT" \
+  OBJROOT="$OBJROOT" SYMROOT="$SYMROOT" DSTROOT="$DSTROOT" VERBOSE=YES \
   MAKEJOBS="-j$JOBS" >"$LOG" 2>&1; then
   tail -n 20 "$LOG"
 else
   tail -n 100 "$LOG" >&2
   fail "XNU build failed; see $LOG"
 fi
+verify_xnu_host_tool_compile_commands
 
 KERNEL="$OBJROOT/kernel.development"
 [[ -s "$KERNEL" ]] || fail "XNU build did not produce $KERNEL"
@@ -604,7 +829,8 @@ python3 - "$PACKAGE_KERNEL" "$RESULT" "$XNU_COMMIT" "$XNU_TAG" "$SOURCE_VERSION"
   "$LIBDISPATCH_COMMIT" "$LIBDISPATCH_TAG" "$FIREHOSE_ARCHIVE_SHA256" \
   "$AVAILABILITY_COMMIT" "$AVAILABILITY_TAG" "$AVAILABILITY_TOOL_SHA256" \
   "$SDK_PUBLIC_AVAILABILITY_SHA256" "$MACHINE_CPU_NUMBER_SHA256" "$I386_CPU_NUMBER_SHA256" \
-  "$HOST_ARCH" "$BUILD_HOST_MODE" "$HOST_PROCESS_ARCH" "$HOST_PROCESS_TRANSLATED" <<'PY'
+  "$HOST_ARCH" "$BUILD_HOST_MODE" "$HOST_PROCESS_ARCH" "$HOST_PROCESS_TRANSLATED" \
+  "$BASE_SDK_DIR" "$HOST_SYS_UNISTD_BASE_SHA256" "$HOST_SYS_UNISTD_OVERLAY_SHA256" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -622,6 +848,11 @@ result = {
     "build_host_mode": sys.argv[20],
     "build_process_arch": sys.argv[21],
     "build_process_translated": sys.argv[22] == "true",
+    "host_sdkroot": sys.argv[23],
+    "host_sys_unistd_base_sha256": sys.argv[24],
+    "host_sys_unistd_overlay_sha256": sys.argv[25],
+    "host_sys_unistd_headers_match": sys.argv[24] == sys.argv[25],
+    "host_tool_base_unistd_probe": "passed",
     "xnu_commit": sys.argv[3],
     "xnu_tag": sys.argv[4],
     "xnu_source_version": sys.argv[5],

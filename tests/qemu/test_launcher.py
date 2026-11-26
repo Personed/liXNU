@@ -78,7 +78,8 @@ class QemuLauncherTest(unittest.TestCase):
              mock.patch.object(qemu_vm.subprocess, "run", return_value=mock.Mock(stdout="gtk\n")):
             with self.assertRaisesRegex(
                 ValueError,
-                "Windows graphical mode requires SDL; install QEMU with SDL support or omit --graphical",
+                "Windows graphical mode requires SDL; install QEMU with SDL support; "
+                r"try an available backend with --display-backend \(gtk\).*omit --graphical",
             ):
                 qemu_vm.build_command(self.args)
 
@@ -88,9 +89,17 @@ class QemuLauncherTest(unittest.TestCase):
              mock.patch.object(qemu_vm.subprocess, "run", return_value=mock.Mock(stdout="gtk\n")):
             with self.assertRaisesRegex(
                 ValueError,
-                "Windows graphical mode requires SDL; install QEMU with SDL support or omit --graphical",
+                "Windows graphical mode requires SDL; install QEMU with SDL support "
+                r"or select an available backend with --display-backend \(gtk\).*omit --graphical",
             ):
                 qemu_vm.build_command(self.args)
+
+    def test_windows_can_select_an_available_non_sdl_backend(self):
+        self.args.display_backend = "gtk"
+        with mock.patch.object(qemu_vm.platform, "system", return_value="Windows"), \
+             mock.patch.object(qemu_vm.subprocess, "run", return_value=mock.Mock(stdout="gtk\n")):
+            command = qemu_vm.build_command(self.args)
+        self.assertEqual(command[command.index("-display") + 1], "gtk")
 
     def test_display_backend_requires_graphical_mode(self):
         argv = [

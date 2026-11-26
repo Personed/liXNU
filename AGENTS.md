@@ -53,7 +53,21 @@ git diff --check
 
 When a disposable x86_64 Linux kernel and initramfs are available, run `tests/x86_64/tcg-smoke.sh KERNEL INITRD` and report that it is a TCG-only Linux smoke test. Preserve the ARM64 module CI in `.github/workflows/modules.yml`; run its build steps or equivalent ARM64 cross-build after shared kernel-module changes.
 
-For the active PureDarwin route, use the focused layout/copy checks and the full #36/#46 workflow; a Linux TCG smoke alone does not establish XNU or console boot. `.github/workflows/modules.yml` builds x86_64 FKI and ARM64 FKI/XNU separately; `.github/workflows/xnu-x86_64.yml` only builds and tests the fail-closed XNU stub, not an x86_64 XNU runtime. ARM64 XNU builds pass `KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers"`.
+For the separate x86_64 backend prototype, keep x86_64 and ARM64 kernel header trees separate and pass the architecture explicitly to Kbuild. Run x86_64 commands on an x86_64 Linux host with matching headers; run ARM64 commands on an ARM64 Linux host with matching headers. The x86_64 FKI build compiles only its host backend; the x86_64 XNU target is a refusal stub, not a runtime implementation. Its stub-load script starts a disposable VM and taints only that guest kernel. CI covers the x86_64 FKI build, x86_64 fail-closed XNU test, and ARM64 module build.
+
+```sh
+X86_KDIR=/path/to/x86_64/kernel-headers
+ARM64_KDIR=/path/to/arm64/kernel-headers
+
+tests/x86_64/build-fki.sh "$X86_KDIR"
+make -C "$X86_KDIR" ARCH=x86_64 M="$PWD/xnu-ko" modules
+tests/x86_64/test-xnu-stub-vm.sh "$X86_KDIR"  # run on x86_64 host; script boots the disposable VM
+
+make -C "$ARM64_KDIR" ARCH=arm64 M="$PWD/fki-ko" modules
+make -C "$ARM64_KDIR" ARCH=arm64 M="$PWD/xnu-ko" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
+```
+
+For the active PureDarwin route, use the focused layout/copy checks and the full #36/#46 workflow; a Linux TCG smoke alone does not establish XNU or console boot.
 
 ## Blockers and evidence
 

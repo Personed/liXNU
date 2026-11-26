@@ -53,8 +53,16 @@ class UefiLaunchTest(unittest.TestCase):
 
     def start_guest(self, graphical=False):
         qemu_binary = shutil.which("qemu-system-aarch64")
-        if not qemu_binary or not shutil.which("qemu-img"):
-            self.skipTest("QEMU system emulation tools are not installed")
+        missing = []
+        if not qemu_binary:
+            missing.append("qemu-system-aarch64")
+        if not shutil.which("qemu-img"):
+            missing.append("qemu-img")
+        if missing:
+            message = "missing QEMU executable(s): " + ", ".join(missing)
+            if os.environ.get("QEMU_TEST_REQUIRED") == "1":
+                self.fail(message)
+            self.skipTest(message)
         firmware_code, firmware_vars_template = self.firmware_pair()
 
         with tempfile.TemporaryDirectory() as directory:

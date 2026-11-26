@@ -25,6 +25,7 @@ if [ ! -d "$output_dir" ]; then
   echo "Output directory does not exist: $output_dir" >&2
   exit 1
 fi
+output_dir=$(CDPATH= cd -P -- "$output_dir" && pwd -P)
 if [ -e "$output" ] || [ -L "$output" ]; then
   echo "Refusing to replace existing output path: $output" >&2
   exit 1
@@ -40,7 +41,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 export PATH="$PATH:/usr/sbin:/sbin"
 export LC_ALL=C
-for tool in sfdisk python3 losetup mount mountpoint umount e2fsck tune2fs tar mktemp link stat; do
+for tool in sfdisk python3 losetup mount mountpoint umount e2fsck tune2fs tar mktemp link stat chmod; do
   if ! command -v "$tool" >/dev/null; then
     echo "PureDarwin root export requires $tool." >&2
     exit 1
@@ -96,7 +97,7 @@ cleanup() {
   if [ -n "$archive" ]; then rm -f -- "$archive" || return 1; archive=''; fi
   if [ -n "$check_log" ]; then rm -f -- "$check_log" || return 1; check_log=''; fi
   if [ -n "$archive_dir" ]; then
-    cd -- "$output_dir" || return 1
+    CDPATH= cd -P -- "$output_dir" || return 1
     if [ -d "$archive_dir" ] && [ ! -L "$archive_dir" ] &&
        [ "$(stat -c '%u' -- "$archive_dir")" = "$EUID" ] &&
        [ "$(stat -c '%a' -- "$archive_dir")" = 700 ]; then
@@ -116,9 +117,17 @@ case "$mount_dir" in
   *) mount_dir=$PWD/$mount_dir ;;
 esac
 archive_dir=$(mktemp -d -- "$output_dir/.puredarwin-root.XXXXXXXX")
-cd -- "$archive_dir"
-if [ "$(stat -c '%u' .)" != "$EUID" ] || [ "$(stat -c '%a' .)" != 700 ]; then
+CDPATH= cd -P -- "$archive_dir"
+staging_owner=$(stat -c '%u' .)
+staging_mode=$(stat -c '%a' .)
+if [ "$staging_owner" != "$EUID" ] || { [ "$staging_mode" != 700 ] && [ "$staging_mode" != 2700 ]; }; then
   echo "Staging directory changed before it could be opened securely: $archive_dir" >&2
+  exit 1
+fi
+chmod 0700 -- .
+chmod g-s -- .
+if [ "$(stat -c '%a' .)" != 700 ]; then
+  echo "Could not make the export staging directory private: $archive_dir" >&2
   exit 1
 fi
 archive=root.tar.gz

@@ -34,7 +34,7 @@ original_sha=$(sha256sum "$image" | cut -d ' ' -f 1)
 
 output_dir=$tmp/shared-output
 mkdir -- "$output_dir"
-chmod 0777 -- "$output_dir"
+chmod 2777 -- "$output_dir"
 chmod_bin=$tmp/chmod-bin
 mkdir -- "$chmod_bin"
 real_chmod=$(command -v chmod)
@@ -59,6 +59,16 @@ gzip -t "$archive"
 tar -tzf "$archive" | grep -Fx './hello.txt' >/dev/null
 [ "$(tar -xOzf "$archive" ./hello.txt)" = 'export smoke test' ]
 [ "$(sha256sum "$image" | cut -d ' ' -f 1)" = "$original_sha" ]
+[ -z "$(find "$output_dir" -mindepth 1 -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
+
+# A symlink plus '..' must resolve the same physical output directory for
+# mktemp, cd, publication and cleanup.
+mkdir -- "$output_dir/nested"
+ln -s -- "$output_dir/nested" "$tmp/output-link"
+symlink_output=$tmp/output-link/../via-symlink.tar.gz
+REAL_CHMOD=$real_chmod PATH="$chmod_bin:$PATH" "$script" "$image" "$symlink_output" >/dev/null
+[ -f "$output_dir/via-symlink.tar.gz" ]
+[ ! -e "$tmp/via-symlink.tar.gz" ]
 
 # Replace the temporary directory after mktemp creates it, simulating a user
 # who can rename entries in the shared output directory. The exporter must

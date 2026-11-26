@@ -1,6 +1,6 @@
 # Supplemental x86_64 QEMU/KVM Guest Launcher Plan
 
-This optional guest launcher is separate from the active x86-64 QEMU TCG → ARM64 Linux → PureDarwin acceptance route. Its successful boot does not satisfy that goal.
+This optional guest launcher is separate from the selected native FKI/XNU port. Its successful boot does not satisfy x86_64 architecture or runtime acceptance.
 
 **Goal:** Retain a safe, documented QEMU/KVM launcher for a user-prepared macOS Tahoe 26 x86_64 disk, while preserving the existing ARM64 module runtime.
 
@@ -12,7 +12,7 @@ This optional guest launcher is separate from the active x86-64 QEMU TCG → ARM
 
 ## Global Constraints
 
-- This optional x86_64 guest path runs a user-provided bootable Tahoe 26 disk through QEMU/KVM; it does not build or load the project's ARM64 `xnu.ko` or `fki.ko` used by the active TCG/PureDarwin route. Guest writes go to a persistent qcow2 overlay, preserving the source disk.
+- This optional x86_64 guest path runs a user-provided bootable Tahoe 26 disk through QEMU/KVM; it does not build or load the architecture-matched `xnu.ko` or `fki.ko` required by the native port. Guest writes go to a persistent qcow2 overlay, preserving the source disk.
 - A supported x86_64 host must expose `/dev/kvm` and the CPU feature floor in the spec (SSE4.2, AVX, FMA, MOVBE, POPCNT, LZCNT, BMI1, AVX2 and BMI2); `qemu-img` and `flock` are required, and TCG is development-only.
 - The guest profile uses Q35, OVMF UEFI, Apple SMC, AHCI, E1000, USB keyboard/tablet and basic VGA display. KVM defaults to QEMU `host` CPU passthrough; TCG defaults to `max`. AMD disks need matching OpenCore AMD kernel patches.
 - ARM64 continues to use the existing FKI/XNU modules and build workflow.
@@ -74,9 +74,9 @@ This optional guest launcher is separate from the active x86-64 QEMU TCG → ARM
 - Modify: `docs/superpowers/specs/2026-11-26-x86_64-qemu-kvm-runtime-design.md`
 - Modify: `docs/superpowers/plans/2026-11-26-x86_64-qemu-kvm-runtime.md`
 - Modify: `.superpowers/sdd/2026-11-26-x86_64-qemu-kvm-runtime/progress.md`
-- Label the launcher and its KVM/TCG checks as separate from the active TCG/ARM64/PureDarwin route.
+- Label the launcher and its KVM/TCG checks as supplemental to the native FKI/XNU port.
 
-- [x] Keep the launcher scope separate from the active TCG/PureDarwin goal and link its distinct validation path.
+- [x] Keep the launcher scope separate from native x86_64 module implementation and link the active native-port design.
 - [x] Document user-prepared EFI/OpenCore Tahoe disk requirements, AMD kernel patches, OVMF paths, Apple SMC environment setup, persistent overlay and KVM setup, and explicit TCG development mode.
 - [x] Keep Intel, AMD and ARM support rows separate and mark only configurations with recorded full system runs as supported.
 - [x] Add a pull request workflow for the x86_64 launcher tests so green PRs have an automated check.
@@ -88,9 +88,9 @@ This optional guest launcher is separate from the active x86-64 QEMU TCG → ARM
 - Update: `tests/x86_64/README.md`
 - Update: `README.md`
 
-- [ ] If the optional guest experiment is continued, boot the user-provided Tahoe 26 image with KVM on physical Intel and AMD PCs and record guest and host-integrity results separately from the TCG/PureDarwin route.
+- [ ] If the optional guest experiment is continued, boot the user-provided Tahoe 26 image with KVM on physical Intel and AMD PCs and record guest and host-integrity results separately from the native port.
 - [ ] Re-run the documented macOS 27 ARM64 desktop smoke on supported ARM64 hardware and record kernel, CPU, RAM, page size and results.
-- [ ] Do not use this launcher acceptance as a substitute for the active QEMU TCG/ARM64/PureDarwin criteria tracked in #36/#46.
+- [ ] Do not use this launcher acceptance as a substitute for the native FKI/XNU port criteria in `2026-11-26-native-x86_64.md`.
 
 ## Handoff
 

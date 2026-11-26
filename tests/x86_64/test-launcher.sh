@@ -100,6 +100,12 @@ SMC_KEY='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 printf 'immutable source disk\0with binary-like bytes\n' >"$DISK"
 printf 'ovmf code firmware\n' >"$OVMF_CODE"
 printf 'ovmf variables template\n' >"$OVMF_VARS_TEMPLATE"
+AUTO_OVMF_DIR="$FIXTURE_DIR/edk2 auto"
+AUTO_STATE_DIR="$TMP_DIR/auto ovmf state"
+AUTO_QEMU_IMG_COUNT="$TMP_DIR/auto qemu-img count"
+mkdir -p -- "$AUTO_OVMF_DIR"
+printf 'auto-detected ovmf code firmware\n' >"$AUTO_OVMF_DIR/OVMF_CODE_4M.qcow2"
+printf 'auto-detected ovmf variables template\n' >"$AUTO_OVMF_DIR/OVMF_VARS_4M.qcow2"
 cat >"$CPUINFO_FULL" <<'CPUINFO'
 processor : 0
 flags : fpu vmx sse4_2 avx fma movbe popcnt lzcnt bmi1 avx2 bmi2
@@ -146,6 +152,10 @@ expect_check_failure() {
 expect_check_failure missing_disk 'DISK is not a readable file' "DISK=$FIXTURE_DIR/missing disk.raw"
 expect_check_failure missing_ovmf_code 'OVMF_CODE is not a readable file' "OVMF_CODE=$FIXTURE_DIR/missing code.fd"
 expect_check_failure missing_ovmf_vars 'OVMF_VARS_TEMPLATE is not a readable file' "OVMF_VARS_TEMPLATE=$FIXTURE_DIR/missing vars.fd"
+expect_check_failure unmatched_ovmf_code 'OVMF_VARS_TEMPLATE must be set when OVMF_CODE does not use a recognized OVMF filename' \
+  "OVMF_CODE=$FIXTURE_DIR/custom-code.fd" OVMF_VARS_TEMPLATE=
+expect_check_failure unmatched_ovmf_vars 'OVMF_CODE must be set when OVMF_VARS_TEMPLATE does not use a recognized OVMF filename' \
+  OVMF_CODE= "OVMF_VARS_TEMPLATE=$FIXTURE_DIR/custom-vars.fd"
 expect_check_failure missing_smc 'APPLE_SMC_OSK must be set' APPLE_SMC_OSK=
 expect_check_failure invalid_smc 'APPLE_SMC_OSK must contain exactly 64 characters' APPLE_SMC_OSK=short
 expect_check_failure invalid_disk_format 'DISK_FORMAT must be raw or qcow2' DISK_FORMAT=vmdk
@@ -398,4 +408,26 @@ env "${BASE_ENV[@]}" DISK="$SOURCE_DISK_IN_STATE" DISK_FORMAT=qcow2 STATE_DIR="$
 }
 [[ "$(<"$SOURCE_STATE_IMG_COUNT")" == 1 ]] || fail 'source disk inside STATE_DIR did not receive a separate overlay'
 
-printf 'PASS: launcher preflight, TCG/KVM arguments, protected SMC handling, and persistent disk identity\n'
+# With no explicit firmware paths, OVMF_DIR extends the distribution search
+# list and supplies a matching code/vars pair. Empty values behave like an
+# unset override so the duplicate BASE_ENV entries are intentionally overridden.
+env "${BASE_ENV[@]}" OVMF_CODE= OVMF_VARS_TEMPLATE= "OVMF_DIR=$AUTO_OVMF_DIR" \
+  STATE_DIR="$AUTO_STATE_DIR" QEMU_IMG_COUNT="$AUTO_QEMU_IMG_COUNT" ACCEL=tcg \
+  "$LAUNCHER" >"$TMP_DIR/auto-ovmf.out" 2>&1 || {
+  cat "$TMP_DIR/auto-ovmf.out" >&2
+  fail 'auto-detected OVMF firmware pair was rejected'
+}
+python3 - "$QEMU_LOG" "$AUTO_OVMF_DIR" <<'PY'
+from pathlib import Path
+import sys
+
+args = [arg.decode() for arg in Path(sys.argv[1]).read_bytes().split(b"\0") if arg]
+firmware_dir = sys.argv[2].replace(",", ",,")
+assert any(arg.startswith("file=") and f"{firmware_dir}/OVMF_CODE_4M.qcow2" in arg and "format=qcow2" in arg and "if=pflash" in arg for arg in args)
+assert any(arg.startswith("file=") and "OVMF_VARS.fd" in arg and "format=qcow2" in arg and "if=pflash" in arg for arg in args)
+print("auto-detected OVMF argument contract passed")
+PY
+cmp -s -- "$AUTO_OVMF_DIR/OVMF_VARS_4M.qcow2" "$AUTO_STATE_DIR/OVMF_VARS.fd" \
+  || fail 'auto-detected OVMF variables template was not copied'
+
+printf 'PASS: launcher preflight, OVMF auto-detection, TCG/KVM arguments, protected SMC handling, and persistent disk identity\n'

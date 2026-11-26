@@ -8,7 +8,10 @@ acceptance targets; neither is marked supported until tested on physical hardwar
 
 - x86_64 Linux with VT-x or AMD-V and a readable/writable `/dev/kvm` for native acceleration.
 - Host CPU flags: SSE4.2, AVX, FMA, MOVBE, POPCNT, LZCNT (`lzcnt` or `abm` in Linux flags), BMI1, AVX2 and BMI2.
-- QEMU 10 or newer, `qemu-img`, `flock` (from util-linux), and OVMF 4 MiB firmware. Package names and OVMF locations vary by distribution.
+- QEMU 10 or newer, `qemu-img`, `flock` (from util-linux), and OVMF 4 MiB firmware. The launcher auto-detects common
+  Debian/Ubuntu (`/usr/share/OVMF`), Fedora/RHEL (`/usr/share/edk2/ovmf*`, including qcow2 firmware), Arch
+  (`/usr/share/edk2/x64`), and openSUSE (`/usr/share/qemu`) layouts. `OVMF_DIR` adds a custom directory; explicit
+  `OVMF_CODE` and `OVMF_VARS_TEMPLATE` remain supported.
 - A bootable Tahoe 26 x86_64 raw or qcow2 disk with EFI/OpenCore already configured. AMD guests need matching OpenCore
   AMD kernel patches.
 - A locally supplied 64-byte Apple SMC OSK value in `APPLE_SMC_OSK`. Keep it out of the repository and logs. The launcher writes it to a mode-0600 temporary QEMU config, never puts it in QEMU's argv or environment, and removes the config when QEMU exits.
@@ -28,8 +31,8 @@ scripts/x86_64/xnulinux-boot.sh --check
 scripts/x86_64/xnulinux-boot.sh
 ```
 
-For a raw image, set `DISK_FORMAT=raw`. Override `OVMF_CODE`, `OVMF_VARS_TEMPLATE`, `STATE_DIR`, `QEMU_DISPLAY`,
-`CPU_MODEL`, `CPUS`, or `RAM_MB` when the host needs different paths or resources. The default state directory is
+For a raw image, set `DISK_FORMAT=raw`. Override `OVMF_DIR`, `OVMF_CODE`, `OVMF_VARS_TEMPLATE`, `STATE_DIR`,
+`QEMU_DISPLAY`, `CPU_MODEL`, `CPUS`, or `RAM_MB` when the host needs different paths or resources. The default state directory is
 `$XDG_STATE_HOME/xnulinux/x86_64` when `XDG_STATE_HOME` is set, or `~/.local/state/xnulinux/x86_64` otherwise. It
 stores writable OVMF variables and a persistent qcow2 overlay backed by the source disk. Only one QEMU process may use a
 state directory at a time; use one readable, writable, and searchable `STATE_DIR` per VM. Guest writes do not change the source image. Keep the source
@@ -62,8 +65,9 @@ they are not pass/fail tests for the selected QEMU/KVM path.
 
 ## Evidence and limits
 
-- The fake-QEMU launcher suite passes preflight errors, TCG and KVM argument construction, paths containing spaces and
-  commas, SMC config permissions/redaction/cleanup, source-disk immutability, same-content base restoration, rejection
+- The fake-QEMU launcher suite passes preflight errors, OVMF auto-detection including qcow2 firmware arguments, TCG
+  and KVM argument construction, paths containing spaces and commas, SMC config permissions/redaction/cleanup,
+  source-disk immutability, same-content base restoration, rejection
   of changed base contents, detection of unassociated legacy overlays, rejection of a managed overlay selected as its
   own base, a backed qcow2 source with an overlay-shaped filename, an overlay symlinked from another volume, and a
   hash-named disk stored inside a symlinked `STATE_DIR`.

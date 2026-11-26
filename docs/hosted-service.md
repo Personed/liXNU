@@ -82,12 +82,23 @@ We ship these. The user's disk script installs them into their own macOS disk:
 1. **Host OS.** arm64 Ubuntu, either directly on the hardware or as a VM. On an Apple Silicon Mac the VM runs under
    krunkit (krunkit, libkrun, virglrenderer, MoltenVK and gvproxy under `$KRUN`; `scripts/krun-vm.sh`,
    `scripts/install-krun-agent.sh`), which gives it the host GPU through virtio-gpu Venus.
-2. **Memory.** `scripts/vm-install-fki-service.sh` with `LINUX_MEM`, `CARVE_BASE` and `CARVE_MB` for that host's
-   physical memory map. The carve-out is RAM Linux never manages. The hosted kernel's `RAM_MB` has to fit inside it
-   (8 GB → `RAM_MB=7900`). Reboot once.
+2. **Memory.** Run `scripts/vm-install-fki-service.sh` once before the first reboot, while `/proc/iomem` still shows the
+   full physical RAM map and before an earlier `mem=` limit has hidden the carve-out. It detects `LINUX_MEM`,
+   `CARVE_BASE` and `CARVE_MB` by default, accepts those values as environment overrides, checks their final geometry
+   before changing GRUB or installing the FKI service, and prints a suggested `RAM_MB` for the guest. Use that guest
+   memory size in `/etc/xnulinux.conf`; the installation command prints the same recommendation outside `--dry-run`.
+   The automatic suggestion remains capped at 7900 MiB. Explicit `RAM_MB` must be decimal without leading zeroes and
+   cannot exceed the smaller of the carve-out's available size or the XNU module limit of 65,536 MiB. The carve-out
+   is RAM Linux never manages. After reboot, `mem=` may hide the
+   reserved range from `/proc/iomem`; do not rerun memory detection against that reduced map. To change the layout,
+   temporarily boot without the old `mem=` limit, run the setup again with the complete physical map, and reboot.
 3. **Kit.** Unpack it to `/opt/xnulinux/kit`, and install `kc-free.bin` as `/lib/firmware/xnu/kc-free.bin`.
-4. **Default system.** Put the PureDarwin disk at `/var/lib/xnulinux/pd.img` with its `pd.conf`. Configure
-   `/etc/xnulinux.conf` as follows, then run `scripts/install-service.sh`:
+4. **Default system.** Put the PureDarwin disk at `/var/lib/xnulinux/pd.img` with its `pd.conf`. Set `RAM_MB` in
+   `/etc/xnulinux.conf` to the numeric recommendation printed by `scripts/vm-install-fki-service.sh`, then run
+   `scripts/install-service.sh`. That number depends on the host's carve-out; the example leaves it out deliberately.
+   To validate a custom value before saving it, run `sudo env RAM_MB=<number> scripts/vm-install-fki-service.sh
+   --dry-run` while the full physical map is still visible. Replace `<number>` with the decimal value to check. Do not
+   omit `RAM_MB` on a smaller host because the boot script's fallback is 7900 MiB.
    ```
    IMAGE=xnu/kc-free.bin
    TRUSTCACHE=
@@ -95,7 +106,6 @@ We ship these. The user's disk script installs them into their own macOS disk:
    DISK=/var/lib/xnulinux/pd.img
    GPU=off
    CPUS=2
-   RAM_MB=7900
    ```
 5. **Isolation.** The hosted kernel runs at EL1 inside the Linux kernel, so a hosted system that is compromised owns
    that Linux. **The tenant boundary is the VM (or the machine), never the Linux.** Run one Linux VM per tenant, with one

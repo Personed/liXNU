@@ -17,3 +17,16 @@ jobs:
           python-version: "3.12"
       - name: Test platform launch options
         run: python tests/qemu/test_launcher.py
+  uefi-launch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install QEMU and ARM64 UEFI firmware
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes qemu-system-arm qemu-efi-aarch64 qemu-utils
+      - name: Start an ARM64 guest through the launcher
+        run: python tests/qemu/test_uefi_launch.py

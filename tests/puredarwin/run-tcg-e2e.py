@@ -13,6 +13,26 @@ import threading
 import time
 
 
+QEMU_VIRT_RAM_BASE = 0x40000000
+MEMORY_SUFFIXES = {
+    "": 1,
+    "K": 1024,
+    "M": 1024**2,
+    "G": 1024**3,
+    "T": 1024**4,
+}
+
+
+def parse_memory_size(value: str, option: str) -> int:
+    match = re.fullmatch(r"([0-9]+)([KMGT]?)(?:i?b?)?", value.strip(), re.IGNORECASE)
+    if not match:
+        raise ValueError(f"{option} must be a positive memory size such as 512M or 16G")
+    size = int(match.group(1)) * MEMORY_SUFFIXES[match.group(2).upper()]
+    if size < 1:
+        raise ValueError(f"{option} must be positive")
+    return size
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("kernel", type=Path)
@@ -44,6 +64,20 @@ def main() -> int:
         parser.error("--fki-carve-base must be an integer address")
     if carve_base < 0 or carve_base >= 1 << 64:
         parser.error("--fki-carve-base must fit in a 64-bit address")
+    try:
+        qemu_memory_bytes = parse_memory_size(args.qemu_memory, "--qemu-memory")
+        linux_memory_bytes = parse_memory_size(args.linux_memory, "--linux-memory")
+    except ValueError as error:
+        parser.error(str(error))
+    linux_memory_end = QEMU_VIRT_RAM_BASE + linux_memory_bytes
+    qemu_memory_end = QEMU_VIRT_RAM_BASE + qemu_memory_bytes
+    carve_end = carve_base + args.fki_carve_mb * 1024**2
+    if carve_base < linux_memory_end:
+        parser.error("FKI carve-out must start after the memory given to Linux")
+    if carve_end > qemu_memory_end:
+        parser.error("FKI carve-out must end inside the QEMU guest RAM")
+    if args.xnu_ram_mb > args.fki_carve_mb:
+        parser.error("XNU RAM must fit inside the FKI carve-out")
     carve_base_hex = hex(carve_base)
     required = (
         f"fki: {args.fki_carve_mb} MiB at {carve_base_hex} for the foreign kernel's DRAM",

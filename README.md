@@ -215,6 +215,8 @@ result. For AMD, OpenCore must already contain AMD kernel patches. The current x
 GitHub Actions uses QEMU's software emulation (TCG) on x86-64 Linux, x86-64 Windows, and ARM64 macOS
 to boot ARM64 Ubuntu with pointer authentication, load `fki.ko`, reserve memory outside Linux's RAM map,
 allocate and free the same 16 MiB carve-out twice, and verify that `xnu.ko` reaches its firmware loader.
+The pinned ARM64 kernel is 7.0.0; device-PFN translation returns `-EOPNOTSUPP` on Linux 6.10 and 6.11, which are
+outside the current acceptance profile and do not have a GPU-bridge fallback in this path.
 On Linux, build the probe against the supplied ARM64 kernel headers and run the check with QEMU, GNU cpio,
 Python 3 and zstd:
 

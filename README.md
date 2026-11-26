@@ -155,12 +155,13 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 This path requires a bootable image prepared separately by the user. QEMU writes macOS changes to a persistent qcow2
 overlay under `$XDG_STATE_HOME/xnulinux/x86_64` when `XDG_STATE_HOME` is set, or `~/.local/state/xnulinux/x86_64`
 otherwise; OVMF variable state is stored there too. Only one QEMU process can use a state directory at a time; set a
-different `STATE_DIR` for another VM. The source image and firmware templates stay untouched. The overlay grows as the
+different `STATE_DIR` for each VM. The source image and firmware templates stay untouched. The overlay grows as the
 guest writes data. Overlay identity is tied to the canonical source path, format, and a SHA-256 sidecar. If the source
 file metadata changes, the launcher hashes it: identical restored bytes keep the existing overlay, while changed bytes
 fail before QEMU starts. The initial launch and any metadata change can require reading the full source image to hash it;
 later launches with unchanged metadata skip that read. Restore the matching source image or choose a new `STATE_DIR` to
-start a fresh VM state.
+start a fresh VM state. Unassociated overlays left by an older launcher stop startup with migration guidance rather
+than silently creating empty guest state.
 
 Set the disk, source format, and local Apple SMC OSK value, then preflight the host:
 

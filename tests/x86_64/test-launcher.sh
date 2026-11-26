@@ -172,6 +172,16 @@ STATE_FILE="$TMP_DIR/not-a-directory"
 printf 'not a directory\n' >"$STATE_FILE"
 expect_check_failure unusable_state_dir 'STATE_DIR is not a writable directory' "STATE_DIR=$STATE_FILE"
 
+LEGACY_STATE_DIR="$TMP_DIR/legacy overlay state"
+LEGACY_OVERLAY_OUTPUT="$TMP_DIR/legacy-overlay.out"
+mkdir -p -- "$LEGACY_STATE_DIR"
+printf 'unassociated saved disk state\n' >"$LEGACY_STATE_DIR/disk-0123456789abcdefabcd.qcow2"
+if env "${BASE_ENV[@]}" STATE_DIR="$LEGACY_STATE_DIR" ACCEL=tcg "$LAUNCHER" >"$LEGACY_OVERLAY_OUTPUT" 2>&1; then
+  fail 'unassociated legacy overlay unexpectedly started a fresh VM state'
+fi
+assert_contains "$LEGACY_OVERLAY_OUTPUT" 'unassociated disk overlay exists in STATE_DIR'
+[[ ! -e "$QEMU_LOG" ]] || fail 'unassociated legacy overlay reached QEMU'
+
 FAILED_STATE_DIR="$TMP_DIR/failed overlay state"
 FAILED_OVERLAY_OUTPUT="$TMP_DIR/failed-overlay.out"
 if env "${BASE_ENV[@]}" STATE_DIR="$FAILED_STATE_DIR" QEMU_IMG_FAIL_CREATE=1 ACCEL=tcg "$LAUNCHER" >"$FAILED_OVERLAY_OUTPUT" 2>&1; then

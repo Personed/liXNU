@@ -178,13 +178,15 @@ if ! exec 9>"$STATE_DIR/.lock"; then
 fi
 "$FLOCK_PATH" -n 9 || fail "STATE_DIR is already in use by another QEMU process: $STATE_DIR"
 
-# Earlier launcher versions included inode/mtime in the overlay name. Refuse
-# to silently start a fresh overlay when one of those legacy states is present.
-LEGACY_DISK_ID="$(printf '%s\0%s\0' "$DISK_PATH" "$(stat -Lc '%d:%i:%s:%Y' -- "$DISK_PATH")" | sha256sum | awk '{print substr($1, 1, 20)}')"
-LEGACY_DISK_OVERLAY="$STATE_DIR/disk-$LEGACY_DISK_ID.qcow2"
-if [[ "$LEGACY_DISK_ID" != "$DISK_ID" && -e "$LEGACY_DISK_OVERLAY" ]]; then
-  fail "legacy overlay exists without base identity metadata: $LEGACY_DISK_OVERLAY (back it up and migrate deliberately before continuing)"
-fi
+# This directory owns one VM's disk overlay. Catch legacy overlays from prior
+# launcher versions even if their inode-based filename can no longer be
+# reconstructed after the base image was restored or replaced.
+for existing_overlay in "$STATE_DIR"/disk-*.qcow2; do
+  [[ -e "$existing_overlay" || -L "$existing_overlay" ]] || continue
+  if [[ "$existing_overlay" != "$DISK_OVERLAY" ]]; then
+    fail "unassociated disk overlay exists in STATE_DIR: $existing_overlay (back it up and migrate deliberately, or use a new STATE_DIR to start fresh)"
+  fi
+done
 
 write_disk_base_metadata() {
   local disk_stat="$1" disk_sha256="$2" metadata_tmp

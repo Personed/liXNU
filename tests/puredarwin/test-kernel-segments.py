@@ -42,6 +42,15 @@ class KernelSegmentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'overlap|beyond __KLDDATA'):
             fit_offsets(segments, header, {'__KLD': 0x3854000, '__LAST': 0x3860000})
 
+    def test_nonmarker_segments_use_measured_macho_addresses(self):
+        header, segments = self.kernel_segments(kld_size=0x4000)
+        # The Mach-O puts __DATA directly on the fitted __KLD. A stale linker
+        # script address must not move it out of the overlap check.
+        segments.append(Segment(name='__DATA', vmaddr=header + 0x38d4000, vmsize=0x4000))
+        offsets = {'__KLD': 0x3854000, '__LAST': 0x3860000, '__DATA': 0x3900000}
+        with self.assertRaisesRegex(ValueError, 'overlap after relink placement'):
+            fit_offsets(segments, header, offsets)
+
     def test_zero_size_last_marker_can_be_fitted(self):
         header, segments = self.kernel_segments(kld_size=0x4000, last_size=0)
         fitted = fit_offsets(segments, header, {'__KLD': 0x3854000, '__LAST': 0x3860000})

@@ -48,7 +48,10 @@ def fit_offsets(segments, kernel_header, offsets):
     for segment in segments:
         if not segment.vmsize:
             continue
-        start = result.get(segment.name, segment.vmaddr - kernel_header)
+        # The only ranges the fitter changes are the marker segments. Use the
+        # addresses measured from Mach-O for every other range so stale or
+        # incorrect segaddrs.sh entries cannot hide a real overlap.
+        start = result[segment.name] if segment.name in MARKERS else segment.vmaddr - kernel_header
         end = start + segment.vmsize
         intervals.append((start, end, segment.name))
     intervals.sort()

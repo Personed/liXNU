@@ -73,7 +73,14 @@ WRAPPER
 cat >"$bin/mktemp" <<'WRAPPER'
 #!/bin/sh
 result=$("$REAL_MKTEMP" "$@") || exit
-if [ "$1" = '-d' ]; then printf '%s\n' "$result" >"$TEST_STATE/mount-dir"; fi
+if [ "$1" = '-d' ]; then
+  case "$*" in
+    *'.puredarwin-root.'*) printf '%s\n' "$result" >"$TEST_STATE/archive-dir" ;;
+    *) printf '%s\n' "$result" >"$TEST_STATE/mount-dir" ;;
+  esac
+elif [ "$#" -eq 0 ]; then
+  printf '%s\n' "$result" >"$TEST_STATE/check-log"
+fi
 printf '%s\n' "$result"
 WRAPPER
 chmod +x "$bin"/*
@@ -97,6 +104,7 @@ detach_line=$(grep -n '^detached$' "$state/events" | cut -d: -f1)
 mount_dir=$(cat "$state/mount-dir")
 [ ! -e "$mount_dir" ]
 [ -z "$(find "$tmp" -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
+[ ! -e "$(cat "$state/check-log")" ]
 
 echo 'PureDarwin root exporter signal cleanup test passed.'
 
@@ -121,5 +129,6 @@ fi
 mount_dir=$(cat "$state/mount-dir")
 [ ! -e "$mount_dir" ]
 [ -z "$(find "$tmp" -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
+[ ! -e "$(cat "$state/check-log")" ]
 
 echo 'PureDarwin root exporter pre-mount signal cleanup test passed.'

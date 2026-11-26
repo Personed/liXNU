@@ -32,8 +32,28 @@ PARTITIONS
 dd if="$partition" of="$image" bs=512 seek="$root_start" conv=notrunc status=none
 original_sha=$(sha256sum "$image" | cut -d ' ' -f 1)
 
-archive=$tmp/root.tar.gz
-"$script" "$image" "$archive" >/dev/null
+output_dir=$tmp/shared-output
+mkdir -- "$output_dir"
+chmod 0777 -- "$output_dir"
+chmod_bin=$tmp/chmod-bin
+mkdir -- "$chmod_bin"
+real_chmod=$(command -v chmod)
+cat >"$chmod_bin/chmod" <<'WRAPPER'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = 0644 ] && [ "${2:-}" = -- ]; then
+  archive_path=$3
+  private_mode=$(stat -c '%a' -- "$(dirname -- "$archive_path")")
+  [ "$private_mode" = 700 ] || {
+    echo "Archive staging directory must be private (mode 700); got $private_mode." >&2
+    exit 1
+  }
+fi
+exec "$REAL_CHMOD" "$@"
+WRAPPER
+chmod +x "$chmod_bin/chmod"
+archive=$output_dir/root.tar.gz
+REAL_CHMOD=$real_chmod PATH="$chmod_bin:$PATH" "$script" "$image" "$archive" >/dev/null
 [ "$(stat -c '%a' "$archive")" = 644 ]
 gzip -t "$archive"
 tar -tzf "$archive" | grep -Fx './hello.txt' >/dev/null
@@ -54,7 +74,8 @@ expect_refusal "$tmp/existing-file"
 printf 'symlink target\n' >"$tmp/symlink-target"
 ln -s -- "$tmp/symlink-target" "$tmp/existing-symlink"
 expect_refusal "$tmp/existing-symlink"
-[ -L "$tmp/existing-symlink" ] && [ "$(cat "$tmp/symlink-target")" = 'symlink target' ]
+[ -L "$tmp/existing-symlink" ]
+[ "$(cat "$tmp/symlink-target")" = 'symlink target' ]
 ln -s -- "$tmp/no-such-target" "$tmp/dangling-symlink"
 expect_refusal "$tmp/dangling-symlink"
 [ -L "$tmp/dangling-symlink" ]

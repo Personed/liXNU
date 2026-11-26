@@ -64,7 +64,7 @@ print(offset, length)
 ' "$image" <<< "$partition_table")
 read -r offset length <<< "$partition"
 
-mount_dir='' archive='' loop='' check_log=''
+mount_dir='' archive_dir='' archive='' loop='' check_log=''
 cleanup() {
   trap '' INT TERM
   if [ -n "$mount_dir" ]; then
@@ -90,13 +90,15 @@ cleanup() {
   fi
   if [ -n "$mount_dir" ]; then rmdir -- "$mount_dir" || return 1; mount_dir=''; fi
   if [ -n "$archive" ]; then rm -f -- "$archive" || return 1; archive=''; fi
+  if [ -n "$archive_dir" ]; then rmdir -- "$archive_dir" || return 1; archive_dir=''; fi
   if [ -n "$check_log" ]; then rm -f -- "$check_log" || return 1; check_log=''; fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 mount_dir=$(mktemp -d)
-archive=$(mktemp -- "$output_dir/.puredarwin-root.XXXXXXXX")
+archive_dir=$(mktemp -d -- "$output_dir/.puredarwin-root.XXXXXXXX")
+archive=$archive_dir/root.tar.gz
 check_log=$(mktemp)
 # Keep INT/TERM pending until losetup has returned the attached device. That
 # lets the EXIT trap detach the exact loop device if a signal arrives here.
@@ -137,4 +139,6 @@ if ! link "$archive" "$output"; then
 fi
 rm -- "$archive"
 archive=''
+rmdir -- "$archive_dir"
+archive_dir=''
 printf '%s\n' "$output"

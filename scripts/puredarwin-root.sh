@@ -118,6 +118,11 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+if [ ! -d /tmp ] || [ ! -w /tmp ] || [ ! -k /tmp ]; then
+  echo 'PureDarwin root export requires a writable sticky /tmp for its local mount point.' >&2
+  exit 1
+fi
+mount_dir=$(mktemp -d -- /tmp/.puredarwin-root-mount.XXXXXXXX)
 archive_dir=$(mktemp -d -- "$output_dir/.puredarwin-root.XXXXXXXX")
 archive_identity=$(stat -c '%d:%i' -- "$archive_dir")
 CDPATH= cd -P -- "$archive_dir"
@@ -136,8 +141,6 @@ if [ "$(stat -c '%a' .)" != 700 ]; then
   exit 1
 fi
 archive=root.tar.gz
-mount_dir=mount
-mkdir -m 0700 -- "$mount_dir"
 check_log=check.log
 # Keep INT/TERM pending until losetup has returned the attached device. That
 # lets the EXIT trap detach the exact loop device if a signal arrives here.

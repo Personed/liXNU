@@ -88,14 +88,16 @@ PATH="$chmod_bin:$PATH" "$script" "$image" "$symlink_output" >/dev/null
 # Replace the temporary directory after mkdir creates it with a real
 # directory owned by another UID. The exporter must reject it based on owner
 # validation before writing anything into the replacement.
-foreign_stage=$tmp/foreign-owned-stage
-mkdir -m 0700 -- "$foreign_stage"
-printf 'foreign stage sentinel\n' >"$foreign_stage/sentinel"
-run_as_root chown 65534:65534 "$foreign_stage" "$foreign_stage/sentinel"
+replacement_stage=$tmp/foreign-owned-stage
+mkdir -m 0700 -- "$replacement_stage"
+printf 'foreign stage sentinel\n' >"$replacement_stage/sentinel"
 replace_bin=$tmp/replace-bin
 mkdir -- "$replace_bin"
 real_mkdir=$(command -v mkdir)
+real_chown=$(command -v chown)
+sudo_bin=$(command -v sudo || true)
 foreign_stage_marker=$tmp/foreign-stage-path
+wrapper_trace=$tmp/foreign-stage-wrapper.log
 cat >"$replace_bin/mkdir" <<'WRAPPER'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -104,15 +106,23 @@ last=''
 for arg do last=$arg; done
 case "$last" in
   */.puredarwin-root.*)
-    mv -- "$last" "$last.original"
-    mv -- "@FOREIGN_STAGE@" "$last"
-    printf '%s\n' "$last" >"@STAGE_MARKER@"
+    {
+      printf 'Created stage: %s\n' "$last"
+      mv -- "$last" "$last.original"
+      mv -- "@REPLACEMENT_STAGE@" "$last"
+      if [ "$EUID" -eq 0 ]; then
+        "@REAL_CHOWN@" 65534:65534 "$last" "$last/sentinel"
+      else
+        "@SUDO_BIN@" -n "@REAL_CHOWN@" 65534:65534 "$last" "$last/sentinel"
+      fi
+      printf '%s\n' "$last" >"@STAGE_MARKER@"
+    } >>"@TRACE_PATH@" 2>&1
     ;;
 esac
 WRAPPER
 attack_output=$output_dir/attack-output.tar.gz
 replacement_log=$tmp/foreign-stage-export.log
-sed -i "s|@REAL_MKDIR@|$real_mkdir|g; s|@FOREIGN_STAGE@|$foreign_stage|g; s|@STAGE_MARKER@|$foreign_stage_marker|g" "$replace_bin/mkdir"
+sed -i "s|@REAL_MKDIR@|$real_mkdir|g; s|@REPLACEMENT_STAGE@|$replacement_stage|g; s|@STAGE_MARKER@|$foreign_stage_marker|g; s|@TRACE_PATH@|$wrapper_trace|g; s|@REAL_CHOWN@|$real_chown|g; s|@SUDO_BIN@|$sudo_bin|g" "$replace_bin/mkdir"
 chmod +x "$replace_bin/mkdir"
 if PATH="$replace_bin:$PATH" \
   "$script" "$image" "$attack_output" >"$replacement_log" 2>&1; then
@@ -120,6 +130,7 @@ if PATH="$replace_bin:$PATH" \
   exit 1
 fi
 if [ ! -s "$foreign_stage_marker" ]; then
+  [ ! -s "$wrapper_trace" ] || cat "$wrapper_trace" >&2
   cat "$replacement_log" >&2
   echo 'The staging mkdir wrapper did not complete its foreign-owner replacement.' >&2
   exit 1

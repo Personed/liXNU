@@ -29,6 +29,8 @@ jobs:
         run: brew install qemu
       - name: Start an ARM64 guest through UEFI on Windows and macOS
         if: runner.os != 'Linux'
+        env:
+          QEMU_TEST_REQUIRED: "1"
         run: python tests/qemu/test_uefi_launch.py
   uefi-launch:
     runs-on: ubuntu-24.04
@@ -42,6 +44,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes qemu-system-arm qemu-efi-aarch64 qemu-utils qemu-system-gui xvfb
       - name: Start an ARM64 guest through the launcher
+        env:
+          QEMU_TEST_REQUIRED: "1"
         run: python tests/qemu/test_uefi_launch.py
       - name: Start the graphical ARM64 guest through GTK or SDL
-        run: xvfb-run -a env QEMU_TEST_GRAPHICAL=1 python tests/qemu/test_uefi_launch.py
+        env:
+          QEMU_TEST_REQUIRED: "1"
+          QEMU_TEST_GRAPHICAL: "1"
+        run: xvfb-run -a python tests/qemu/test_uefi_launch.py

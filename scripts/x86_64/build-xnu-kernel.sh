@@ -289,45 +289,28 @@ verify_trustcache_header() {
     TRUSTCACHE_HEADER_SOURCE='pinned-xcode-sdk'
   else
     local sdk_usr_include_header="$sdk_root/usr/include/TrustCache/API.h"
-    local sdk_header_scan_mode='build'
-    (( CHECK_ONLY )) && sdk_header_scan_mode='check'
-    local sdk_header_scan_root
-    sdk_header_scan_root="$(xnu_trustcache_scan_workspace "$BUILD_ROOT" "$sdk_header_scan_mode")" \
-      || fail "cannot create the TrustCache SDK scan workspace in $sdk_header_scan_mode mode"
-    local sdk_header_candidates_file="$sdk_header_scan_root/trustcache-sdk-header-candidates.txt"
-    local sdk_header_sorted_candidates_file="$sdk_header_scan_root/trustcache-sdk-header-candidates.sorted.txt"
-    local sdk_header_scan_errors="$sdk_header_scan_root/trustcache-sdk-header-scan-errors.log"
-    local sdk_header_scan_status='complete'
-    : > "$sdk_header_candidates_file"
-    : > "$sdk_header_sorted_candidates_file"
-    : > "$sdk_header_scan_errors"
-    if ! find -L "$sdk_root" -type f -path '*/TrustCache/API.h' -print \
-      > "$sdk_header_candidates_file" 2> "$sdk_header_scan_errors"; then
-      sdk_header_scan_status='failed'
-    elif ! LC_ALL=C sort "$sdk_header_candidates_file" \
-      > "$sdk_header_sorted_candidates_file" 2>> "$sdk_header_scan_errors"; then
-      sdk_header_scan_status='failed'
-    elif [[ -s "$sdk_header_scan_errors" ]]; then
-      sdk_header_scan_status='failed'
+    local sdk_header_scan_status=0
+    if xnu_trustcache_scan_sdk_headers "$sdk_root" "$BUILD_ROOT" "$KDK_DIAGNOSTIC_TARGET"; then
+      sdk_header_scan_status=0
+    else
+      sdk_header_scan_status=$?
     fi
-    if [[ "$sdk_header_scan_status" != complete ]]; then
-      xnu_trustcache_scan_workspace_report_failure \
-        "$sdk_header_scan_mode" "$sdk_header_candidates_file" "$sdk_header_scan_errors" "$KDK_DIAGNOSTIC_TARGET"
-      xnu_trustcache_scan_workspace_cleanup "$sdk_header_scan_mode" "$sdk_header_scan_root"
+    if (( sdk_header_scan_status != 0 )); then
       if (( CHECK_ONLY )); then
         fail 'full Xcode SDK TrustCache header scan failed; candidate and error contents are printed above before temporary files are removed, so no absence claim is made'
       fi
-      fail "full Xcode SDK TrustCache header scan failed; no absence claim is made (candidate list: $sdk_header_candidates_file; errors: $sdk_header_scan_errors)"
+      if (( sdk_header_scan_status == 2 )); then
+        fail 'cannot create the TrustCache SDK scan workspace in build mode'
+      fi
+      fail "full Xcode SDK TrustCache header scan failed; no absence claim is made (candidate list: $XNU_TRUSTCACHE_SCAN_CANDIDATES_FILE; errors: $XNU_TRUSTCACHE_SCAN_ERRORS_FILE)"
     fi
-    mv "$sdk_header_sorted_candidates_file" "$sdk_header_candidates_file"
-    local sdk_header_candidates
-    sdk_header_candidates="$(<"$sdk_header_candidates_file")"
+    local sdk_header_candidates="$(<"$XNU_TRUSTCACHE_SCAN_CANDIDATES_FILE")"
     local sdk_header_candidates_flat="${sdk_header_candidates//$'\n'/|}"
     [[ -n "$sdk_header_candidates_flat" ]] || sdk_header_candidates_flat='none'
     printf 'trustcache_header_status=missing\ntrustcache_header_scan_status=complete\nchecked_target_search_paths=%s|%s\nunsupported_public_sdk_path=%s\nfull_sdk_header_scan=%s\n' \
       "$sdk_header" "$sdk_framework_header" "$sdk_usr_include_header" "$sdk_header_candidates_flat" \
       >> "$KDK_DIAGNOSTIC_TARGET"
-    xnu_trustcache_scan_workspace_cleanup "$sdk_header_scan_mode" "$sdk_header_scan_root"
+    xnu_trustcache_scan_workspace_cleanup "$XNU_TRUSTCACHE_SCAN_MODE" "$XNU_TRUSTCACHE_SCAN_ROOT"
     fail "XNU source requires real TrustCache/API.h in the target's explicit include paths; none exists in the macOS $SDK_VERSION SDK and no matching KDK is available. Full SDK scan found: $sdk_header_candidates_flat. A copy under usr/include is not accepted because this target uses -nostdlibinc and does not search that tree; no header stub will be used (checked $sdk_header and $sdk_framework_header; unsupported path $sdk_usr_include_header)"
   fi
   TRUSTCACHE_HEADER_SHA256="$(shasum -a 256 "$TRUSTCACHE_HEADER" | awk '{print $1}')"

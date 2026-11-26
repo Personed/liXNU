@@ -193,7 +193,7 @@ result. For AMD, OpenCore must already contain AMD kernel patches. The current x
 
 ### Testing the Linux host layer in QEMU
 
-GitHub Actions uses QEMU's software emulation (TCG) on x86-64 Linux, x86-64 Windows, and ARM64 macOS
+GitHub Actions uses QEMU's software emulation (TCG) on x86-64 Linux, x86-64 Windows, and x86-64 macOS
 to boot ARM64 Ubuntu with pointer authentication, load `fki.ko`, reserve memory outside Linux's RAM map,
 allocate and free the same 16 MiB carve-out twice, and verify that `xnu.ko` reaches its firmware loader.
 On Linux, build the probe against the supplied ARM64 kernel headers and run the check with QEMU, GNU cpio,

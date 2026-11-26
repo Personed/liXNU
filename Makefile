@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
-PREFIX ?= /usr/local
+PREFIX ?= $(if $(filter 0,$(shell id -u)),/usr/local,$(HOME)/.local)
 
 .PHONY: help install uninstall doctor test
 

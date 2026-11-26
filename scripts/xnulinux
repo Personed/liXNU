@@ -25,17 +25,18 @@ usage() {
 Usage: xnulinux <command> [args...]
 
 Commands:
-  doctor [--strict]         Inspect this PC's OS, CPU, memory, tools, and readiness
-  status                    Show loaded modules, network (xnu0), GPU bridge, and config
-  build-modules             Build fki.ko and xnu.ko against the running kernel
-  setup-mem [--dry-run]     Configure Linux mem= and fki.ko carve-out for this PC
-  boot [--wait]             Boot the hosted system (scripts/xnulinux-boot.sh)
-  stop                      Stop the running hosted system cleanly
+  doctor [--strict]          Inspect this PC's OS, CPU, memory, tools, and readiness
+  status                     Show loaded modules, network (xnu0), GPU bridge, and config
+  build-modules              Build fki.ko and xnu.ko against the running kernel
+  setup-mem [--dry-run]      Configure Linux mem= and fki.ko carve-out on an ARM64 Linux host
+  boot [--wait]              Boot hosted XNU on ARM64 Linux (or guide x86-64 PCs to QEMU)
+  vm [args...]               Launch an ARM64 Linux guest VM via scripts/qemu-vm.py (when present)
+  stop                       Stop the running hosted system cleanly
   console [--local|--remote] Attach to XNU /dev/console
-  vnc [args...]             Start VNC server for framebuffer & input (port 5900)
+  vnc [args...]              Start VNC server for framebuffer & input (requires tools/hosted/xnu-vnc.py)
   screenshot [OUT.png] [W] [H] Save framebuffer dump as PNG (default: xnu-screen.png 1280 800)
-  test                      Run host unit tests (and live host checks when XNU is running)
-  help                      Show this help message
+  test                       Run host unit tests (and live host checks when XNU is running)
+  help                       Show this help message
 EOF
 }
 
@@ -63,7 +64,7 @@ cmd_doctor() {
 
   if [ "$os" = Linux ] && [ "$arch" = aarch64 ]; then
     if [ "$pagesize" != 4096 ]; then
-      echo "Status:    [FAIL] 4K Linux pages required (found $pagesize)"
+      echo "Pages:     [FAIL] 4K Linux pages required (found $pagesize)"
       native_ok=0
     else
       echo "Pages:     [OK] 4K pages"
@@ -72,7 +73,8 @@ cmd_doctor() {
     if grep -qw paca /proc/cpuinfo 2>/dev/null; then
       echo "PAC:       [OK] FEAT_PAuth (paca) advertised"
     else
-      echo "PAC:       [WARN] paca not advertised in /proc/cpuinfo"
+      echo "PAC:       [MISSING] paca not advertised in /proc/cpuinfo (required for native hosted XNU)"
+      native_ok=0
     fi
 
     local kdir="/lib/modules/$(uname -r)/build"
@@ -100,14 +102,14 @@ cmd_doctor() {
     fi
   else
     native_ok=0
-    echo "Native:    [INFO] Native xnu.ko requires an arm64 (aarch64) 4K-page Linux host."
+    echo "Native:    [INFO] Native xnu.ko requires an arm64 (aarch64) 4K-page Linux host with PAC."
     if command -v qemu-system-aarch64 >/dev/null 2>&1; then
       echo "QEMU:      [OK] $(qemu-system-aarch64 --version | head -n1)"
     else
       echo "QEMU:      [MISSING] install qemu-system-aarch64 to run an ARM64 Linux VM on this PC"
     fi
     if [ -e /dev/kvm ]; then
-      echo "KVM:       [OK] /dev/kvm present (for x86_64 guests)"
+      echo "KVM:       [OK] /dev/kvm present (for separate x86_64 guests)"
     fi
   fi
 
@@ -134,10 +136,18 @@ cmd_status() {
       echo "module $mod: not loaded"
     fi
   done
-  if command -v ip >/dev/null 2>&1 && ip link show xnu0 >/dev/null 2>&1; then
-    echo "network xnu0: up"
+  if command -v ip >/dev/null 2>&1; then
+    local link_line
+    link_line=$(ip -o link show xnu0 2>/dev/null || true)
+    if [ -z "$link_line" ]; then
+      echo "network xnu0: absent"
+    elif printf '%s\n' "$link_line" | grep -qE '(<[^>]*,UP(,|>)|state UP)'; then
+      echo "network xnu0: up"
+    else
+      echo "network xnu0: down (interface exists)"
+    fi
   else
-    echo "network xnu0: down"
+    echo "network xnu0: unknown (ip command not found)"
   fi
   if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     echo "xnudrmd: $(systemctl is-active xnudrmd 2>/dev/null || echo inactive)"
@@ -152,6 +162,67 @@ cmd_build_modules() {
   make -C "$kdir" M="$ROOT/fki-ko" modules
   make -C "$kdir" M="$ROOT/xnu-ko" KBUILD_EXTRA_SYMBOLS="$ROOT/fki-ko/Module.symvers" modules
   echo "built: $ROOT/fki-ko/fki.ko and $ROOT/xnu-ko/xnu.ko"
+}
+
+cmd_setup_mem() {
+  local os arch script="$ROOT/scripts/vm-install-fki-service.sh"
+  os=$(uname -s)
+  arch=$(uname -m)
+  if [ "$os" != Linux ] || [ "$arch" != aarch64 ]; then
+    echo "xnulinux setup-mem: only applies inside an ARM64 (aarch64) Linux host/VM (detected $os $arch)." >&2
+    exit 1
+  fi
+  if [ "${1:-}" = --dry-run ] || [ "${1:-}" = --print ]; then
+    if grep -q -- '--dry-run' "$script" 2>/dev/null; then
+      exec bash "$script" "$@"
+    fi
+    echo "xnulinux setup-mem: --dry-run is not supported by this checkout's vm-install-fki-service.sh (requires PR #8); refusing to modify GRUB/systemd." >&2
+    exit 1
+  fi
+  exec bash "$script" "$@"
+}
+
+cmd_boot() {
+  local os arch
+  os=$(uname -s)
+  arch=$(uname -m)
+  if [ "$os" != Linux ] || [ "$arch" != aarch64 ]; then
+    echo "xnulinux boot: native xnu.ko requires an ARM64 (aarch64) Linux host (detected $os $arch)." >&2
+    if [ -f "$ROOT/scripts/qemu-vm.py" ]; then
+      echo "Use 'xnulinux vm ...' (scripts/qemu-vm.py) to launch an ARM64 Linux VM on this PC." >&2
+    else
+      echo "On x86-64 PCs, run an ARM64 Linux guest under QEMU TCG (PR #3: scripts/qemu-vm.py), or see scripts/x86_64/xnulinux-boot.sh for the separate x86-64 QEMU/KVM experiment." >&2
+    fi
+    exit 1
+  fi
+  exec bash "$ROOT/scripts/xnulinux-boot.sh" "$@"
+}
+
+cmd_vm() {
+  local launcher="$ROOT/scripts/qemu-vm.py"
+  if [ ! -f "$launcher" ]; then
+    echo "xnulinux vm: scripts/qemu-vm.py is not present in this checkout (available via PR #3)." >&2
+    exit 1
+  fi
+  exec python3 "$launcher" "$@"
+}
+
+cmd_console() {
+  local script="$ROOT/scripts/xnu-console.sh"
+  if [ "${1:-}" = --local ] && ! grep -q -- '--local' "$script" 2>/dev/null; then
+    echo "xnulinux console: --local is not supported by this checkout's scripts/xnu-console.sh (available via PR #9)." >&2
+    exit 1
+  fi
+  exec bash "$script" "$@"
+}
+
+cmd_vnc() {
+  local vnc="$ROOT/tools/hosted/xnu-vnc.py"
+  if [ ! -f "$vnc" ]; then
+    echo "xnulinux vnc: tools/hosted/xnu-vnc.py is not present in this checkout (available via PR #9)." >&2
+    exit 1
+  fi
+  exec python3 "$vnc" "$@"
 }
 
 cmd_screenshot() {
@@ -176,11 +247,12 @@ case "$cmd" in
   doctor|check) cmd_doctor "$@" ;;
   status) cmd_status "$@" ;;
   build-modules) cmd_build_modules "$@" ;;
-  setup-mem) exec bash "$ROOT/scripts/vm-install-fki-service.sh" "$@" ;;
-  boot) exec bash "$ROOT/scripts/xnulinux-boot.sh" "$@" ;;
+  setup-mem) cmd_setup_mem "$@" ;;
+  boot) cmd_boot "$@" ;;
+  vm) cmd_vm "$@" ;;
   stop) exec bash "$ROOT/scripts/xnulinux-boot.sh" stop ;;
-  console) exec bash "$ROOT/scripts/xnu-console.sh" "$@" ;;
-  vnc) exec python3 "$ROOT/tools/hosted/xnu-vnc.py" "$@" ;;
+  console) cmd_console "$@" ;;
+  vnc) cmd_vnc "$@" ;;
   screenshot) cmd_screenshot "$@" ;;
   test) cmd_test "$@" ;;
   help|-h|--help) usage ;;

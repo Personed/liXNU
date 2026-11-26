@@ -87,9 +87,12 @@ Report the profile alongside the stage:
   x86-64 TCG boot. The Ubuntu 24.04.5 x86-64 AWS-hosted virtual runner reported 4 CPUs,
   `MemTotal: 16078424 kB`, and QEMU 8.2.2; the profile used 16 GiB guest RAM, Linux `mem=7G`,
   and an 8,156 MiB FKI carve-out at `0x200000000`. The console recorded `Darwin`,
-  `XNULINUX_USERLAND_OK`, guest halt, XNU unload, and Linux power-off; the checked boot script
-  exited 0. Run [#95](https://github.com/Personed/xnulinux/actions/runs/45867603529) validates
-  that synchronized #52/#64 branch on this virtual runner only. PR #64 merged into the #52
+  `XNULINUX_USERLAND_OK`, `XNULINUX_E2E_GUEST_HALT_OK`, `XNULINUX_E2E_XNU_UNLOADED`, and
+  Linux `reboot: Power down`. The [run-tcg-e2e.py script at head `5570fae`](https://github.com/Personed/xnulinux/blob/5570faef5f457eb9426a00102db4d73062de5c64/tests/puredarwin/run-tcg-e2e.py)
+  requires QEMU's return code to be 0, and the boot job passed. It does not check or emit a
+  separate FKI-unload marker, so FKI unload is not verified by this run; the retained log
+  also has no standalone QEMU exit-status line. Run [#95](https://github.com/Personed/xnulinux/actions/runs/45867603529)
+  validates that synchronized #52/#64 branch on this virtual runner only. PR #64 merged into the #52
   branch as `c360e99`; this is not main-integrated or cross-host matrix acceptance. These
   stacked results do not replace a current #36/#46 console/halt run with the same manifest.
   PR #46 run #79 failed in `kclink` on the same overlap before guest preparation or the host

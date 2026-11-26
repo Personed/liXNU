@@ -5,6 +5,7 @@ set -euo pipefail
 script=$(cd -- "$(dirname -- "$0")/.." && pwd)/scripts/puredarwin-root.sh
 real_mktemp=$(command -v mktemp)
 real_chmod=$(command -v chmod)
+real_stat=$(command -v stat)
 tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
 bin=$tmp/bin
@@ -16,6 +17,7 @@ export TEST_STATE=$state
 export FAKE_LOOP=/dev/loop-codex-test
 export REAL_MKTEMP=$real_mktemp
 export REAL_CHMOD=$real_chmod
+export REAL_STAT=$real_stat
 export PATH="$bin:$PATH"
 
 cat >"$bin/sfdisk" <<'WRAPPER'
@@ -94,6 +96,20 @@ if [ "$1" = '-d' ]; then
 fi
 printf '%s\n' "$result"
 WRAPPER
+cat >"$bin/stat" <<'WRAPPER'
+#!/bin/sh
+result=$("$REAL_STAT" "$@") || exit
+if [ "${REPLACE_AFTER_IDENTITY:-0}" = 1 ] &&
+   [ "$#" -eq 4 ] && [ "$1" = '-c' ] && [ "$2" = '%d:%i' ] && [ "$3" = '--' ] &&
+   [ "$4" = "$(cat "$TEST_STATE/archive-dir")" ] &&
+   [ ! -e "$TEST_STATE/identity-replaced" ]; then
+  mv -- "$4" "$4.original"
+  ln -s -- "$ATTACKER_DIR" "$4"
+  printf '%s\n' "$4.original" >"$TEST_STATE/replaced-stage"
+  : >"$TEST_STATE/identity-replaced"
+fi
+printf '%s\n' "$result"
+WRAPPER
 chmod +x "$bin"/*
 cat >"$bin/chmod" <<'WRAPPER'
 #!/bin/sh
@@ -164,6 +180,7 @@ echo 'PureDarwin root exporter pre-mount signal cleanup test passed.'
 # A signal after mktemp but before clearing setgid must still remove the empty
 # 2700 staging directory using its recorded inode identity.
 rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/mount-dir" "$state/check-log"
+unset SIGNAL_BEFORE_MOUNT
 set +e
 SIGNAL_BEFORE_STAGING_CHMOD=1 "$script" "$image" "$output" >/dev/null 2>&1
 status=$?
@@ -174,9 +191,35 @@ staging_dir=$(cat "$state/archive-dir")
 mount_dir=$(cat "$state/mount-dir")
 [ "${mount_dir#/tmp/.puredarwin-root-mount.}" != "$mount_dir" ]
 [ ! -e "$mount_dir" ]
+[ ! -e "$state/check-log" ]
 [ -z "$(find "$shared_output" -mindepth 1 -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
 
 echo 'PureDarwin root exporter early staging signal cleanup test passed.'
+
+# Replace the recorded inode with a same-owner private directory after its
+# identity has been captured. The exporter must detect the mismatch before
+# invoking e2fsck or writing into the replacement.
+private_attacker_dir=$tmp/attacker-private
+mkdir -- "$private_attacker_dir"
+chmod 0700 "$private_attacker_dir"
+printf 'private sentinel\n' >"$private_attacker_dir/root.tar.gz"
+rm -f -- "$state/check-log" "$state/identity-replaced" "$state/replaced-stage"
+set +e
+REPLACE_AFTER_IDENTITY=1 ATTACKER_DIR=$private_attacker_dir \
+  "$script" "$image" "$output" >/dev/null 2>&1
+status=$?
+set -e
+[ "$status" -ne 0 ] || { echo 'Exporter accepted a same-owner staging inode replacement' >&2; exit 1; }
+[ "$(cat "$private_attacker_dir/root.tar.gz")" = 'private sentinel' ]
+[ ! -e "$output" ]
+[ ! -e "$state/check-log" ] || { echo 'Exporter started filesystem validation through a replaced staging inode' >&2; exit 1; }
+replaced_stage=$(cat "$state/replaced-stage")
+[ -d "$replaced_stage" ]
+[ -L "$(cat "$state/archive-dir")" ]
+rm -rf -- "$replaced_stage"
+rm -f -- "$(cat "$state/archive-dir")"
+
+echo 'PureDarwin root exporter same-owner inode replacement test passed.'
 
 # An attacker-controlled replacement directory in the shared output parent
 # must be rejected before the exporter writes its archive or e2fsck log.

@@ -19,5 +19,7 @@ jobs:
         run: make -C "$KDIR" M="$PWD/xnu-ko" modules
       - name: Verify module license
         run: |
-          sudo apt-get install -y -qq kmod >/dev/null
+          sudo apt-get install -y -qq busybox-static cpio kmod qemu-system-x86 >/dev/null
           test "$(modinfo -F license xnu-ko/xnu.ko)" = Proprietary
+      - name: Exercise refusal in a disposable x86_64 Linux VM
+        run: tests/x86_64/test-xnu-stub-vm.sh "$KDIR"

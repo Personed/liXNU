@@ -13,7 +13,7 @@ if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
   exit 2
 fi
 ROOT=$1 OUT=$2 SIZE=${3:-1g}
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+SCRIPT_DIR=$(CDPATH= cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "$SCRIPT_DIR/lib/publish-file-no-replace.sh"
 case "$OUT" in
   /*) ;;
@@ -105,6 +105,7 @@ cleanup_linux_disk() {
 
 make_macos_disk() {
   M=$(mktemp -d)
+  M=$(CDPATH= cd -P -- "$M" && pwd -P)
   IMG_DIR=$(mktemp -d "$OUT_DIR/.puredarwin-disk.XXXXXX")
   D=$IMG_DIR/pd.dmg
   mounted=''

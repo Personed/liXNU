@@ -22,3 +22,14 @@ jobs:
           bash -n tests/test-mk-puredarwin-disk-output.sh
       - name: Disk output safety regressions
         run: bash tests/test-mk-puredarwin-disk-output.sh
+  macos-cleanup:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: |
+          bash -n scripts/mk-puredarwin-disk.sh
+          bash -n scripts/lib/publish-file-no-replace.sh
+          bash -n tests/test-mk-puredarwin-disk-output.sh
+      - name: macOS attach failure and CDPATH regressions
+        run: bash tests/test-mk-puredarwin-disk-output.sh

@@ -86,7 +86,11 @@ def main() -> int:
         return 1
 
     log = args.serial_log.read_text(encoding="utf-8", errors="replace") if args.serial_log.exists() else ""
-    messages = [line.split(";", 1)[1] if ";" in line else line for line in log.splitlines()]
+    kmsg_prefix = re.compile(r"^\d+,\d+,\d+,[^;]*;(.*)$")
+    messages = []
+    for line in log.splitlines():
+        match = kmsg_prefix.match(line)
+        messages.append(match.group(1) if match else line)
     missing = [marker for marker in REQUIRED if not any(marker in line for line in messages)]
     darwin_line = "fki: darwin console: Darwin"
     if darwin_line not in messages:

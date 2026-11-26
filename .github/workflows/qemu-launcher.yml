@@ -27,6 +27,8 @@ jobs:
       - name: Install QEMU and ARM64 UEFI firmware
         run: |
           sudo apt-get update
-          sudo apt-get install --yes qemu-system-arm qemu-efi-aarch64 qemu-utils
+          sudo apt-get install --yes qemu-system-arm qemu-efi-aarch64 qemu-utils qemu-system-gui xvfb
       - name: Start an ARM64 guest through the launcher
         run: python tests/qemu/test_uefi_launch.py
+      - name: Start the graphical ARM64 guest through GTK or SDL
+        run: xvfb-run -a env QEMU_TEST_GRAPHICAL=1 python tests/qemu/test_uefi_launch.py

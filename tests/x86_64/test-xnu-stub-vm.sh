@@ -87,21 +87,60 @@ INITRD="$STAGE/xnu-stub-initramfs.cpio.gz"
   find . -print0 | sort -z | cpio --null --create --format=newc --owner=0:0 2>/dev/null
 ) | gzip -n -9 > "$INITRD"
 
-LOG="$STAGE/qemu-serial.log"
-set +e
-timeout 240 qemu-system-x86_64 -machine q35,accel=tcg -cpu max -smp 2 -m 1024 -kernel "$KERNEL" -initrd "$INITRD" -append 'console=ttyS0,115200 rdinit=/init panic=1 loglevel=7' -display none -serial stdio -monitor none -no-reboot > "$LOG" 2>&1
-QEMU_RC=$?
-set -e
-cat "$LOG"
-if [ "$QEMU_RC" -ne 0 ]; then
-  echo "QEMU disposable-VM test failed with status $QEMU_RC" >&2
-  exit "$QEMU_RC"
+run_stub_vm() {
+  local accel="$1"
+  local cpu="$2"
+  local log="$3"
+
+  set +e
+  timeout 240 qemu-system-x86_64 -machine q35 -accel "$accel" -cpu "$cpu" -smp 2 -m 1024 -kernel "$KERNEL" -initrd "$INITRD" -append 'console=ttyS0,115200 rdinit=/init panic=1 loglevel=7' -display none -serial stdio -monitor none -no-reboot > "$log" 2>&1
+  QEMU_RC=$?
+  set -e
+  cat "$log"
+  if [ "$QEMU_RC" -ne 0 ]; then
+    echo "QEMU disposable-VM test failed with status $QEMU_RC for CPU $cpu" >&2
+    exit "$QEMU_RC"
+  fi
+  grep -F 'XNU_STUB_VM_TEST_PASS' "$log" >/dev/null || {
+    echo "disposable VM did not report the xnu stub test marker for CPU $cpu" >&2
+    exit 1
+  }
+}
+
+host_has_required_cpu_features() {
+  local flags feature
+
+  flags=$(grep -m1 '^flags' /proc/cpuinfo)
+  for feature in sse4_2 avx fma movbe popcnt bmi1 avx2 bmi2; do
+    [[ " $flags " == *" $feature "* ]] || return 1
+  done
+  [[ " $flags " == *" lzcnt "* || " $flags " == *" abm "* ]]
+}
+
+if [[ -w /dev/kvm ]] && host_has_required_cpu_features; then
+  HOST_LOG="$STAGE/qemu-serial-host-features.log"
+  run_stub_vm kvm host "$HOST_LOG"
+  grep -F 'xnu: native x86_64 world switch is not implemented; refusing to load' "$HOST_LOG" >/dev/null || {
+    echo "feature-complete disposable VM did not log that the xnu stub initializer ran" >&2
+    exit 1
+  }
+else
+  echo 'skipping feature-complete CPU validation: KVM or a required host CPU feature is unavailable' >&2
 fi
-grep -F 'xnu: native x86_64 world switch is not implemented; refusing to load' "$LOG" >/dev/null || {
-  echo "disposable VM did not log that the xnu stub initializer ran" >&2
+
+MISSING_LOG="$STAGE/qemu-serial-missing-features.log"
+run_stub_vm tcg qemu64 "$MISSING_LOG"
+grep -F 'xnu: CPU is missing required x86_64 features:' "$MISSING_LOG" >/dev/null || {
+  echo "feature-limited disposable VM did not log missing CPU features" >&2
   exit 1
 }
-grep -F 'XNU_STUB_VM_TEST_PASS' "$LOG" >/dev/null || {
-  echo "disposable VM did not report the xnu stub test marker" >&2
+for feature in SSE4.2 AVX FMA MOVBE POPCNT LZCNT BMI1 AVX2 BMI2; do
+  grep -F "$feature" "$MISSING_LOG" >/dev/null || {
+    echo "feature-limited disposable VM did not list missing CPU feature $feature" >&2
+    exit 1
+  }
+done
+if grep -F 'xnu: native x86_64 world switch is not implemented; refusing to load' "$MISSING_LOG" >/dev/null; then
+  echo "feature-limited disposable VM reached the world-switch refusal before CPU validation" >&2
   exit 1
-}
+fi

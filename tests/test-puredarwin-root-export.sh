@@ -3,16 +3,20 @@
 set -euo pipefail
 
 script=$(cd -- "$(dirname -- "$0")/.." && pwd)/scripts/puredarwin-root.sh
-if [ "$EUID" -ne 0 ]; then
-  echo 'Run this integration test as root (for example, sudo bash tests/test-puredarwin-root-export.sh).' >&2
+if [ "$EUID" -ne 0 ] && ! command -v sudo >/dev/null; then
+  echo 'Run this integration test as root or install sudo.' >&2
   exit 1
 fi
-for tool in sfdisk mkfs.ext4 debugfs losetup mount mountpoint umount e2fsck tune2fs tar python3 mknod; do
+for tool in sfdisk mkfs.ext4 debugfs losetup mount mountpoint umount e2fsck tune2fs tar python3 mknod findmnt unshare setpriv id; do
   command -v "$tool" >/dev/null || { echo "Missing test dependency: $tool" >&2; exit 1; }
 done
 
+run_as_root() {
+  if [ "$EUID" -eq 0 ]; then "$@"; else sudo "$@"; fi
+}
+
 tmp=$(mktemp -d)
-trap 'rm -rf -- "$tmp"' EXIT
+trap 'run_as_root rm -rf -- "$tmp"' EXIT
 root_dir=$tmp/root
 mkdir -- "$root_dir"
 printf 'export smoke test\n' >"$root_dir/hello.txt"
@@ -48,25 +52,36 @@ if [ "${1:-}" = 0644 ] && [ "${2:-}" = -- ]; then
     echo "Archive staging directory must be private (mode 700); got $private_mode." >&2
     exit 1
   }
+  : >"@CHMOD_MARKER@"
 fi
-exec "$REAL_CHMOD" "$@"
+exec "@REAL_CHMOD@" "$@"
 WRAPPER
+chmod_marker=$tmp/chmod-called
+sed -i "s|@REAL_CHMOD@|$real_chmod|g; s|@CHMOD_MARKER@|$chmod_marker|g" "$chmod_bin/chmod"
 chmod +x "$chmod_bin/chmod"
 archive=$output_dir/root.tar.gz
-REAL_CHMOD=$real_chmod PATH="$chmod_bin:$PATH" "$script" "$image" "$archive" >/dev/null
+PATH="$chmod_bin:$PATH" "$script" "$image" "$archive" >/dev/null
 [ "$(stat -c '%a' "$archive")" = 644 ]
+[ "$(stat -c '%u' "$archive")" = "$EUID" ]
+[ -f "$chmod_marker" ]
 gzip -t "$archive"
 tar -tzf "$archive" | grep -Fx './hello.txt' >/dev/null
 [ "$(tar -xOzf "$archive" ./hello.txt)" = 'export smoke test' ]
 [ "$(sha256sum "$image" | cut -d ' ' -f 1)" = "$original_sha" ]
 [ -z "$(find "$output_dir" -mindepth 1 -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
 
+# Resolve the script path when Bash is asked to open it by a bare filename.
+simple_output=$tmp/simple-invocation.tar.gz
+(cd -- "$(dirname -- "$script")" && bash puredarwin-root.sh "$image" "$simple_output" >/dev/null)
+[ -f "$simple_output" ]
+[ "$(stat -c '%u' "$simple_output")" = "$EUID" ]
+
 # A symlink plus '..' must resolve the same physical output directory for
 # mktemp, cd, publication and cleanup.
 mkdir -- "$output_dir/nested"
 ln -s -- "$output_dir/nested" "$tmp/output-link"
 symlink_output=$tmp/output-link/../via-symlink.tar.gz
-REAL_CHMOD=$real_chmod PATH="$chmod_bin:$PATH" "$script" "$image" "$symlink_output" >/dev/null
+PATH="$chmod_bin:$PATH" "$script" "$image" "$symlink_output" >/dev/null
 [ -f "$output_dir/via-symlink.tar.gz" ]
 [ ! -e "$tmp/via-symlink.tar.gz" ]
 
@@ -76,35 +91,36 @@ REAL_CHMOD=$real_chmod PATH="$chmod_bin:$PATH" "$script" "$image" "$symlink_outp
 attacker_dir=$tmp/attacker-owned
 mkdir -- "$attacker_dir"
 printf 'private sentinel\n' >"$attacker_dir/root.tar.gz"
-chown 65534:65534 "$attacker_dir" "$attacker_dir/root.tar.gz"
 chmod 0700 "$attacker_dir"
+run_as_root chown 65534:65534 "$attacker_dir" "$attacker_dir/root.tar.gz"
 replace_bin=$tmp/replace-bin
 mkdir -- "$replace_bin"
 real_mktemp=$(command -v mktemp)
 cat >"$replace_bin/mktemp" <<'WRAPPER'
 #!/usr/bin/env bash
 set -euo pipefail
-result=$("$REAL_MKTEMP" "$@")
+result=$("@REAL_MKTEMP@" "$@")
 case "$*" in
   *'.puredarwin-root.'*)
     mv -- "$result" "$result.original"
-    ln -s -- "$ATTACKER_DIR" "$result"
+    ln -s -- "@ATTACKER_DIR@" "$result"
     ;;
 esac
 printf '%s\n' "$result"
 WRAPPER
-chmod +x "$replace_bin/mktemp"
 attack_output=$output_dir/attack-output.tar.gz
-if REAL_MKTEMP=$real_mktemp ATTACKER_DIR=$attacker_dir PATH="$replace_bin:$PATH" \
+sed -i "s|@REAL_MKTEMP@|$real_mktemp|g; s|@ATTACKER_DIR@|$attacker_dir|g" "$replace_bin/mktemp"
+chmod +x "$replace_bin/mktemp"
+if PATH="$replace_bin:$PATH" \
   "$script" "$image" "$attack_output" >/dev/null 2>&1; then
   echo 'Exporter accepted a replaced staging directory.' >&2
   exit 1
 fi
-[ "$(cat "$attacker_dir/root.tar.gz")" = 'private sentinel' ]
+[ "$(run_as_root cat "$attacker_dir/root.tar.gz")" = 'private sentinel' ]
 [ ! -e "$attack_output" ]
 replaced_dir=$(find "$output_dir" -maxdepth 1 -type d -name '.puredarwin-root.*.original' -print -quit)
 [ -n "$replaced_dir" ]
-rm -rf -- "$replaced_dir"
+run_as_root rm -rf -- "$replaced_dir"
 rm -- "$output_dir"/.puredarwin-root.*
 
 expect_refusal() {
@@ -129,7 +145,7 @@ expect_refusal "$tmp/dangling-symlink"
 mkfifo -- "$tmp/existing-fifo"
 expect_refusal "$tmp/existing-fifo"
 [ -p "$tmp/existing-fifo" ]
-mknod -- "$tmp/existing-device" c 1 3
+run_as_root mknod -- "$tmp/existing-device" c 1 3
 expect_refusal "$tmp/existing-device"
 [ -c "$tmp/existing-device" ]
 mkdir -- "$tmp/existing-directory"
@@ -145,11 +161,12 @@ cat >"$race_bin/link" <<'WRAPPER'
 #!/usr/bin/env bash
 set -euo pipefail
 mkdir -- "$2"
-exec "$REAL_LINK" "$@"
+exec "@REAL_LINK@" "$@"
 WRAPPER
-chmod +x "$race_bin/link"
 race_path=$tmp/raced-output
-if REAL_LINK=$real_link PATH="$race_bin:$PATH" "$script" "$image" "$race_path" >/dev/null 2>&1; then
+sed -i "s|@REAL_LINK@|$real_link|g" "$race_bin/link"
+chmod +x "$race_bin/link"
+if PATH="$race_bin:$PATH" "$script" "$image" "$race_path" >/dev/null 2>&1; then
   echo 'Exporter unexpectedly published over a destination created during export.' >&2
   exit 1
 fi

@@ -3,6 +3,30 @@
 # On Linux, archive the "Darwin ext4 Root" partition from a PureDarwin arm64 image.
 #   puredarwin-root.sh IMAGE OUT.tar.gz
 set -euo pipefail
+private_mount_namespace=0
+if [ "$#" -eq 3 ] && [ "${1:-}" = '--private-mount-namespace' ]; then
+  private_mount_namespace=1
+  shift
+fi
+if [ "$private_mount_namespace" -eq 1 ] && [ -n "${XNULINUX_PRIVATE_MOUNT_PATH:-}" ]; then
+  PATH=$XNULINUX_PRIVATE_MOUNT_PATH
+  export PATH
+  unset XNULINUX_PRIVATE_MOUNT_PATH
+fi
+case "$0" in
+  */*)
+    case "$0" in /*) script_path=$0 ;; *) script_path=$PWD/$0 ;; esac
+    ;;
+  *)
+    if [ -f "$PWD/$0" ]; then
+      script_path=$PWD/$0
+    else
+      script_path=$(command -v -- "$0" && printf '.')
+      script_path=${script_path%.}
+      script_path=${script_path%$'\n'}
+    fi
+    ;;
+esac
 if [ "$#" -ne 2 ]; then
   echo "Usage: ${0##*/} IMAGE OUT.tar.gz" >&2
   exit 2
@@ -53,12 +77,26 @@ if [ "$EUID" -ne 0 ]; then
 fi
 export PATH="$PATH:/usr/sbin:/sbin"
 export LC_ALL=C
-for tool in sfdisk python3 losetup mount mountpoint umount e2fsck tune2fs tar mktemp link stat chmod; do
+for tool in sfdisk python3 losetup mount mountpoint umount e2fsck tune2fs tar mktemp link stat chmod mkdir unshare setpriv id env; do
   if ! command -v "$tool" >/dev/null; then
     echo "PureDarwin root export requires $tool." >&2
     exit 1
   fi
 done
+
+# Isolate the temporary ext4 mount from the host mount table. The child keeps
+# the original caller's permissions so output files on root-squashed NFS remain
+# owned by that user; sudo is used only for loop and mount operations.
+if [ "$private_mount_namespace" -eq 0 ]; then
+  if [ "$EUID" -eq 0 ]; then
+    exec unshare --mount --propagation private -- "$script_path" --private-mount-namespace "$image" "$output"
+  fi
+  caller_uid=$EUID
+  caller_gid=$(id -g)
+  exec sudo env XNULINUX_PRIVATE_MOUNT_PATH="$PATH" unshare --mount --propagation private -- setpriv \
+    --reuid "$caller_uid" --regid "$caller_gid" --init-groups -- \
+    "$script_path" --private-mount-namespace "$image" "$output"
+fi
 
 # Keep export temporary files out of paths another local account can change.
 # Sticky shared directories such as /tmp remain safe for entries owned by this
@@ -164,12 +202,12 @@ cleanup() {
         fi
       fi
       mount_dir=''
-      if [ -n "$mount_parent" ]; then
+      if [ -n "$mount_parent" ] && { [ -e "$mount_parent" ] || [ -L "$mount_parent" ]; }; then
         cleanup_parent_identity=$(stat -c '%d:%i' -- "$mount_parent" 2>/dev/null || true)
         cleanup_parent_owner_mode=$(stat -c '%u:%a' -- "$mount_parent" 2>/dev/null || true)
         if [ ! -L "$mount_parent" ] &&
            [ -n "$cleanup_parent_identity" ] &&
-           [ "$cleanup_parent_identity" = "$mount_parent_identity" ] &&
+           { [ -z "$mount_parent_identity" ] || [ "$cleanup_parent_identity" = "$mount_parent_identity" ]; } &&
            [ "$cleanup_parent_owner_mode" = "$EUID:700" ]; then
           rmdir -- "$mount_parent" || return 1
         else
@@ -235,7 +273,7 @@ check_log=check.log
 # point in a separate private temp directory that the privileged mount helper
 # can access; the archive itself remains opened by this unprivileged shell.
 create_mount_stage() {
-  local candidate last_candidate='' owner_mode owner
+  local candidate last_candidate='' owner_mode owner attempt
   local -a candidates=("${mount_tmp_candidates[@]}")
   for candidate in "${candidates[@]}"; do
     [ -n "$candidate" ] || continue
@@ -243,7 +281,15 @@ create_mount_stage() {
     last_candidate=$candidate
     [ -d "$candidate" ] || continue
     export_path_is_safe "$candidate" || continue
-    mount_parent=$(mktemp -d -- "$candidate/.puredarwin-root-mount.XXXXXXXX") || continue
+    mount_parent=''
+    for attempt in {1..10}; do
+      mount_parent=$candidate/.puredarwin-root-mount.$$.${RANDOM}${RANDOM}
+      if mkdir -m 0700 -- "$mount_parent" 2>/dev/null; then
+        break
+      fi
+      mount_parent=''
+    done
+    [ -n "$mount_parent" ] || continue
     if [ -L "$mount_parent" ] || ! export_path_is_safe "$mount_parent"; then
       rmdir -- "$mount_parent" 2>/dev/null || true
       mount_parent=''

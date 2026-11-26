@@ -60,6 +60,43 @@ tar -tzf "$archive" | grep -Fx './hello.txt' >/dev/null
 [ "$(tar -xOzf "$archive" ./hello.txt)" = 'export smoke test' ]
 [ "$(sha256sum "$image" | cut -d ' ' -f 1)" = "$original_sha" ]
 
+# Replace the temporary directory after mktemp creates it, simulating a user
+# who can rename entries in the shared output directory. The exporter must
+# detect the changed owner before writing through the replacement symlink.
+attacker_dir=$tmp/attacker-owned
+mkdir -- "$attacker_dir"
+printf 'private sentinel\n' >"$attacker_dir/root.tar.gz"
+chown 65534:65534 "$attacker_dir" "$attacker_dir/root.tar.gz"
+chmod 0700 "$attacker_dir"
+replace_bin=$tmp/replace-bin
+mkdir -- "$replace_bin"
+real_mktemp=$(command -v mktemp)
+cat >"$replace_bin/mktemp" <<'WRAPPER'
+#!/usr/bin/env bash
+set -euo pipefail
+result=$("$REAL_MKTEMP" "$@")
+case "$*" in
+  *'.puredarwin-root.'*)
+    mv -- "$result" "$result.original"
+    ln -s -- "$ATTACKER_DIR" "$result"
+    ;;
+esac
+printf '%s\n' "$result"
+WRAPPER
+chmod +x "$replace_bin/mktemp"
+attack_output=$output_dir/attack-output.tar.gz
+if REAL_MKTEMP=$real_mktemp ATTACKER_DIR=$attacker_dir PATH="$replace_bin:$PATH" \
+  "$script" "$image" "$attack_output" >/dev/null 2>&1; then
+  echo 'Exporter accepted a replaced staging directory.' >&2
+  exit 1
+fi
+[ "$(cat "$attacker_dir/root.tar.gz")" = 'private sentinel' ]
+[ ! -e "$attack_output" ]
+replaced_dir=$(find "$output_dir" -maxdepth 1 -type d -name '.puredarwin-root.*.original' -print -quit)
+[ -n "$replaced_dir" ]
+rm -rf -- "$replaced_dir"
+rm -- "$output_dir"/.puredarwin-root.*
+
 expect_refusal() {
   local path=$1
   if "$script" "$image" "$path" >/dev/null 2>&1; then

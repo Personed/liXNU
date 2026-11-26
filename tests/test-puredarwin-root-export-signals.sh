@@ -67,6 +67,7 @@ printf '%s\n' 'Filesystem features: has_journal ext_attr'
 WRAPPER
 cat >"$bin/e2fsck" <<'WRAPPER'
 #!/bin/sh
+printf '%s\n' "$PWD/check.log" >"$TEST_STATE/check-log"
 if [ "${SIGNAL_BEFORE_MOUNT:-0}" = 1 ]; then kill -TERM "$PPID"; fi
 exit 0
 WRAPPER
@@ -75,11 +76,16 @@ cat >"$bin/mktemp" <<'WRAPPER'
 result=$("$REAL_MKTEMP" "$@") || exit
 if [ "$1" = '-d' ]; then
   case "$*" in
-    *'.puredarwin-root.'*) printf '%s\n' "$result" >"$TEST_STATE/archive-dir" ;;
+    *'.puredarwin-root.'*)
+      printf '%s\n' "$result" >"$TEST_STATE/archive-dir"
+      if [ "${REPLACE_ARCHIVE_DIR:-0}" = 1 ]; then
+        mv -- "$result" "$result.original"
+        ln -s -- "$ATTACKER_DIR" "$result"
+        printf '%s\n' "$result.original" >"$TEST_STATE/replaced-stage"
+      fi
+      ;;
     *) printf '%s\n' "$result" >"$TEST_STATE/mount-dir" ;;
   esac
-elif [ "$#" -eq 0 ]; then
-  printf '%s\n' "$result" >"$TEST_STATE/check-log"
 fi
 printf '%s\n' "$result"
 WRAPPER
@@ -104,7 +110,9 @@ detach_line=$(grep -n '^detached$' "$state/events" | cut -d: -f1)
 mount_dir=$(cat "$state/mount-dir")
 [ ! -e "$mount_dir" ]
 [ -z "$(find "$tmp" -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
-[ ! -e "$(cat "$state/check-log")" ]
+first_check_log=$(cat "$state/check-log")
+[ -n "$first_check_log" ]
+[ ! -e "$first_check_log" ]
 
 echo 'PureDarwin root exporter signal cleanup test passed.'
 
@@ -112,6 +120,7 @@ echo 'PureDarwin root exporter signal cleanup test passed.'
 # util-linux mountpoint returns 32 for the existing, unmounted directory;
 # cleanup must accept that state and still detach the loop and remove temps.
 rm -f -- "$state/events" "$state/loop-attached" "$state/mounted"
+rm -f -- "$state/check-log"
 export SIGNAL_BEFORE_MOUNT=1
 set +e
 "$script" "$image" "$output" >/dev/null 2>&1
@@ -129,6 +138,32 @@ fi
 mount_dir=$(cat "$state/mount-dir")
 [ ! -e "$mount_dir" ]
 [ -z "$(find "$tmp" -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
-[ ! -e "$(cat "$state/check-log")" ]
+second_check_log=$(cat "$state/check-log")
+[ -n "$second_check_log" ]
+[ "$second_check_log" != "$first_check_log" ]
+[ ! -e "$second_check_log" ]
 
 echo 'PureDarwin root exporter pre-mount signal cleanup test passed.'
+
+# An attacker-controlled replacement directory in the shared output parent
+# must be rejected before the exporter writes its archive or e2fsck log.
+attacker_dir=$tmp/attacker-owned
+mkdir -- "$attacker_dir"
+chmod 0755 "$attacker_dir"
+printf 'private sentinel\n' >"$attacker_dir/root.tar.gz"
+rm -f -- "$state/check-log"
+set +e
+REPLACE_ARCHIVE_DIR=1 ATTACKER_DIR=$attacker_dir \
+  "$script" "$image" "$output" >/dev/null 2>&1
+status=$?
+set -e
+[ "$status" -ne 0 ] || { echo 'Exporter accepted a replaced staging directory' >&2; exit 1; }
+[ "$(cat "$attacker_dir/root.tar.gz")" = 'private sentinel' ]
+[ ! -e "$output" ]
+check_log=$(cat "$state/check-log" 2>/dev/null || true)
+[ -z "$check_log" ] || { echo 'Exporter started filesystem validation through a replaced staging path' >&2; exit 1; }
+replaced_stage=$(cat "$state/replaced-stage")
+[ -d "$replaced_stage" ]
+rm -rf -- "$replaced_stage" "$(cat "$state/archive-dir")"
+
+echo 'PureDarwin root exporter staging replacement test passed.'

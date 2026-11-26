@@ -8,6 +8,25 @@ if [ "${1:-}" = '--private-mount-namespace' ]; then
   private_mount_namespace=1
   shift
 fi
+if [ "$private_mount_namespace" -eq 1 ] && [ -n "${XNULINUX_PRIVATE_MOUNT_PATH:-}" ]; then
+  PATH=$XNULINUX_PRIVATE_MOUNT_PATH
+  export PATH
+  unset XNULINUX_PRIVATE_MOUNT_PATH
+fi
+case "$0" in
+  */*)
+    case "$0" in /*) script_path=$0 ;; *) script_path=$PWD/$0 ;; esac
+    ;;
+  *)
+    if [ -f "$PWD/$0" ]; then
+      script_path=$PWD/$0
+    else
+      script_path=$(command -v -- "$0" && printf '.')
+      script_path=${script_path%.}
+      script_path=${script_path%$'\n'}
+    fi
+    ;;
+esac
 if [ "$#" -ne 2 ]; then
   echo "Usage: ${0##*/} IMAGE OUT.tar.gz" >&2
   exit 2
@@ -49,7 +68,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 export PATH="$PATH:/usr/sbin:/sbin"
 export LC_ALL=C
-for tool in sfdisk python3 losetup mount mountpoint umount e2fsck tune2fs tar mktemp link stat chmod mkdir findmnt unshare setpriv id; do
+for tool in sfdisk python3 losetup mount mountpoint umount e2fsck tune2fs tar mktemp link stat chmod mkdir findmnt unshare setpriv id env; do
   if ! command -v "$tool" >/dev/null; then
     echo "PureDarwin root export requires $tool." >&2
     exit 1
@@ -61,7 +80,7 @@ done
 # through /tmp while the ext4 filesystem is mounted.
 if [ "$private_mount_namespace" -eq 0 ]; then
   if [ "$EUID" -eq 0 ]; then
-    exec unshare --mount --propagation private -- "$0" --private-mount-namespace "$image" "$output"
+    exec unshare --mount --propagation private -- "$script_path" --private-mount-namespace "$image" "$output"
   fi
   if ! command -v sudo >/dev/null; then
     echo 'Run as root or install sudo to create a private mount namespace.' >&2
@@ -69,9 +88,9 @@ if [ "$private_mount_namespace" -eq 0 ]; then
   fi
   caller_uid=$EUID
   caller_gid=$(id -g)
-  exec sudo unshare --mount --propagation private -- setpriv \
+  exec sudo env XNULINUX_PRIVATE_MOUNT_PATH="$PATH" unshare --mount --propagation private -- setpriv \
     --reuid "$caller_uid" --regid "$caller_gid" --init-groups -- \
-    "$0" --private-mount-namespace "$image" "$output"
+    "$script_path" --private-mount-namespace "$image" "$output"
 fi
 
 partition_table=$(sfdisk --json -- "$image")
@@ -148,7 +167,7 @@ if [ ! -d /tmp ] || [ ! -w /tmp ] || [ ! -k /tmp ]; then
 fi
 tmp_fstype=$(findmnt --target /tmp --noheadings --output FSTYPE)
 case "$tmp_fstype" in
-  nfs|nfs4|cifs|smb3|sshfs|fuse.sshfs|davfs|9p)
+  nfs*|cifs|smb3|sshfs|fuse.sshfs|davfs|9p|ceph|glusterfs|autofs)
     echo "PureDarwin root export requires /tmp on a local filesystem; found $tmp_fstype." >&2
     exit 1
     ;;

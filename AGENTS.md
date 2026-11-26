@@ -2,20 +2,21 @@
 
 ## Project goal
 
-Run macOS on Intel and AMD x86_64 PCs through QEMU/KVM while preserving the working ARM64 hosted-XNU path.
+Port the hosted-XNU runtime to native x86_64 Linux PCs while preserving the working ARM64 hosted-XNU path.
 
-- **ARM64 Linux:** preserve the existing direct XNU-in-Linux runtime using `fki.ko` and `xnu.ko`, including its build and runtime behavior.
-- **x86_64 Intel and AMD Linux:** use QEMU/KVM to run a user-prepared macOS Tahoe 26 x86_64 guest, the latest macOS release compatible with Intel. The project modules and world-switch code remain ARM64-only; do not present them as an x86_64 runtime or add unsafe no-op x86 hooks.
-- **ARM64 Linux under QEMU TCG on an x86_64 PC:** keep this as a complementary compatibility and development profile for the PureDarwin console. It does not replace the native x86_64 macOS guest target and does not establish Tahoe, KVM, or physical-hardware support.
-- Keep Intel and AMD acceptance separate. Launcher tests and TCG Linux checks do not establish support. Claim support for a vendor only after a physical host boots Tahoe to the desktop and passes host-integrity and shutdown checks.
+- **ARM64 Linux:** preserve the existing direct XNU-in-Linux runtime using `fki.ko` and `xnu.ko`, including its build and runtime behavior and macOS 27 target.
+- **x86_64 Intel and AMD Linux:** port FKI, XNU hosting, machine-layer code, and architecture-specific build outputs to x86_64; target macOS Tahoe 26 x86_64, the latest macOS release compatible with Intel. Launching an unrelated macOS VM does not satisfy this target.
+- **Complementary tools:** retain the repository's QEMU/KVM guest launcher and QEMU TCG/ARM64 workflows as optional experiments and test harnesses. They do not replace or redefine the native x86_64 port.
+- Keep Intel and AMD acceptance separate. Builds and VM smoke checks do not establish physical-host support. Claim support for a vendor only after the native hosted-XNU path boots the target system on a physical host and passes host-integrity and shutdown checks.
 
-## x86_64 macOS/KVM runtime
+## Native x86_64 hosted-XNU port
 
-- KVM is the default accelerator. QEMU 10 or newer, `qemu-img`, and `flock` (util-linux) are required. QEMU `host` is the default guest CPU model under KVM so the guest sees the host's actual CPU model/features. TCG is an explicit development/test path only and defaults to QEMU `max`.
-- The x86 host feature floor is SSE4.2, AVX, FMA, MOVBE, POPCNT, LZCNT, BMI1, AVX2 and BMI2. AMD guests need matching OpenCore AMD kernel patches and physical AMD validation.
-- The x86 launcher accepts a user-prepared raw or qcow2 boot disk with EFI/OpenCore. It writes guest changes to a persistent qcow2 overlay and keeps OVMF variables in the per-VM state directory. `STATE_DIR` must be readable, writable, and searchable so the launcher can check existing disk state. A state directory is for one VM and one running QEMU process. The `.base` sidecar identifies launcher-owned overlays; a user source image with the reserved overlay filename pattern is accepted when it has no matching sidecar. Existing overlays may be stored elsewhere and symlinked into `STATE_DIR` if the link resolves to a regular file. Do not use that VM's managed overlay as `DISK` with the same state directory; choose its original base or a separate directory to fork the overlay. Do not write to the source disk or firmware template.
-- Do not add Apple macOS images, Apple firmware, or the local `APPLE_SMC_OSK` value to Git or logs. Never put the SMC value in QEMU's argv or environment; pass it through a mode-0600 temporary QEMU config that is removed after exit. Do not claim that a TCG Linux boot is a macOS or KVM test.
-- Keep user-visible feature/support tables precise: ARM64 uses the hosted XNU modules; x86_64 uses a QEMU/KVM macOS guest. Label the ARM64 TCG path separately.
+- Build FKI, XNU, the machine layer, kexts, and kernel collections as architecture-specific x86_64 outputs while retaining ARM64 outputs and behavior.
+- Keep register state, exception entry, MMU/TLB operations, syscall delivery, Mach-O CPU types, boot handoff, and kernel collections architecture-aware. Reject architecture and ABI mismatches before entering XNU.
+- Establish a safe Linux/XNU execution boundary before running foreign kernel code. Verify Linux register, floating-point, exception, syscall, and memory state through entry, return, fault recovery, and shutdown.
+- Use user-provided Tahoe 26 artifacts that match the selected XNU build. Do not add Apple system images, firmware, or local secrets to Git or logs.
+- Measure Intel and AMD requirements independently. Record the tested Linux kernel, CPU features, memory, page size, XNU build, and furthest boot stage. A QEMU/KVM macOS guest or TCG ARM64 guest does not establish the native module port.
+- Keep user-visible support tables precise: ARM64 direct hosted XNU is the existing supported path; x86_64 native hosting remains experimental until full target and host-integrity checks pass.
 
 ## Required PR coordination
 
@@ -35,17 +36,17 @@ Do not leave parallel agents to infer ownership from the code. Use the PR commen
 
 ## Validation
 
-For x86_64 launcher or documentation changes, run the relevant checks:
+For x86_64 architecture, module, or documentation changes, run the relevant checks:
 
 ```sh
-bash tests/x86_64/test-launcher.sh
-bash tests/x86_64/test-qemu-overlay-symlink.sh
-bash tests/x86_64/test-tcg-smoke.sh
-for script in scripts/x86_64/xnulinux-boot.sh tests/x86_64/test-launcher.sh tests/x86_64/test-qemu-overlay-symlink.sh tests/x86_64/tcg-smoke.sh tests/x86_64/test-tcg-smoke.sh; do bash -n "$script"; done
+make -C "$KDIR" M="$PWD/fki-ko" ARCH=x86_64 modules
+make -C "$KDIR" M="$PWD/xnu-ko" ARCH=x86_64 modules
+make -C "$KDIR" M="$PWD/fki-ko" ARCH=arm64 modules
+make -C "$KDIR" M="$PWD/xnu-ko" ARCH=arm64 modules
 git diff --check
 ```
 
-When a disposable x86_64 Linux kernel and initramfs are available, run `tests/x86_64/tcg-smoke.sh KERNEL INITRD` and report that it is a TCG-only Linux smoke test. Preserve the ARM64 module CI in `.github/workflows/modules.yml`; run its build steps or equivalent ARM64 cross-build after shared kernel-module changes.
+Retain existing QEMU/KVM launcher and TCG checks as complementary coverage and label their results accurately. They do not replace x86_64 module builds or native runtime validation. Keep ARM64 module CI in `.github/workflows/modules.yml`; add x86_64 builds without dropping ARM64 coverage.
 
 ## Blockers and evidence
 

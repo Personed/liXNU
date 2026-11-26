@@ -11,6 +11,12 @@ PR #48 adds the first x86_64 Linux-side FKI build hooks, with `fki_caps() == 0`.
 
 The pinned XNU source tag used by the current build scripts contains `osfmk/i386` and `mach-o/x86_64` sources, but this repository's LINUX64 machine patches and loader target ARM64. An x86_64 Tahoe kernel collection and matching entry ABI must be built and checked; the presence of i386 sources alone does not prove that target.
 
+### Parse-only x86_64 Mach-O slice
+
+`xnu-ko/macho_parse_x86_64.c` provides an isolated metadata parser for little-endian `MH_EXECUTE` x86_64 files. It accepts only the pinned XNU subtypes `X86_64_ALL` and `X86_64_H`, validates load-command and segment/section bounds, and requires exactly one `LC_UNIXTHREAD` carrying `x86_THREAD_STATE64` (flavor 4, 42 32-bit words). The entry RIP must point into one file-backed executable segment. Chained-fixup and dyld-info command extents are bounds-checked and reported in metadata, but their payloads are not interpreted; other known linkedit data extents are also only bounds-checked. Unsupported required commands are rejected, and unknown optional commands are counted. `macho_load()` routes x86_64 compile-only objects through this parser and still returns `-EOPNOTSUPP` after a successful parse.
+
+This first slice deliberately rejects kernel collections (`MH_FILESET`), `LC_MAIN`, additional thread-state flavors, unknown x86 subtypes, malformed ranges, and other unsupported variants. A successful parse is structural inspection only; callers must not infer that the image is loadable or that its fixups are supported. Its synthetic fixtures test the parser API directly; CI also compiles the same parser and `macho.c` as x86_64 ELF objects in a temporary copy. The parser does not allocate or map executable memory, rebase pointers, or enter XNU. No Tahoe artifact has yet confirmed that its kernel image uses this exact accepted subset, so artifact compatibility remains unverified and the normal `xnu.ko` remains a refusal stub.
+
 ## Default and validation artifacts
 
 - The normal x86_64 build keeps `fki.ko` at zero execution capabilities and `xnu.ko` fail-closed with `-EOPNOTSUPP`.

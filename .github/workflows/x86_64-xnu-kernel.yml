@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: x86_64 XNU source build
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/x86_64-xnu-kernel.yml"
+      - "scripts/x86_64/build-xnu-kernel.sh"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/x86_64-xnu-kernel.yml"
+      - "scripts/x86_64/build-xnu-kernel.sh"
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-kernel:
+    runs-on: macos-15-intel
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select pinned Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.1.app
+      - name: Record host toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcrun --find clang
+          xcrun --find ld
+      - name: Build pinned XNU for x86_64
+        env:
+          XNU_X86_BUILD_DIR: ${{ runner.temp }}/xnulinux-x86_64-xnu
+        run: scripts/x86_64/build-xnu-kernel.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xnu-tahoe26-x86_64-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/kernel.development
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/build-result.json
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/x86_64-build.env
+          if-no-files-found: error
+          retention-days: 5

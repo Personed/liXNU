@@ -1,20 +1,20 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-only
-# Prepare an ARM64 Linux kernel and initramfs for the QEMU module smoke test.
+# Prepare an ARM64 Linux kernel and initramfs for the QEMU module and carve-out smoke test.
 set -euo pipefail
 
-if [ "$#" -ne 5 ]; then
-  echo "Usage: $0 ARM64_KERNEL ARM64_STATIC_BUSYBOX FKI_KO XNU_KO OUTPUT_DIR" >&2
+if [ "$#" -ne 6 ]; then
+  echo "Usage: $0 ARM64_KERNEL ARM64_STATIC_BUSYBOX FKI_KO XNU_KO FKI_CARVE_PROBE_KO OUTPUT_DIR" >&2
   exit 2
 fi
-for file in "$1" "$2" "$3" "$4"; do
+for file in "$1" "$2" "$3" "$4" "$5"; do
   if [ ! -f "$file" ] || [ ! -r "$file" ]; then
     printf 'Cannot read input file: %s\n' "$file" >&2
     exit 2
   fi
 done
 
-out=$5
+out=$6
 mkdir -p -- "$out"
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
@@ -45,6 +45,7 @@ mkdir -p "$work/root/bin"
 cp -- "$2" "$work/root/bin/busybox"
 cp -- "$3" "$work/root/fki.ko"
 cp -- "$4" "$work/root/xnu.ko"
+cp -- "$5" "$work/root/fki-carve-probe.ko"
 cat > "$work/root/init" <<'INIT'
 #!/bin/busybox sh
 set -eu
@@ -58,9 +59,15 @@ trap 'echo "xnulinux QEMU smoke test failed"; dmesg; poweroff -f' EXIT
 
 test "$(uname -m)" = aarch64
 grep -qw paca /proc/cpuinfo
-insmod /fki.ko
+insmod /fki.ko carve_base=0x70000000 carve_mb=256
 test -c /dev/xnu-hostcall
 test -d /sys/class/net/xnu0
+insmod /fki-carve-probe.ko
+dmesg | grep -Fq 'fki-carve-probe: allocated 16777216 bytes at physical 0x70000000' || {
+  echo "FKI did not allocate from the requested physical carve-out"
+  exit 1
+}
+rmmod fki-carve-probe
 
 # xnu.ko should resolve its FKI symbols and get as far as requesting firmware.
 # This image is deliberately absent so the test needs no kernel collection.

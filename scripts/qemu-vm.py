@@ -101,7 +101,8 @@ def build_command(args):
         ]
         window_title = getattr(args, "window_title", None)
         if window_title:
-            command += ["-name", window_title]
+            escaped_title = window_title.replace(",", ",,")
+            command += ["-name", f"guest={escaped_title}"]
     else:
         command += ["-display", "none"]
     return command

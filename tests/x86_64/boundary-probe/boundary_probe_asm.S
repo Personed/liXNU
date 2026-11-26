@@ -49,8 +49,11 @@ SYM_FUNC_START(x86_boundary_probe_switch_stack)
 	call x86_boundary_probe_inner
 
 	movq 8(%rsp), %r10
-	movq %rsp, BP_OFF_ALT_RETURN_RSP(%r10)
 	movq %rax, BP_OFF_STATUS(%r10)
+	pushfq
+	popq %rax
+	movq %rax, BP_OFF_RFLAGS_INNER_RETURN(%r10)
+	movq %rsp, BP_OFF_ALT_RETURN_RSP(%r10)
 	movq 0(%rsp), %r11
 	movq %r11, %rsp
 	leaq 48(%rsp), %rax
@@ -104,8 +107,25 @@ SYM_FUNC_START(x86_boundary_probe_inner)
 	testl %esi, %esi
 	jnz .Lsoftware_abort
 	xorl %eax, %eax
-	RET
+	jmp .Lreturn_with_changed_flags
 .Lsoftware_abort:
 	movq $-125, %rax /* -ECANCELED */
+
+.Lreturn_with_changed_flags:
+	/* Make both CF and DF differ from the entry state so the outer restore is tested. */
+	testq $0x400, BP_OFF_RFLAGS_ENTRY(%rdi)
+	jz .Lentry_df_clear
+	cld
+	jmp .Lentry_df_done
+.Lentry_df_clear:
+	std
+.Lentry_df_done:
+	movq BP_OFF_RFLAGS_ENTRY(%rdi), %r8
+	btq $0, %r8
+	jc .Lentry_cf_set
+	stc
+	RET
+.Lentry_cf_set:
+	clc
 	RET
 SYM_FUNC_END(x86_boundary_probe_inner)

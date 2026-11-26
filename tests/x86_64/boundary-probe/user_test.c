@@ -69,7 +69,7 @@ static long invoke_with_xstate(int fd, const struct x86_boundary_probe_request *
 		  [v2] "m"(vectors[2]), [v3] "m"(vectors[3]),
 		  [v4] "m"(vectors[4]), [v5] "m"(vectors[5]),
 		  [v6] "m"(vectors[6]), [v7] "m"(vectors[7])
-		: "rcx", "r11", "memory", "ymm0", "ymm1", "ymm2", "ymm3",
+		: "cc", "rcx", "r11", "memory", "ymm0", "ymm1", "ymm2", "ymm3",
 		  "ymm4", "ymm5", "ymm6", "ymm7");
 	return rax;
 }

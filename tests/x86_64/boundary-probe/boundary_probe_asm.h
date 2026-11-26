@@ -9,11 +9,12 @@
 #define BP_OFF_ALT_RETURN_RSP      32
 #define BP_OFF_RFLAGS_ENTRY        40
 #define BP_OFF_RFLAGS_DURING       48
-#define BP_OFF_RFLAGS_RETURN       56
-#define BP_OFF_STATUS              64
-#define BP_OFF_GPRS_ENTRY          72
-#define BP_OFF_GPRS_DURING        120
-#define BP_OFF_GPRS_RETURN        168
+#define BP_OFF_RFLAGS_INNER_RETURN 56
+#define BP_OFF_RFLAGS_RETURN       64
+#define BP_OFF_STATUS              72
+#define BP_OFF_GPRS_ENTRY          80
+#define BP_OFF_GPRS_DURING        128
+#define BP_OFF_GPRS_RETURN        176
 
 #define BP_GPR_RBP                  0
 #define BP_GPR_RBX                  8

@@ -37,6 +37,7 @@ struct bp_asm_result {
 	unsigned long alt_return_rsp;
 	unsigned long rflags_entry;
 	unsigned long rflags_during;
+	unsigned long rflags_inner_return;
 	unsigned long rflags_return;
 	long status;
 	unsigned long gprs_entry[6];
@@ -60,7 +61,7 @@ struct bp_work {
 	struct x86_boundary_probe_request request;
 };
 
-static_assert(sizeof(struct bp_asm_result) == 216);
+static_assert(sizeof(struct bp_asm_result) == 224);
 static_assert(offsetof(struct bp_asm_result, gprs_entry) == BP_OFF_GPRS_ENTRY);
 static_assert(offsetof(struct bp_asm_result, gprs_during) == BP_OFF_GPRS_DURING);
 static_assert(offsetof(struct bp_asm_result, gprs_return) == BP_OFF_GPRS_RETURN);
@@ -74,6 +75,7 @@ void x86_boundary_probe_clobber_xstate(void);
 static noinline int bp_snapshot(struct bp_host_snapshot *snapshot)
 {
 	unsigned long flags;
+	u32 low, high;
 
 	snapshot->cpu = raw_smp_processor_id();
 	snapshot->task = current;
@@ -82,10 +84,15 @@ static noinline int bp_snapshot(struct bp_host_snapshot *snapshot)
 		     : "=r"(snapshot->rsp), "=r"(flags) :: "memory");
 	snapshot->rflags = flags;
 	snapshot->cr3 = __read_cr3();
-	if (rdmsrl_safe(MSR_FS_BASE, &snapshot->fs_base) ||
-	    rdmsrl_safe(MSR_GS_BASE, &snapshot->gs_base) ||
-	    rdmsrl_safe(MSR_KERNEL_GS_BASE, &snapshot->kernel_gs_base))
+	if (rdmsr_safe(MSR_FS_BASE, &low, &high))
 		return -EIO;
+	snapshot->fs_base = ((u64)high << 32) | low;
+	if (rdmsr_safe(MSR_GS_BASE, &low, &high))
+		return -EIO;
+	snapshot->gs_base = ((u64)high << 32) | low;
+	if (rdmsr_safe(MSR_KERNEL_GS_BASE, &low, &high))
+		return -EIO;
+	snapshot->kernel_gs_base = ((u64)high << 32) | low;
 	return 0;
 }
 
@@ -170,6 +177,8 @@ static long bp_run_on_cpu(void *arg)
 	    result.alt_return_rsp < (unsigned long)page_address(stack_page) ||
 	    result.alt_return_rsp >= stack_top ||
 	    result.rflags_entry != result.rflags_return ||
+	    ((result.rflags_entry ^ result.rflags_inner_return) &
+	     (X86_EFLAGS_DF | X86_EFLAGS_CF)) != (X86_EFLAGS_DF | X86_EFLAGS_CF) ||
 	    !(result.rflags_during & X86_EFLAGS_DF) ||
 	    !(result.rflags_during & X86_EFLAGS_CF) ||
 	    !bp_gprs_match(result.gprs_entry, result.gprs_return) ||
@@ -226,7 +235,7 @@ static long bp_ioctl(struct file *file, unsigned int command, unsigned long arg)
 static const struct file_operations bp_fops = {
 	.owner = THIS_MODULE,
 	.unlocked_ioctl = bp_ioctl,
-	.llseek = no_llseek,
+	.llseek = noop_llseek,
 };
 
 static struct miscdevice bp_device = {

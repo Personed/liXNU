@@ -15,7 +15,7 @@ Darwin userspace ran. A PureDarwin shell does not establish macOS compatibility.
 | XNU uses the carve-out | With a compatible collection loaded, capture `xnu: contiguous DRAM at phys` and `xnu: contiguous DRAM size` from the host log. Mark this stage only when that complete returned interval lies inside the configured carve-out. The separate FKI probe above does not establish this stage. |
 | PureDarwin userspace | The real, paired PureDarwin disk and free kernel collection boot; execute a command on the Darwin console and observe the result. Record a clean halt separately. |
 | ARM64 hosted macOS desktop | A user-provided compatible system disk and matching XNU collection reach an interactive desktop through the ARM64 FKI/XNU path; record input, rendering backend, and networking separately. |
-| x86_64 Tahoe desktop | A user-prepared Tahoe 26 x86_64 disk with EFI/OpenCore reaches the desktop under QEMU/KVM on physical Intel or AMD hardware. This launcher does not use the project's ARM64 XNU collection; record KVM use, host-integrity checks, and guest-initiated clean shutdown. |
+| Separate x86_64 Tahoe/KVM experiment | A user-prepared Tahoe 26 x86_64 disk with EFI/OpenCore reaches the desktop under QEMU/KVM on physical Intel or AMD hardware. This launcher does not use the project's ARM64 XNU collection; record KVM use, host-integrity checks, and guest-initiated clean shutdown. |
 
 Report the profile alongside the stage:
 
@@ -33,8 +33,8 @@ Report the profile alongside the stage:
   a minimal test initramfs, not a full installed Linux distribution. This validates FKI's
   mapping and reuse in that profile; it is not a physical-PC compatibility claim, an XNU
   carve-out use test, or a PureDarwin boot.
-- **x86-64 macOS guest on Intel/AMD Linux:** the QEMU/KVM launcher in [#16] is the
-  project's x86_64 target, not a port of the ARM64 XNU/FKI modules. It remains experimental
+- **x86-64 macOS guest on Intel/AMD Linux:** the QEMU/KVM launcher in [#16] is a
+  separate experiment, not the active x86-64 TCG/PureDarwin target and not a port of the ARM64 XNU/FKI modules. It remains experimental
   until physical Intel and AMD hosts reach the Tahoe 26 desktop and pass host-integrity
   and clean-shutdown checks. Report KVM and TCG separately; an x86_64 Linux TCG smoke is
   not evidence of macOS boot. For each physical host, record the CPU vendor/model/features,
@@ -42,6 +42,12 @@ Report the profile alongside the stage:
   result, host-integrity checks before and after, and guest-initiated shutdown. The ARM64
   collection and FKI carve-out fields below do not apply to this profile. See
   [`tests/x86_64/README.md`](../tests/x86_64/README.md) for host prerequisites and limits.
+- **x86-64 PC → QEMU TCG → ARM64 Linux → PureDarwin console:** end-to-end acceptance is
+  tracked in [#36]. Its CI profile uses an x86-64 Ubuntu runner, QEMU TCG, a 16 GiB ARM64
+  Linux guest with `mem=7G`, an 8,156 MiB FKI carve-out at `0x200000000`, and 7,900 MiB
+  for XNU. It requires a Darwin console command result, guest-issued halt, module unload,
+  and Linux power-off. The current head is awaiting CI; this profile does not claim support
+  or practical speed on every PC, nor does it validate a desktop, GPU, networking, or macOS/KVM.
 
 ## First end-to-end check for a new ARM64 FKI host profile
 
@@ -111,7 +117,7 @@ Report the profile alongside the stage:
 
 ```text
 Repo commit(s) / PR(s):
-Profile (ARM64 FKI/PureDarwin, x86_64 Tahoe/KVM, or TCG development):
+Profile (x86-64 TCG/PureDarwin, native ARM64, ARM64 hosted macOS desktop, or separate x86_64 Tahoe/KVM experiment):
 Outer machine + CPU / OS + version:
 Runtime + version / accelerator:
 TCG Linux stage and result (if applicable; do not label as a macOS result):

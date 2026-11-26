@@ -31,10 +31,12 @@ Use an ARM64 Ubuntu Server ISO and a disk big enough for the Linux build environ
 PureDarwin or macOS disk. On Ubuntu or Debian, install `qemu-system-arm`, `qemu-efi-aarch64` and
 `qemu-utils`. For a graphical QEMU window, install `qemu-system-gui` too if your distribution
 packages it separately. On macOS, install QEMU with Homebrew (`brew install qemu`). On Windows,
-install a Windows QEMU distribution that includes AArch64 system emulation. For `--graphical`, the
-Windows build must also include SDL; otherwise omit `--graphical` to run the guest headless. The
-native Windows build is available from the [QEMU download page](https://www.qemu.org/download/#windows).
-Add QEMU’s executable directory to `PATH` before running the launcher.
+install a Windows QEMU distribution that includes AArch64 system emulation. By default, Windows
+`--graphical` mode selects SDL, so that QEMU build needs SDL support; otherwise omit `--graphical`
+to run the guest headless. If the build exposes another display backend, select it explicitly with
+`--display-backend`. The native Windows build is available from the
+[QEMU download page](https://www.qemu.org/download/#windows). Add QEMU’s executable directory to
+`PATH` before running the launcher.
 
 On macOS and Windows, `qemu-system-aarch64 -L help` lists directories where QEMU looks for data.
 Use the AArch64 code image and ARM variables template shipped with the same QEMU distribution,

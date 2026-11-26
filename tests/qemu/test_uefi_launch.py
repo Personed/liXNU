@@ -17,6 +17,24 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class UefiLaunchTest(unittest.TestCase):
+    def terminate_qemu(self, qemu, force_tree=False):
+        if os.name == "nt":
+            if qemu.poll() is None or force_tree:
+                try:
+                    subprocess.run(
+                        ["taskkill", "/PID", str(qemu.pid), "/T", "/F"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        timeout=10,
+                        check=False,
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    if qemu.poll() is None:
+                        qemu.kill()
+        elif qemu.poll() is None:
+            qemu.send_signal(signal.SIGTERM)
+
     def firmware_pair(self):
         code_override = os.environ.get("QEMU_FIRMWARE_CODE")
         vars_override = os.environ.get("QEMU_FIRMWARE_VARS")
@@ -136,31 +154,12 @@ class UefiLaunchTest(unittest.TestCase):
                 except subprocess.TimeoutExpired:
                     timed_out = True
             finally:
-                if qemu.poll() is None:
-                    if os.name == "nt":
-                        subprocess.run(
-                            ["taskkill", "/PID", str(qemu.pid), "/T", "/F"],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            text=True,
-                            timeout=10,
-                            check=False,
-                        )
-                    else:
-                        qemu.send_signal(signal.SIGTERM)
+                self.terminate_qemu(qemu)
                 try:
                     output, _ = qemu.communicate(timeout=10)
                 except subprocess.TimeoutExpired:
-                    if os.name == "nt":
-                        subprocess.run(
-                            ["taskkill", "/PID", str(qemu.pid), "/T", "/F"],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            text=True,
-                            timeout=10,
-                            check=False,
-                        )
-                    else:
+                    self.terminate_qemu(qemu, force_tree=True)
+                    if qemu.poll() is None:
                         qemu.kill()
                     output, _ = qemu.communicate(timeout=10)
             if not timed_out:

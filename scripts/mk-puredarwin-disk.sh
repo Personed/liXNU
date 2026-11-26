@@ -13,6 +13,8 @@ if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
   exit 2
 fi
 ROOT=$1 OUT=$2 SIZE=${3:-1g}
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+. "$SCRIPT_DIR/lib/publish-file-no-replace.sh"
 case "$OUT" in
   /*) ;;
   *) OUT=$PWD/$OUT ;;
@@ -26,18 +28,16 @@ if [ -e "$OUT" ] || [ -L "$OUT" ]; then
   echo "Refusing to replace existing output path: $OUT" >&2
   exit 1
 fi
+if ! command -v link >/dev/null; then
+  echo "PureDarwin disk creation requires the POSIX link utility." >&2
+  exit 1
+fi
 as_root=()
 if [ "$EUID" -ne 0 ]; then as_root=(sudo); fi
 
 publish_disk() {
-  # A hard link publishes the completed image without replacing a destination
-  # created after the initial check. Keep the staging file in OUT_DIR so both
-  # paths are on the same filesystem.
-  if ! ln "$D" "$OUT"; then
-    echo "Cannot publish $OUT; it may have appeared during the build, or the output filesystem may not support hard links." >&2
-    return 1
-  fi
-  rm "$D"
+  # Keep the staging file in OUT_DIR so source and destination share a filesystem.
+  publish_file_no_replace "$D" "$OUT" || return 1
   D=''
 }
 
@@ -107,10 +107,14 @@ make_macos_disk() {
   M=$(mktemp -d)
   IMG_DIR=$(mktemp -d "$OUT_DIR/.puredarwin-disk.XXXXXX")
   D=$IMG_DIR/pd.dmg
-  mounted=1
+  mounted=''
   trap cleanup_macos_disk EXIT
   hdiutil create -quiet -size "$SIZE" -fs "Journaled HFS+" -volname PureDarwin -layout GPTSPUD "$D"
-  hdiutil attach -quiet -owners on -nobrowse -mountpoint "$M" "$D"
+  if ! hdiutil attach -quiet -owners on -nobrowse -mountpoint "$M" "$D"; then
+    if mount | grep -F " on $M (" >/dev/null; then mounted=1; fi
+    return 1
+  fi
+  mounted=1
   populate_root
   plist=$(mktemp)
   diskutil info -plist "$M" > "$plist"

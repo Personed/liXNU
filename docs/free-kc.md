@@ -72,8 +72,8 @@ kernel has; and a kext's load tag.
    ```
 
    Use a new output filename; the script refuses to replace an existing file, symlink, device or other destination. It
-   publishes the completed image with a hard link, so the output directory's filesystem must support hard links. On Linux,
-   install `hfsprogs` and `sfdisk` (the `fdisk` package on Debian and Ubuntu). The Linux kernel needs loop devices and
+   publishes the completed image with the POSIX `link` utility, so that utility and hard links must be supported by the
+   output directory's filesystem. On Linux, install `hfsprogs` and `sfdisk` (the `fdisk` package on Debian and Ubuntu). The Linux kernel needs loop devices and
    writable HFS+ support. The script uses root privileges for those operations and writes a non-journaled volume. After
    an unclean shutdown, check the HFS+ partition on Linux before booting again.
 

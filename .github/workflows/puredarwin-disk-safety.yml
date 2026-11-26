@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/puredarwin-disk-safety.yml'
       - 'scripts/mk-puredarwin-disk.sh'
+      - 'scripts/lib/publish-file-no-replace.sh'
       - 'tests/test-mk-puredarwin-disk-output.sh'
   workflow_dispatch:
 permissions:
@@ -17,6 +18,7 @@ jobs:
       - name: Shell syntax
         run: |
           bash -n scripts/mk-puredarwin-disk.sh
+          bash -n scripts/lib/publish-file-no-replace.sh
           bash -n tests/test-mk-puredarwin-disk-output.sh
-      - name: Existing destination regression
+      - name: Disk output safety regressions
         run: bash tests/test-mk-puredarwin-disk-output.sh

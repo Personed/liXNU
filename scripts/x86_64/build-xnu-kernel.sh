@@ -220,24 +220,34 @@ if os.path.commonpath((str(objroot), str(response_path))) != str(objroot):
 if not response_path.is_file():
     raise SystemExit(f"missing Firehose compiler response file: {response_path}")
 
-args = shlex.split(response_path.read_text(errors="replace"))
-sysroots = [
-    args[index + 1] for index, arg in enumerate(args[:-1])
-    if arg == "-isysroot"
-]
-if [pathlib.Path(path).resolve() for path in sysroots] != [sdk_root]:
+response_args = shlex.split(response_path.read_text(errors="replace"))
+clang_match = re.search(r"(?<!\S)/\S*/clang(?=\s)", compile_lines[0])
+if not clang_match:
+    raise SystemExit("could not parse the logged firehose_buffer.c clang command")
+command_args = shlex.split(compile_lines[0][clang_match.start():])
+argument_sets = (command_args, response_args)
+
+sysroots = []
+for args in argument_sets:
+    for index, arg in enumerate(args):
+        if arg == "-isysroot" and index + 1 < len(args):
+            sysroots.append(args[index + 1])
+        elif arg.startswith("-isysroot="):
+            sysroots.append(arg.split("=", 1)[1])
+if not sysroots or any(pathlib.Path(path).resolve() != sdk_root for path in sysroots):
     raise SystemExit(f"Firehose compile uses SDKROOT {sysroots}; expected only {sdk_root}")
 
 include_paths = []
-index = 0
-while index < len(args):
-    arg = args[index]
-    if arg == "-I" and index + 1 < len(args):
-        include_paths.append(args[index + 1])
+for args in argument_sets:
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "-I" and index + 1 < len(args):
+            include_paths.append(args[index + 1])
+            index += 1
+        elif arg.startswith("-I") and len(arg) > 2:
+            include_paths.append(arg[2:])
         index += 1
-    elif arg.startswith("-I") and len(arg) > 2:
-        include_paths.append(arg[2:])
-    index += 1
 
 required = {
     sdk_root / "usr/local/include",

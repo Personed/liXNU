@@ -1,8 +1,17 @@
-# Experimental x86_64 QEMU/KVM guest launcher
+# x86_64 PC support
 
-This optional launcher runs a user-prepared macOS Tahoe 26 guest through QEMU/KVM. It does not build or load the
-architecture-matched `xnu.ko` and `fki.ko` required by the native x86_64 hosted-XNU target. It remains useful as a
-separate guest experiment; it does not establish native x86_64 support. The ARM64 direct-kernel path remains unchanged.
+The native x86_64 hosted-XNU port is in progress. The FKI Linux host backend now builds on x86_64 and preserves the
+existing ARM64 backend, but it reports no XNU execution capabilities. The current XNU implementation in `xnu_main.c`
+and `world.S` is AArch64-only and requires the FKI PAC capability. The x86_64 fail-closed XNU stub is tracked
+separately in PR #47; it is not part of this FKI change and does not execute XNU. The architecture-specific XNU entry,
+context switch, address-space and fault paths remain to be implemented and verified before macOS can run natively on
+x86_64.
+
+## Supplemental QEMU/KVM guest path
+
+The optional x86_64 launcher runs a user-prepared macOS Tahoe 26 guest through QEMU/KVM. This guest path complements
+the native port and does not build or load the project's `xnu.ko`. Intel and AMD remain separate acceptance targets;
+neither is marked supported until tested on physical hardware.
 
 ## Host prerequisites
 
@@ -59,12 +68,12 @@ tests/x86_64/tcg-smoke.sh /path/to/x86_64/vmlinuz /path/to/initrd.cpio.gz
 The smoke initramfs must print `XNU_LINUX_TCG_BOOTED` on its serial console and shut down before the timeout. TCG boots
 only a disposable Linux guest; it does not demonstrate macOS boot, KVM, Intel/AMD compatibility or useful performance.
 
-The native x86_64 prototype is separate from the active TCG/PureDarwin path. The FKI backend build in [PR #48](https://github.com/Personed/xnulinux/pull/48)
-passes on x86_64 but advertises no XNU execution capability. [PR #47](https://github.com/Personed/xnulinux/pull/47)
-adds an x86_64 `xnu.ko` stub that deliberately returns `EOPNOTSUPP`; the disposable-VM check verifies refusal, not
-XNU execution. Architecture-matched XNU entry, world switch, address-space and fault paths remain unimplemented. Do
-not describe the x86_64 module build as native support, and do not reuse one `KDIR` across x86_64 and ARM64 builds.
-The QEMU/KVM launcher below remains a separate guest experiment.
+`build-fki.sh KDIR` now builds the x86_64 FKI host backend. `build-xnu-objects.sh KDIR` compiles `macho.o` and `adt.o`
+as validation objects without linking them into `xnu.ko`; on x86_64 `macho_rebase()` returns `-EOPNOTSUPP` rather than
+simulating PAC signing. `build-xnu-main.sh KDIR` remains a diagnostic probe and currently exposes AArch64-specific
+assumptions in `xnu_main.c`; it is not yet an x86_64 pass condition. The x86_64 fail-closed XNU target rejects CPUs
+that lack the documented feature floor before reaching its world-switch refusal. The native port must keep XNU execution
+capability disabled until its context switch, memory isolation and exception paths are implemented.
 
 ## Evidence and limits
 
@@ -81,22 +90,19 @@ The QEMU/KVM launcher below remains a separate guest experiment.
   `XNU_LINUX_TCG_BOOTED` and powered off cleanly.
 - The actual QEMU 10.0.13 launcher passed `--check` with real `qemu-img`, and a paused TCG invocation accepted its Q35,
   OVMF, AppleSMC, AHCI, E1000, USB and VGA arguments. This checked command/device setup only.
-- An initial direct x86 FKI build, before the native backend work, failed modpost because architecture hooks were
-  missing. The host-side FKI backend build in [PR #48](https://github.com/Personed/xnulinux/pull/48) passes against
-  Debian 6.12.118 x86_64 headers. Its capability mask is zero. [PR #47](https://github.com/Personed/xnulinux/pull/47)
-  adds a fail-closed x86_64 XNU module target; neither change enters XNU. `xnu_main.c` and `world.S` still contain
-  AArch64-only code, and the x86_64 XNU entry, world switch, address-space and fault paths remain unimplemented. The
-  optional QEMU/KVM launcher is a separate guest experiment and is not a substitute for that work.
+- The x86_64 FKI module now builds against Debian 6.12.118 x86_64 headers. It reports zero execution capabilities,
+  and the current XNU startup requires `FKI_CAP_PAC`. `xnu_main.c` and `world.S` still contain AArch64-only code;
+  native macOS execution is not implemented. The fail-closed x86_64 XNU stub introduced in PR #47 is extended here
+  with CPU-feature gating and is exercised in disposable VMs on both feature-complete and feature-limited CPUs; neither
+  run validates native execution.
 - ARM64 `fki.ko` and `xnu.ko` cross-compiled against Debian 6.12.118 ARM64 headers. This is a build check, not an ARM64
   runtime smoke test.
-- This environment has no `/dev/kvm`, no Tahoe disk and no physical Intel/AMD/ARM hardware. No native hosted-XNU boot,
-  QEMU/KVM macOS guest run, or hardware-integrity acceptance has been recorded.
+- The disposable feature-complete XNU-stub VM can use `/dev/kvm` where available, but there is still no Tahoe disk and
+  no physical Intel/AMD/ARM hardware acceptance. No macOS boot or hardware-integrity acceptance has been recorded.
 
-## Separate QEMU/KVM guest acceptance evidence still required
+## Acceptance evidence still required
 
-- Boot a user-prepared Tahoe 26 x86_64 disk to the desktop through this launcher on physical Intel and AMD Linux hosts
-  separately. Record CPU model/features, Linux kernel, QEMU version, KVM use, RAM, and the guest's OpenCore setup.
-- Verify guest-initiated clean shutdown and host integrity before and after each run. A TCG Linux smoke or a paused
-  QEMU invocation does not establish this guest acceptance.
-- Keep results for this optional macOS guest separate from the active x86-64 TCG → ARM64 Linux → PureDarwin route.
-  The stage-specific evidence template is in [`docs/portability-validation.md`](../../docs/portability-validation.md).
+- Boot Tahoe 26 to the desktop on physical Intel and AMD PCs separately. Record CPU model/features, Linux kernel,
+  RAM, guest build, display/input/network/disk results, shutdown and host-integrity checks.
+- Re-run the documented macOS 27 ARM64 desktop smoke on supported ARM64 hardware and record the result.
+- Keep support rows separate and claim only combinations with complete logs and passing results.

@@ -4,6 +4,8 @@
 
 import importlib.util
 import hashlib
+import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -120,6 +122,36 @@ class RssMeasurementTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "arm64_guest_image_sha256"):
                 run_tcg_e2e.verify_input_hashes(kernel, initramfs, disk)
+
+    def test_manifest_validation_failure_writes_report_before_qemu_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            kernel = root / "Image"
+            initramfs = root / "initramfs.cpio.gz"
+            disk = root / "pd.img"
+            serial = root / "logs" / "serial.log"
+            kernel.write_bytes(b"kernel")
+            initramfs.write_bytes(b"initramfs")
+            disk.write_bytes(b"disk")
+            argv = [str(MODULE_PATH), str(kernel), str(initramfs), str(disk), str(serial)]
+            host = {
+                "system": "Linux", "release": "test", "architecture": "x86_64",
+                "processor": "test CPU", "logical_cpus": 2,
+                "memory_total_bytes": 8 * 1024**3,
+                "memory_available_bytes": 4 * 1024**3,
+            }
+            with mock.patch.object(run_tcg_e2e.sys, "argv", argv), \
+                    mock.patch.object(run_tcg_e2e.shutil, "which", return_value="/usr/bin/qemu-system-aarch64"), \
+                    mock.patch.object(run_tcg_e2e, "host_facts", return_value=host), \
+                    mock.patch.object(run_tcg_e2e.subprocess, "run") as run_process, \
+                    mock.patch.dict(os.environ, {"RUNNER_TEMP": directory}, clear=False):
+                self.assertEqual(run_tcg_e2e.main(), 1)
+
+            run_process.assert_not_called()
+            report = json.loads((root / "puredarwin-tcg-boot-report.json").read_text(encoding="utf-8"))
+            self.assertFalse(report["result"]["passed"])
+            self.assertIn("manifest", report["result"]["error"])
+            self.assertEqual(report["qemu_version"], "not queried (input manifest validation failed)")
 
     @unittest.skipUnless(run_tcg_e2e.can_measure_child_rss(), "wait4 child RSS measurement is unavailable")
     def test_timeout_terminates_child_and_reports_rss(self):

@@ -375,21 +375,27 @@ def main() -> int:
     print(f"Host CPU: {host['processor']}; logical CPUs: {host['logical_cpus']}")
     print(f"Host total RAM before QEMU: {host['memory_total_bytes']} bytes")
     print(f"Host available RAM before QEMU: {host['memory_available_bytes']} bytes")
-    version = subprocess.run([qemu, "--version"], check=False, text=True, capture_output=True)
-    version_text = version.stdout or version.stderr
-    qemu_version = version_text.splitlines()[0] if version_text else "unknown"
-    print(f"QEMU: {qemu_version}")
-
     try:
         input_hashes = verify_input_hashes(args.kernel, args.initramfs, args.disk)
     except (OSError, ValueError) as error:
         print(f"TCG boot input validation failed: {error}", file=sys.stderr)
         save_boot_report(
-            args=args, host=host, qemu_version=qemu_version, input_hashes={},
+            args=args, host=host,
+            qemu_version="not queried (input manifest validation failed)", input_hashes={},
             returncode=None, peak_rss_kib=None, timed_out=False,
             missing=["input manifest validation"], error=str(error),
         )
         return 1
+
+    try:
+        version = subprocess.run(
+            [qemu, "--version"], check=False, text=True, capture_output=True, timeout=15
+        )
+        version_text = version.stdout or version.stderr
+        qemu_version = version_text.splitlines()[0] if version_text else f"unknown (exit {version.returncode})"
+    except (OSError, subprocess.TimeoutExpired) as error:
+        qemu_version = f"unavailable ({type(error).__name__}: {error})"
+    print(f"QEMU: {qemu_version}")
 
     command = [
         qemu,

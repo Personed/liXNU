@@ -72,7 +72,14 @@ KERNEL_RELEASE=$(uname -r)
 K=/lib/modules/$KERNEL_RELEASE/build
 check_host
 if [ "${1:-}" = --check ]; then
-  echo "ARM64 Linux, 4 KiB pages, kernel headers for $KERNEL_RELEASE, and module tools found."
+  # Let Kbuild choose the compiler, including distribution defaults and LLVM/CROSS_COMPILE overrides.
+  if ! compiler_log=$(make -s -C "$K" M="$PWD/fki-ko" \
+    --eval='.PHONY: xnulinux-check-cc' \
+    --eval='xnulinux-check-cc: ; @$(CC) --version >/dev/null' xnulinux-check-cc 2>&1); then
+    printf 'Cannot run the kernel module compiler for Linux %s:\n%s\n' "$KERNEL_RELEASE" "$compiler_log" >&2
+    exit 1
+  fi
+  echo "ARM64 Linux, 4 KiB pages, kernel headers for $KERNEL_RELEASE, and module build tools found."
   exit 0
 fi
 

@@ -65,7 +65,9 @@ kernel has; and a kext's load tag.
    records a pinned build input and checks artifact integrity; it does not establish byte-for-byte reproducibility
    between independent builds because image UUID/GUID values can vary. It also does not pair the image with `kc-free.bin`
    or validate an xnulinux boot.
-2. `scripts/mk-puredarwin-disk.sh root.tar.gz pd.img > pd.conf` (Mac) makes the HFS+ disk and prints its UUIDs.
+2. Run `scripts/mk-puredarwin-disk.sh root.tar.gz pd.img > pd.conf` on Linux or macOS to make the HFS+ disk and print its UUIDs.
+   On Linux, install `hfsprogs` and `sfdisk` (the `fdisk` package on Debian and Ubuntu). The Linux kernel needs loop devices
+   and writable HFS+ support. The script uses root privileges for those operations and writes a non-journaled volume.
 3. In the VM, after `scripts/vm-xnu-rebuild.sh`: `scripts/free-kc/build.sh`, which writes `/lib/firmware/xnu/kc-free.bin`.
 4. Boot it: `MAC_CONF=pd.conf DISK=pd.img IMAGE=xnu/kc-free.bin TRUSTCACHE= GPU=off scripts/xnulinux-boot.sh`. The console
    (`CONSOLE_IN`) is PureDarwin's zsh. Its `halt` and `reboot` end the run.

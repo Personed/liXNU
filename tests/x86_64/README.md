@@ -59,7 +59,8 @@ they are not pass/fail tests for the selected QEMU/KVM path.
 
 - The fake-QEMU launcher suite passes preflight errors, TCG and KVM argument construction, paths containing spaces and
   commas, SMC config permissions/redaction/cleanup, source-disk immutability, same-content base restoration, rejection
-  of changed base contents, detection of unassociated legacy overlays, and a disk stored inside `STATE_DIR`.
+  of changed base contents, detection of unassociated legacy overlays, and a hash-named disk stored inside a symlinked
+  `STATE_DIR`.
 - QEMU 10.0.13 booted a disposable Debian 6.12.118 x86_64 guest with a BusyBox initramfs under TCG. The guest printed
   `XNU_LINUX_TCG_BOOTED` and powered off cleanly.
 - The actual QEMU 10.0.13 launcher passed `--check` with real `qemu-img`, and a paused TCG invocation accepted its Q35,

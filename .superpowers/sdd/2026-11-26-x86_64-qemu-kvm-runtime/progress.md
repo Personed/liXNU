@@ -14,7 +14,7 @@ Project workflow ruling: A ready PR merges when all automated checks are green; 
 
 Pre-flight: Task 1 produces launcher flags and disk/state paths consumed by Task 3 documentation; Task 2 produces the TCG smoke invocation and evidence consumed by Task 3. No direct code interfaces are shared by Tasks 1 and 2. Task 4 consumes Task 3's evidence matrix and real hardware requirements.
 
-Task 1: complete — fake-QEMU tests cover preflight errors, CPU/KVM gating, TCG and KVM arguments, paths with spaces and commas, protected SMC config creation/cleanup, readable state-directory checks, source images stored alongside state, source image preservation, same-content restore, changed-base rejection, unassociated legacy overlay refusal, persistent state, and concurrent locking.
+Task 1: complete — fake-QEMU tests cover preflight errors, CPU/KVM gating, TCG and KVM arguments, paths with spaces and commas, protected SMC config creation/cleanup, readable state-directory checks, a hash-named source image alongside a symlinked state directory, source image preservation, same-content restore, changed-base rejection, unassociated legacy overlay refusal, persistent state, and concurrent locking.
 
 Task 2: complete — fake harness tests pass; the disposable Debian 6.12.118 guest booted with QEMU 10.0.13 TCG. This is Linux-only development evidence.
 

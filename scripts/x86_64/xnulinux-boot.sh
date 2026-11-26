@@ -184,12 +184,22 @@ fi
 # reconstructed after the base image was restored or replaced.
 for existing_overlay in "$STATE_DIR"/disk-*.qcow2; do
   [[ -e "$existing_overlay" || -L "$existing_overlay" ]] || continue
-  [[ "$existing_overlay" != "$DISK_PATH" ]] || continue
   [[ "${existing_overlay##*/}" =~ ^disk-[a-f0-9]{20}\.qcow2$ ]] || continue
+  EXISTING_OVERLAY_REALPATH="$(realpath -e -- "$existing_overlay")" \
+    || fail "could not resolve existing disk overlay: $existing_overlay"
+  if [[ "$EXISTING_OVERLAY_REALPATH" == "$DISK_PATH" ]]; then
+    [[ "$existing_overlay" != "$DISK_OVERLAY" ]] \
+      || fail "DISK path collides with its overlay path: $DISK_PATH"
+    continue
+  fi
   if [[ "$existing_overlay" != "$DISK_OVERLAY" ]]; then
     fail "unassociated disk overlay exists in STATE_DIR: $existing_overlay (back it up and migrate deliberately, or use a new STATE_DIR to start fresh)"
   fi
 done
+
+if [[ -L "$DISK_OVERLAY" || ( -e "$DISK_OVERLAY" && ! -f "$DISK_OVERLAY" ) ]]; then
+  fail "disk overlay is not a regular file: $DISK_OVERLAY"
+fi
 
 write_disk_base_metadata() {
   local disk_stat="$1" disk_sha256="$2" metadata_tmp

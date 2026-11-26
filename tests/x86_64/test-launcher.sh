@@ -340,11 +340,13 @@ assert_contains "$CHANGED_BASE_OUTPUT" 'DISK contents changed for the existing o
 # A user disk can be stored inside its state directory and may even have a
 # hash-shaped disk-*.qcow2 filename; it must not be mistaken for an old overlay.
 SOURCE_STATE_DIR="$TMP_DIR/source disk state"
+SOURCE_STATE_ALIAS="$TMP_DIR/source state alias"
 SOURCE_DISK_IN_STATE="$SOURCE_STATE_DIR/disk-0123456789abcdefabcd.qcow2"
 SOURCE_STATE_IMG_COUNT="$TMP_DIR/source state qemu-img count"
 mkdir -p -- "$SOURCE_STATE_DIR"
+ln -s -- "$SOURCE_STATE_DIR" "$SOURCE_STATE_ALIAS"
 printf 'source image stored next to VM state\n' >"$SOURCE_DISK_IN_STATE"
-env "${BASE_ENV[@]}" DISK="$SOURCE_DISK_IN_STATE" STATE_DIR="$SOURCE_STATE_DIR" QEMU_IMG_COUNT="$SOURCE_STATE_IMG_COUNT" ACCEL=tcg \
+env "${BASE_ENV[@]}" DISK="$SOURCE_DISK_IN_STATE" STATE_DIR="$SOURCE_STATE_ALIAS" QEMU_IMG_COUNT="$SOURCE_STATE_IMG_COUNT" ACCEL=tcg \
   "$LAUNCHER" >"$TMP_DIR/source-in-state.out" 2>&1 || {
   cat "$TMP_DIR/source-in-state.out" >&2
   fail 'source disk inside STATE_DIR was mistaken for a legacy overlay'

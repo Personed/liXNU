@@ -46,7 +46,8 @@ PYTHON
 
 root=$work/root
 mkdir -p "$root/bin" "$root/lib/modules" "$root/lib/firmware/xnu"
-if ! "$busybox" --list | grep -qx modprobe; then
+busybox_applets=$("$busybox" --list)
+if ! grep -qx modprobe <<<"$busybox_applets"; then
   echo 'Static BusyBox must include the modprobe applet for virtio disk modules.' >&2
   exit 1
 fi

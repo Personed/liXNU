@@ -462,14 +462,49 @@ void fki_contig_free(struct fki_region *r)
 }
 EXPORT_SYMBOL(fki_contig_free);
 
+static void *window_l1_created[512];
+
 int fki_window_l1(unsigned long va, unsigned long long **l1_va, fki_u64 *l1_pa)
 {
 	u64 ttbr1 = read_sysreg(ttbr1_el1) & GENMASK_ULL(47, 1);
 	u64 *l0 = phys_to_virt(ttbr1 & ~0xfffULL);
-	u64 e = READ_ONCE(l0[(va >> 39) & 511]);
+	unsigned idx = (va >> 39) & 511;
+	u64 e = READ_ONCE(l0[idx]);
 
-	if ((e & 3) != 3)
-		return -ENOENT;
+	if ((e & 3) != 3) {
+		unsigned long long *page;
+		u64 pa, old;
+
+		if (e)
+			return -EBUSY;
+		page = (void *)get_zeroed_page(GFP_KERNEL);
+		if (!page)
+			return -ENOMEM;
+		pa = virt_to_phys(page);
+		{
+			struct page *root_page = phys_to_page(ttbr1 & ~0xfffULL);
+			u64 *l0_write = vmap(&root_page, 1, VM_MAP, PAGE_KERNEL);
+			if (!l0_write) {
+				free_page((unsigned long)page);
+				return -ENOMEM;
+			}
+			old = cmpxchg(&l0_write[idx], 0, pa | 3);
+			vunmap(l0_write);
+		}
+		if (old) {
+			free_page((unsigned long)page);
+			if ((old & 3) != 3)
+				return -EBUSY;
+			e = old;
+		} else {
+			window_l1_created[idx] = page;
+			e = pa | 3;
+			dsb(ishst);
+			__tlbi(vmalle1is);
+			dsb(ish);
+			isb();
+		}
+	}
 	*l1_pa = e & GENMASK_ULL(47, 12);
 	*l1_va = phys_to_virt(*l1_pa);
 	return 0;
@@ -648,6 +683,44 @@ int fki_arch_init(void)
 
 void fki_arch_exit(void)
 {
+	u64 ttbr1 = read_sysreg(ttbr1_el1) & GENMASK_ULL(47, 1);
+	int i;
+
+	for (i = 0; i < 512; i++) {
+		void *page = window_l1_created[i];
+		u64 pa, desc;
+		u64 *l1;
+		int j, used = 0;
+
+		if (!page)
+			continue;
+		pa = virt_to_phys(page);
+		desc = pa | 3;
+		l1 = page;
+		for (j = 0; j < 512; j++)
+			if (l1[j])
+				used = 1;
+		if (!used) {
+			struct page *root_page = phys_to_page(ttbr1 & ~0xfffULL);
+			u64 *l0_write = vmap(&root_page, 1, VM_MAP, PAGE_KERNEL);
+			u64 old = -1;
+			if (l0_write) {
+				old = cmpxchg(&l0_write[i], desc, 0);
+				vunmap(l0_write);
+			}
+			used = old != desc;
+		}
+		if (!used) {
+			dsb(ishst);
+			__tlbi(vmalle1is);
+			dsb(ish);
+			isb();
+			free_page((unsigned long)page);
+			window_l1_created[i] = NULL;
+		} else {
+			pr_warn("fki: leaving top-window L1 table %d in place\n", i);
+		}
+	}
 	if (resv_pg && !resv_used)
 		p_cma_release(*p_cma_area, resv_pg, resv_cnt);
 	fki_free_alt_stacks();

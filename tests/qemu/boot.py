@@ -4,6 +4,7 @@
 
 import argparse
 from pathlib import Path
+import re
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -20,7 +21,8 @@ def guest_reported_success(log):
 
 def reports_smoke_success(log: str) -> bool:
     marker = "xnulinux QEMU smoke test passed"
-    return any(line.startswith(marker) for line in log.splitlines())
+    shutdown_append = re.compile(re.escape(marker) + r"\[\s*\d+(?:\.\d+)?\] .+")
+    return any(line == marker or shutdown_append.fullmatch(line) for line in log.splitlines())
 
 
 def main():

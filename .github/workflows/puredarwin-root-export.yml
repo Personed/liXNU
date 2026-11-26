@@ -14,14 +14,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install ext4 and partition tools
-        run: sudo apt-get update && sudo apt-get install -y fdisk e2fsprogs
+        run: sudo apt-get update && sudo apt-get install -y fdisk e2fsprogs nfs-common nfs-kernel-server
       - name: Check shell syntax
         run: |
-          for script in scripts/puredarwin-root.sh tests/test-puredarwin-root-export.sh tests/test-puredarwin-root-export-signals.sh; do
+          for script in scripts/puredarwin-root.sh tests/test-puredarwin-root-export.sh tests/test-puredarwin-root-export-nfs.sh tests/test-puredarwin-root-export-signals.sh; do
             bash -n "$script"
           done
       - name: Export a GPT ext4 root image as an unprivileged user
         run: bash tests/test-puredarwin-root-export.sh
+      - name: Export to an actual root-squashed NFS mount
+        run: bash tests/test-puredarwin-root-export-nfs.sh
       - name: Export a GPT ext4 root image as root
         run: sudo bash tests/test-puredarwin-root-export.sh
       - name: Check SIGTERM cleanup as an unprivileged user

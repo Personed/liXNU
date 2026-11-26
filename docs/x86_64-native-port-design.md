@@ -19,7 +19,8 @@ The pinned XNU source tag used by the current build scripts contains `osfmk/i386
   autoloaded by the normal package, service, or boot script; the normal `fki.ko` and `xnu.ko` outputs remain unchanged.
 - CI loads only the test artifacts into a disposable x86_64 Linux VM with a disposable guest disk. Intel and AMD desktop
   acceptance uses the same test artifact loaded manually on a dedicated test installation with the normal service and
-  autoload disabled. The test artifacts are removed after the run; their result is evidence for the tested profile only.
+  autoload disabled. These ring-0 modules can panic the host, so the physical test system must be recoverable and contain
+  no production workload. Remove the test artifacts after the run; their result is evidence for the tested profile only.
 - Enabling native x86_64 execution in the normal artifacts requires a later change after the XNU boot, desktop, and host-
   integrity gates pass. Do not make a test-only flag or module parameter silently turn the normal artifact on.
 

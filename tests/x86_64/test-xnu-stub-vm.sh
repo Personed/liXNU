@@ -10,11 +10,12 @@ fi
 
 KDIR=$(cd "$1" && pwd)
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
-KERNEL_RELEASE=$(make -s -C "$KDIR" kernelrelease)
+KERNEL_RELEASE=$(cat "$KDIR/include/config/kernel.release")
+test -n "$KERNEL_RELEASE" || { echo "kernel release metadata is missing from KDIR" >&2; exit 1; }
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 
-for tool in apt-get cpio dpkg-deb find gzip grep install mknod qemu-system-x86_64 sort sudo timeout; do
+for tool in apt-get cat cpio dpkg-deb find gzip grep install mknod qemu-system-x86_64 sort sudo timeout; do
   command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
 test -s "$REPO/xnu-ko/xnu.ko" || { echo "build xnu-ko/xnu.ko before running this test" >&2; exit 1; }

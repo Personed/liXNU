@@ -58,7 +58,7 @@ cp -- "$kc" "$root/lib/firmware/xnu/kc-free.bin"
 cp -- "$conf" "$root/pd.conf"
 copy_modules=false
 for driver in virtio_mmio virtio_blk; do
-  if find "$modules" -type f -name "$driver.ko*" | grep -q .; then
+  if [ -n "$(find "$modules" -type f -name "$driver.ko*" -print -quit)" ]; then
     copy_modules=true
     break
   fi

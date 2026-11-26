@@ -111,11 +111,6 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-mount_dir=$(mktemp -d)
-case "$mount_dir" in
-  /*) ;;
-  *) mount_dir=$PWD/$mount_dir ;;
-esac
 archive_dir=$(mktemp -d -- "$output_dir/.puredarwin-root.XXXXXXXX")
 CDPATH= cd -P -- "$archive_dir"
 staging_owner=$(stat -c '%u' .)
@@ -131,6 +126,8 @@ if [ "$(stat -c '%a' .)" != 700 ]; then
   exit 1
 fi
 archive=root.tar.gz
+mount_dir=mount
+mkdir -m 0700 -- "$mount_dir"
 check_log=check.log
 # Keep INT/TERM pending until losetup has returned the attached device. That
 # lets the EXIT trap detach the exact loop device if a signal arrives here.

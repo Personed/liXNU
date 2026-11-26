@@ -47,6 +47,8 @@ esac
 WRAPPER
 cat >"$bin/mountpoint" <<'WRAPPER'
 #!/bin/sh
+case "$3" in /*) mount_dir=$3 ;; *) mount_dir=$PWD/$3 ;; esac
+printf '%s\n' "$mount_dir" >"$TEST_STATE/mount-dir"
 if [ -e "$TEST_STATE/mounted" ]; then exit 0; fi
 if [ -d "$3" ]; then exit 32; fi
 exit 1
@@ -86,7 +88,6 @@ if [ "$1" = '-d' ]; then
         printf '%s\n' "$result.original" >"$TEST_STATE/replaced-stage"
       fi
       ;;
-    *) printf '%s\n' "$result" >"$TEST_STATE/mount-dir" ;;
   esac
 fi
 printf '%s\n' "$result"

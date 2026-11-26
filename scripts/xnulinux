@@ -1,0 +1,188 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
+# Unified CLI for xnulinux: diagnose a PC, build kernel modules, configure memory, boot, console, VNC, and test.
+set -euo pipefail
+
+resolve_root() {
+  if [ -n "${XNULINUX_HOME:-}" ] && [ -d "$XNULINUX_HOME/scripts" ]; then
+    echo "$XNULINUX_HOME"
+    return
+  fi
+  local src="${BASH_SOURCE[0]}"
+  while [ -L "$src" ]; do
+    local dir
+    dir=$(cd -P "$(dirname "$src")" && pwd)
+    src=$(readlink "$src")
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+  cd -P "$(dirname "$src")/.." && pwd
+}
+
+ROOT=$(resolve_root)
+
+usage() {
+  cat <<'EOF'
+Usage: xnulinux <command> [args...]
+
+Commands:
+  doctor [--strict]         Inspect this PC's OS, CPU, memory, tools, and readiness
+  status                    Show loaded modules, network (xnu0), GPU bridge, and config
+  build-modules             Build fki.ko and xnu.ko against the running kernel
+  setup-mem [--dry-run]     Configure Linux mem= and fki.ko carve-out for this PC
+  boot [--wait]             Boot the hosted system (scripts/xnulinux-boot.sh)
+  stop                      Stop the running hosted system cleanly
+  console [--local|--remote] Attach to XNU /dev/console
+  vnc [args...]             Start VNC server for framebuffer & input (port 5900)
+  screenshot [OUT.png] [W] [H] Save framebuffer dump as PNG (default: xnu-screen.png 1280 800)
+  test                      Run host unit tests (and live host checks when XNU is running)
+  help                      Show this help message
+EOF
+}
+
+cmd_doctor() {
+  local strict=0
+  [ "${1:-}" = --strict ] && strict=1
+
+  local os arch pagesize cpus ram_kb mem_gb native_ok=1
+  os=$(uname -s)
+  arch=$(uname -m)
+  pagesize=$(getconf PAGESIZE 2>/dev/null || echo unknown)
+  cpus=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo unknown)
+
+  echo "=== xnulinux PC check ==="
+  echo "Repo:      $ROOT"
+  echo "OS/Arch:   $os $arch"
+  echo "CPUs:      $cpus"
+  echo "Page size: $pagesize bytes"
+
+  if [ -r /proc/meminfo ]; then
+    ram_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+    mem_gb=$(( (ram_kb + 524288) / 1048576 ))
+    echo "RAM:       ~$mem_gb GiB ($ram_kb KiB)"
+  fi
+
+  if [ "$os" = Linux ] && [ "$arch" = aarch64 ]; then
+    if [ "$pagesize" != 4096 ]; then
+      echo "Status:    [FAIL] 4K Linux pages required (found $pagesize)"
+      native_ok=0
+    else
+      echo "Pages:     [OK] 4K pages"
+    fi
+
+    if grep -qw paca /proc/cpuinfo 2>/dev/null; then
+      echo "PAC:       [OK] FEAT_PAuth (paca) advertised"
+    else
+      echo "PAC:       [WARN] paca not advertised in /proc/cpuinfo"
+    fi
+
+    local kdir="/lib/modules/$(uname -r)/build"
+    if [ -d "$kdir" ]; then
+      echo "Headers:   [OK] $kdir"
+    else
+      echo "Headers:   [MISSING] $kdir (install linux-headers-$(uname -r) or kernel-devel)"
+      native_ok=0
+    fi
+
+    if [ -x "$ROOT/scripts/detect-mem.py" ] && [ -r /proc/iomem ]; then
+      if grep -qE '^[0-9a-fA-F]*[1-9a-fA-F][0-9a-fA-F]*-.*: System RAM$' /proc/iomem 2>/dev/null; then
+        local mem_line
+        mem_line=$(python3 "$ROOT/scripts/detect-mem.py" 2>/dev/null | tr '\n' ' ' || true)
+        [ -n "$mem_line" ] && echo "Memory:    $mem_line"
+      else
+        echo "Memory:    run 'sudo xnulinux setup-mem --dry-run' to inspect /proc/iomem"
+      fi
+    fi
+
+    if ls /dev/dri/renderD* >/dev/null 2>&1; then
+      echo "GPU node:  $(ls /dev/dri/renderD* | tr '\n' ' ')"
+    else
+      echo "GPU node:  none (will use CPU rendering)"
+    fi
+  else
+    native_ok=0
+    echo "Native:    [INFO] Native xnu.ko requires an arm64 (aarch64) 4K-page Linux host."
+    if command -v qemu-system-aarch64 >/dev/null 2>&1; then
+      echo "QEMU:      [OK] $(qemu-system-aarch64 --version | head -n1)"
+    else
+      echo "QEMU:      [MISSING] install qemu-system-aarch64 to run an ARM64 Linux VM on this PC"
+    fi
+    if [ -e /dev/kvm ]; then
+      echo "KVM:       [OK] /dev/kvm present (for x86_64 guests)"
+    fi
+  fi
+
+  echo "Tools:"
+  for tool in python3 make gcc clang lzfse mkfs.hfsplus dnsmasq iptables; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      printf "  %-13s OK (%s)\n" "$tool" "$(command -v "$tool")"
+    else
+      printf "  %-13s missing\n" "$tool"
+    fi
+  done
+
+  if [ "$strict" = 1 ] && [ "$native_ok" = 0 ] && ! command -v qemu-system-aarch64 >/dev/null 2>&1; then
+    return 1
+  fi
+}
+
+cmd_status() {
+  echo "=== xnulinux status ==="
+  for mod in fki xnu; do
+    if [ -d "/sys/module/$mod" ]; then
+      echo "module $mod: loaded"
+    else
+      echo "module $mod: not loaded"
+    fi
+  done
+  if command -v ip >/dev/null 2>&1 && ip link show xnu0 >/dev/null 2>&1; then
+    echo "network xnu0: up"
+  else
+    echo "network xnu0: down"
+  fi
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    echo "xnudrmd: $(systemctl is-active xnudrmd 2>/dev/null || echo inactive)"
+  fi
+  [ -f /etc/xnulinux.conf ] && echo "config: /etc/xnulinux.conf present" || echo "config: /etc/xnulinux.conf not created"
+  [ -f "${MAC_CONF:-/var/tmp/mac.conf}" ] && echo "disk conf: ${MAC_CONF:-/var/tmp/mac.conf} present" || echo "disk conf: not found"
+}
+
+cmd_build_modules() {
+  local kdir=${KDIR:-/lib/modules/$(uname -r)/build}
+  [ -d "$kdir" ] || { echo "xnulinux: kernel headers not found at $kdir" >&2; exit 1; }
+  make -C "$kdir" M="$ROOT/fki-ko" modules
+  make -C "$kdir" M="$ROOT/xnu-ko" KBUILD_EXTRA_SYMBOLS="$ROOT/fki-ko/Module.symvers" modules
+  echo "built: $ROOT/fki-ko/fki.ko and $ROOT/xnu-ko/xnu.ko"
+}
+
+cmd_screenshot() {
+  local out=${1:-xnu-screen.png}
+  local w=${2:-1280}
+  local h=${3:-800}
+  local fb=${FB_DUMP:-/var/tmp/xnu-fb.raw}
+  python3 "$ROOT/tools/hosted/fb2png.py" "$fb" "$w" "$h" "$out"
+  echo "wrote $out"
+}
+
+cmd_test() {
+  python3 -m unittest discover -s "$ROOT/tests/host" -p "test_*.py" -v
+  if [ -d /sys/module/xnu ]; then
+    bash "$ROOT/tests/host/run.sh"
+  fi
+}
+
+cmd=${1:-help}
+shift || true
+case "$cmd" in
+  doctor|check) cmd_doctor "$@" ;;
+  status) cmd_status "$@" ;;
+  build-modules) cmd_build_modules "$@" ;;
+  setup-mem) exec bash "$ROOT/scripts/vm-install-fki-service.sh" "$@" ;;
+  boot) exec bash "$ROOT/scripts/xnulinux-boot.sh" "$@" ;;
+  stop) exec bash "$ROOT/scripts/xnulinux-boot.sh" stop ;;
+  console) exec bash "$ROOT/scripts/xnu-console.sh" "$@" ;;
+  vnc) exec python3 "$ROOT/tools/hosted/xnu-vnc.py" "$@" ;;
+  screenshot) cmd_screenshot "$@" ;;
+  test) cmd_test "$@" ;;
+  help|-h|--help) usage ;;
+  *) echo "xnulinux: unknown command '$cmd'" >&2; usage >&2; exit 2 ;;
+esac

@@ -356,3 +356,76 @@ jobs:
           path: ${{ runner.temp }}/puredarwin-tcg-serial.log
           if-no-files-found: ignore
           retention-days: 30
+
+  puredarwin-tcg-boot-lowmem:
+    name: Boot reduced-memory PureDarwin under x86-64 QEMU TCG
+    needs: [puredarwin-build, arm64-guest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record host memory before artifact downloads
+        run: |
+          awk '/^MemTotal:|^MemAvailable:/' /proc/meminfo |
+            tee "$RUNNER_TEMP/puredarwin-lowmem-host-memory.txt"
+      - name: Download the ARM64 Linux guest inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: puredarwin-e2e-guest
+          path: ${{ runner.temp }}/puredarwin-e2e-guest
+      - name: Download the PureDarwin system disk
+        uses: actions/download-artifact@v4
+        with:
+          name: puredarwin-e2e-disk
+          path: ${{ runner.temp }}/puredarwin-e2e-disk
+      - name: Install QEMU ARM system emulation
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-arm
+      - name: Test exact QEMU RSS measurement
+        run: python3 tests/puredarwin/test-run-tcg-e2e-rss.py
+      - name: Boot reduced-memory PureDarwin and require guest userspace plus clean halt
+        run: |
+          set -o pipefail
+          python3 tests/puredarwin/run-tcg-e2e.py \
+            --qemu-memory 6G \
+            --linux-memory 2G \
+            --fki-carve-base 0xc0000000 \
+            --fki-carve-mb 3072 \
+            --xnu-ram-mb 2816 \
+            --max-rss-mib 6144 \
+            "$RUNNER_TEMP/puredarwin-e2e-guest/Image" \
+            "$RUNNER_TEMP/puredarwin-e2e-guest/initramfs.cpio.gz" \
+            "$RUNNER_TEMP/puredarwin-e2e-disk/pd.img" \
+            "$RUNNER_TEMP/puredarwin-tcg-lowmem-serial.log" |
+            tee "$RUNNER_TEMP/puredarwin-tcg-lowmem-output.log"
+          qemu_rss=$(awk '/^QEMU peak RSS:/ {print; exit}' "$RUNNER_TEMP/puredarwin-tcg-lowmem-output.log")
+          {
+            echo '## x86-64 host to reduced-memory PureDarwin ARM64 console boot'
+            echo
+            echo "- Host: $(uname -a)"
+            echo "- Host OS: $(. /etc/os-release && echo "$PRETTY_NAME")"
+            echo "- Host CPU: $(lscpu | awk -F: '/Model name/ {gsub(/^[[:space:]]+/, "", $2); print $2; exit}')"
+            echo "- Host CPUs / RAM: $(getconf _NPROCESSORS_ONLN) CPUs / $(awk '/^MemTotal:/ {total=$2 " " $3} /^MemAvailable:/ {available=$2 " " $3} END {print total " total, " available " available"}' /proc/meminfo)"
+            echo "- QEMU: $(qemu-system-aarch64 --version | head -1)"
+            cat "$RUNNER_TEMP/puredarwin-e2e-guest/guest-manifest.txt"
+            cat "$RUNNER_TEMP/puredarwin-e2e-guest/build-manifest.txt"
+            echo '- Accelerator: QEMU TCG; hardware virtualization is not required.'
+            echo '- Host memory before guest/disk downloads:'
+            sed 's/^/  - /' "$RUNNER_TEMP/puredarwin-lowmem-host-memory.txt"
+            echo '- Reduced guest profile: ARM64 Linux, 4 KiB pages, PAC, EL1, 6 GiB QEMU RAM; Linux `mem=2G`; FKI carve-out at `0xc0000000` (3072 MiB); XNU RAM 2816 MiB.'
+            echo "- ${qemu_rss:-QEMU peak RSS: not measured}"
+            echo '- Required evidence: real PureDarwin console command output, guest-requested `halt`, XNU module unload, Linux guest power-off, and QEMU RSS below 6144 MiB.'
+            echo '- This is lower-memory development validation. It does not yet establish support for physical 8 GiB PCs, macOS, graphics, networking, performance, or cross-host acceptance.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain the reduced-memory boot logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puredarwin-tcg-lowmem-boot-log
+          path: |
+            ${{ runner.temp }}/puredarwin-tcg-lowmem-serial.log
+            ${{ runner.temp }}/puredarwin-tcg-lowmem-output.log
+            ${{ runner.temp }}/puredarwin-lowmem-host-memory.txt
+          if-no-files-found: ignore
+          retention-days: 30

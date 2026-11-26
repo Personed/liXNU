@@ -117,8 +117,8 @@ The full TCG route in [#36](https://github.com/Personed/xnulinux/pull/36) uses a
 reference host-capacity screen is 20 GiB total RAM and 4 GiB available before artifact preparation. These values
 describe one measured profile, not a universal minimum. Run #72 on older #36 head `5312b29` emitted Darwin-console,
 guest-halt, module-unload, Linux power-off, and clean-QEMU-exit markers, but later byte inspection found overlapping
-file-backed `__TEXT_EXEC` and `__KLD` data, so that run is not an acceptance pass. Current #36 head `97727ac` failed
-run #74 before boot on the same overlap.
+file-backed `__TEXT_EXEC` and `__KLD` data, so that run is not an acceptance pass. At the time of run #74,
+#36 head `97727ac` failed before boot on the same overlap.
 
 PR #50 run #89 subsequently passed its Linux x86-64 TCG workflow through the Darwin console, guest `halt`, module
 unload, Linux power-off, and QEMU success on Ubuntu 24.04.5 x86-64 with QEMU 8.2.2. The nested KVM-backed Intel runner

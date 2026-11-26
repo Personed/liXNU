@@ -89,7 +89,7 @@ fi
 QEMU_IMG="${QEMU_IMG:-qemu-img}"
 QEMU_IMG_PATH="$(command -v -- "$QEMU_IMG" 2>/dev/null || true)"
 [[ -n "$QEMU_IMG_PATH" && -x "$QEMU_IMG_PATH" ]] || fail "qemu-img executable not found: $QEMU_IMG"
-if ! "$QEMU_IMG_PATH" info -f "$DISK_FORMAT" "$DISK_PATH" >/dev/null 2>&1; then
+if ! QEMU_IMG_INFO="$("$QEMU_IMG_PATH" info -f "$DISK_FORMAT" "$DISK_PATH" 2>&1)"; then
   fail "qemu-img could not read DISK as $DISK_FORMAT"
 fi
 FLOCK="${FLOCK:-flock}"
@@ -178,6 +178,14 @@ if ! exec 9>"$STATE_DIR/.lock"; then
   fail "could not open STATE_DIR lock file: $STATE_DIR/.lock"
 fi
 "$FLOCK_PATH" -n 9 || fail "STATE_DIR is already in use by another QEMU process: $STATE_DIR"
+
+STATE_DIR_REAL="$(realpath -e -- "$STATE_DIR")" || fail "could not resolve STATE_DIR: $STATE_DIR"
+DISK_FILENAME="${DISK_PATH##*/}"
+if [[ "$DISK_FORMAT" == qcow2 && "$(dirname -- "$DISK_PATH")" == "$STATE_DIR_REAL" \
+    && "$DISK_FILENAME" =~ ^disk-[a-f0-9]{20}\.qcow2$ ]] \
+    && grep -Eq '^backing file:[[:space:]]+' <<<"$QEMU_IMG_INFO"; then
+  fail "DISK points to an xnulinux-managed overlay in STATE_DIR: $DISK_PATH (use the original base image with this state directory, or choose a separate STATE_DIR to fork the image)"
+fi
 
 # This directory owns one VM's disk overlay. Catch legacy overlays from prior
 # launcher versions even if their inode-based filename can no longer be

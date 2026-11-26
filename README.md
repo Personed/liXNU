@@ -161,7 +161,8 @@ file metadata changes, the launcher hashes it: identical restored bytes keep the
 fail before QEMU starts. The initial launch and any metadata change can require reading the full source image to hash it;
 later launches with unchanged metadata skip that read. Restore the matching source image or choose a new `STATE_DIR` to
 start a fresh VM state. Unassociated overlays left by an older launcher stop startup with migration guidance rather
-than silently creating empty guest state.
+than silently creating empty guest state. Do not pass this VM's managed qcow2 overlay back as `DISK` with the same
+`STATE_DIR`; use the original base disk, or use another state directory if you intend to fork that image.
 
 Set the disk, source format, and local Apple SMC OSK value, then preflight the host:
 

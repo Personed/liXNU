@@ -63,6 +63,9 @@ if [[ "${1-}" == "--version" ]]; then
   exit 0
 fi
 if [[ "${1-}" == info ]]; then
+  if [[ "${QEMU_IMG_BACKED_DISK:-}" == "${@: -1}" ]]; then
+    printf 'image: %s\nfile format: qcow2\nbacking file: original-base.raw\n' "${@: -1}"
+  fi
   exit 0
 fi
 count=0
@@ -153,7 +156,9 @@ expect_check_failure missing_flock 'flock executable not found' FLOCK="$BIN_DIR/
 UNREADABLE_STATE_DIR="$TMP_DIR/unreadable state directory"
 mkdir -p -- "$UNREADABLE_STATE_DIR"
 chmod 300 -- "$UNREADABLE_STATE_DIR"
-expect_check_failure unreadable_state_dir 'STATE_DIR must be a readable, writable, and searchable directory' "STATE_DIR=$UNREADABLE_STATE_DIR"
+if [[ ! -r "$UNREADABLE_STATE_DIR" ]]; then
+  expect_check_failure unreadable_state_dir 'STATE_DIR must be a readable, writable, and searchable directory' "STATE_DIR=$UNREADABLE_STATE_DIR"
+fi
 chmod 700 -- "$UNREADABLE_STATE_DIR"
 
 KVM_OUTPUT="$TMP_DIR/kvm-unavailable.out"
@@ -187,6 +192,18 @@ if env "${BASE_ENV[@]}" STATE_DIR="$LEGACY_STATE_DIR" ACCEL=tcg "$LAUNCHER" >"$L
 fi
 assert_contains "$LEGACY_OVERLAY_OUTPUT" 'unassociated disk overlay exists in STATE_DIR'
 [[ ! -e "$QEMU_LOG" ]] || fail 'unassociated legacy overlay reached QEMU'
+
+SAVED_OVERLAY_STATE_DIR="$TMP_DIR/saved overlay selected as disk"
+SAVED_OVERLAY_DISK="$SAVED_OVERLAY_STATE_DIR/disk-0123456789abcdefabcd.qcow2"
+SAVED_OVERLAY_OUTPUT="$TMP_DIR/saved-overlay-as-source.out"
+mkdir -p -- "$SAVED_OVERLAY_STATE_DIR"
+printf 'fake saved qcow2 overlay\n' >"$SAVED_OVERLAY_DISK"
+if env "${BASE_ENV[@]}" DISK="$SAVED_OVERLAY_DISK" DISK_FORMAT=qcow2 STATE_DIR="$SAVED_OVERLAY_STATE_DIR" \
+  QEMU_IMG_BACKED_DISK="$SAVED_OVERLAY_DISK" ACCEL=tcg "$LAUNCHER" >"$SAVED_OVERLAY_OUTPUT" 2>&1; then
+  fail 'managed qcow2 overlay unexpectedly started as a new base disk'
+fi
+assert_contains "$SAVED_OVERLAY_OUTPUT" 'DISK points to an xnulinux-managed overlay in STATE_DIR'
+[[ ! -e "$QEMU_LOG" ]] || fail 'managed overlay selection reached QEMU'
 
 FAILED_STATE_DIR="$TMP_DIR/failed overlay state"
 FAILED_OVERLAY_OUTPUT="$TMP_DIR/failed-overlay.out"

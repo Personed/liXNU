@@ -21,7 +21,7 @@ jobs:
         run: |
           sudo apt-get install -y -qq busybox-static cpio kmod qemu-system-x86 >/dev/null
           test "$(modinfo -F license xnu-ko/xnu.ko)" = Proprietary
-      - name: Exercise refusal in a disposable x86_64 Linux VM
-        run: tests/x86_64/test-xnu-stub-vm.sh "$KDIR"
       - name: Compile isolated Mach-O and ADT objects for x86_64
         run: tests/x86_64/build-xnu-parse-objects.sh "$KDIR"
+      - name: Exercise refusal in a disposable x86_64 Linux VM
+        run: tests/x86_64/test-xnu-stub-vm.sh "$KDIR"

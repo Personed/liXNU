@@ -17,6 +17,7 @@
 #include <linux/sched.h>
 #include <linux/smp.h>
 #include <linux/uaccess.h>
+#include <linux/version.h>
 #include <linux/vmalloc.h>
 #include <asm/arch_timer.h>
 #include <asm/barrier.h>
@@ -147,10 +148,16 @@ static __always_inline void keys_write(const struct fki_pac_keys *k)
 
 void fki_fpsimd_forget(void)
 {
-	struct user_fpsimd_state scratch;	/* where Linux would save a kernel-mode state over a context switch: none here */
+	/* Linux 6.19 changed these helpers to take the task's saved kernel FP state. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
+	struct user_fpsimd_state scratch;
 
 	kernel_neon_begin(&scratch);
 	kernel_neon_end(&scratch);
+#else
+	kernel_neon_begin();
+	kernel_neon_end();
+#endif
 }
 
 __attribute__((target("branch-protection=none"))) unsigned long fki_enter(const struct fki_pac_keys *foreign, struct fki_pac_keys *saved)

@@ -106,9 +106,9 @@ module_param(xo_compat, int, 0444);
 static char *el0_fips_sha256 = "";
 module_param(el0_fips_sha256, charp, 0444);
 
-__attribute__((target("branch-protection=none"), noreturn))
+XNU_BRANCH_PROTECTION_NONE __attribute__((noreturn))
 void xnu_world_pac_abort_el0(int err);
-__attribute__((target("branch-protection=none"), noreturn))
+XNU_BRANCH_PROTECTION_NONE __attribute__((noreturn))
 void xnu_world_pac_abort_el0(int err)
 {
 	static const char msg[] = "xnu: FATAL: fki_pac_swap failed in EL0 upcall\n";

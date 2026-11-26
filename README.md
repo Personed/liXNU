@@ -1,13 +1,16 @@
 # xnulinux
 
-Run macOS userspace on Linux by loading the macOS kernel into it.
+Run macOS userspace on Linux with two architecture-specific paths: a direct hosted-kernel path on ARM64, and a QEMU/KVM guest path on x86_64 PCs.
 
-xnulinux builds XNU, the open-source kernel of macOS, from Apple's published sources and runs it as a loadable kernel
+On ARM64, xnulinux builds XNU, the open-source kernel of macOS, from Apple's published sources and runs it as a loadable kernel
 module (`xnu.ko`) inside an unmodified arm64 Linux kernel. The hosted XNU drives the CPU and MMU directly, so macOS
-processes run natively next to Linux processes on the same CPUs, with no hypervisor between them. Linux lends XNU its
-memory, timers, files, network and GPU through a small interface module (`fki.ko`).
+processes run natively next to Linux processes on the same CPUs. Linux lends XNU its memory, timers, files, network and
+GPU through a small interface module (`fki.ko`).
 
-With a stock Ubuntu kernel, `insmod xnu.ko` boots a macOS 27 system disk made by Apple's own installer to the
+On x86_64 Intel and AMD PCs, the experimental path runs a user-prepared Tahoe 26 guest with QEMU/KVM. It does not load
+the ARM64-only project modules on x86_64. The ARM64 path remains unchanged.
+
+On a supported ARM64 host with a stock Ubuntu kernel, `insmod xnu.ko` boots a macOS 27 system disk made by Apple's own installer to the
 desktop: loginwindow, WindowServer, Dock, Finder, Safari and Chrome.
 
 ![macOS and Linux userspace side by side](docs/images/macos-and-linux.jpg)
@@ -83,6 +86,18 @@ Working on two arm64 Linux setups:
   - Currently renders on the CPU (Mesa lavapipe, `GPU=off`): `xnudrmd` only forwards `virtio-gpu` (Venus) ioctls today,
     so hardware GPU pass-through on the GB10 GPU requires a new DRM bridge backend.
 
+### Architecture support
+
+| Linux host | Hosted macOS | Status |
+|---|---|---|
+| ARM64 with PAC and 4 KiB pages | macOS 27 ARM64 | Existing supported path; tested on Apple Silicon Linux VMs and NVIDIA DGX Spark as described above. |
+| Intel x86_64 with VT-x/KVM and required CPU features | macOS Tahoe 26 x86_64 | Experimental QEMU/KVM launcher; physical Intel desktop boot and host-integrity acceptance remain. |
+| AMD x86_64 with AMD-V/KVM and required CPU features | macOS Tahoe 26 x86_64 | Experimental QEMU/KVM launcher; requires AMD OpenCore kernel patches and physical AMD acceptance. |
+
+The x86_64 launcher and test harness are present, but neither x86_64 host row is a support claim yet. TCG runs validate
+only a disposable Linux guest; support requires a Tahoe desktop boot and Linux host-integrity checks on physical Intel
+and AMD hardware. See [`tests/x86_64/README.md`](tests/x86_64/README.md) for setup and current evidence.
+
 Shipping it as a hosted service (what is distributed, what a user installs to run Apple's macOS) is in
 [`docs/hosted-service.md`](docs/hosted-service.md).
 
@@ -90,6 +105,8 @@ What is still a stopgap is listed in [`docs/production.md`](docs/production.md).
 the system volume, AMFI is patched and SIP relaxed, and memory access is slower than a native VM (4K pages vs 16K).
 
 ## Requirements
+
+### ARM64 direct path
 
 - An arm64 Linux host with PAC (`FEAT_PAuth`), 4K pages, and at least 16 GB of RAM (8 GB reserved for the hosted
   kernel). Tested on:
@@ -99,6 +116,18 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 - A Mac with Xcode to make the system disk and build the GPU parts.
 - A macOS 27 installation (an Apple Virtualization VM disk) of your own. **No Apple binaries are in this repository or
   distributed by it**: the kexts Apple ships, the macOS system disk and its trust cache come from your own installation.
+
+### x86_64 QEMU/KVM path
+
+- An Intel or AMD x86_64 Linux PC with VT-x or AMD-V, `/dev/kvm` accessible to the running user, and SSE4.2, AVX, FMA,
+  MOVBE, POPCNT, LZCNT, BMI1, AVX2 and BMI2 exposed by the host CPU.
+- QEMU 10 or newer, `qemu-img`, `flock` (from util-linux), and OVMF 4 MiB firmware files. Package names and OVMF paths vary by distribution;
+  override `OVMF_CODE` and `OVMF_VARS_TEMPLATE` when needed.
+- A user-prepared bootable macOS Tahoe 26 x86_64 raw or qcow2 image with a working EFI/OpenCore setup. AMD images must
+  include matching OpenCore AMD kernel patches. No Apple system image is provided here.
+- The 64-byte Apple SMC OSK value supplied locally through `APPLE_SMC_OSK`; do not commit it or paste it into logs. The launcher writes it to a mode-0600 temporary QEMU config, keeps it out of QEMU's argv and environment, and removes the config when QEMU exits.
+- Enough physical RAM for the configured guest allocation plus Linux/QEMU overhead. The default guest allocation is
+  8 GiB and can be changed with `RAM_MB`.
 
 ## Building and running
 
@@ -120,6 +149,47 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
    running.
 6. GPU (optional, on the Mac): `gpu/venus/build-darwin.sh` builds the hosted Vulkan driver, `gpu/xnu-cpu-metal/` the
    Metal plugin (see its README).
+
+### Experimental x86_64 guest
+
+This path requires a bootable image prepared separately by the user. QEMU writes macOS changes to a persistent qcow2
+overlay under `$XDG_STATE_HOME/xnulinux/x86_64` when `XDG_STATE_HOME` is set, or `~/.local/state/xnulinux/x86_64`
+otherwise; OVMF variable state is stored there too. Only one QEMU process can use a state directory at a time; use a
+readable, writable, and searchable `STATE_DIR` for each VM. The source image and firmware templates stay untouched. The overlay grows as the
+guest writes data. Overlay identity is tied to the canonical source path, format, and a SHA-256 sidecar. If the source
+file metadata changes, the launcher hashes it: identical restored bytes keep the existing overlay, while changed bytes
+fail before QEMU starts. The initial launch and any metadata change can require reading the full source image to hash it;
+later launches with unchanged metadata skip that read. Restore the matching source image or choose a new `STATE_DIR` to
+start a fresh VM state. Unassociated overlays left by an older launcher stop startup with migration guidance rather
+than silently creating empty guest state. Do not pass this VM's managed qcow2 overlay back as `DISK` with the same
+`STATE_DIR`; use the original base disk, or use another state directory if you intend to fork that image.
+The `.base` sidecar beside a generated `disk-<20 hex>.qcow2` identifies launcher-owned overlays; a user-prepared qcow2
+with that filename pattern is accepted as a source when it has no matching sidecar. Existing overlays may be stored on
+another volume and linked into `STATE_DIR` as long as the link resolves to a regular file. `--check` validates host
+requirements and disk readability without creating state; disk-to-state association is checked when launching.
+
+Set the disk, source format, and local Apple SMC OSK value, then preflight the host:
+
+```sh
+export DISK="$HOME/VMs/tahoe26.qcow2"
+export DISK_FORMAT=qcow2
+read -r -s -p 'Apple SMC OSK (64 bytes): ' APPLE_SMC_OSK
+export APPLE_SMC_OSK
+printf '\n'
+scripts/x86_64/xnulinux-boot.sh --check
+```
+
+If OVMF is installed outside `/usr/share/OVMF/`, set `OVMF_CODE` and `OVMF_VARS_TEMPLATE` to the corresponding 4 MiB
+files before preflight. If preflight succeeds, run:
+
+```sh
+scripts/x86_64/xnulinux-boot.sh
+```
+
+KVM and QEMU's `host` CPU model are the defaults. `CPU_MODEL`, `CPUS`, `RAM_MB`, `STATE_DIR`, and `QEMU_DISPLAY` can be
+overridden. `ACCEL=tcg` is only for development and Linux smoke tests; it is not a performance or hardware-support
+result. For AMD, OpenCore must already contain AMD kernel patches. The current x86_64 path is separate from the ARM64
+`fki.ko`/`xnu.ko` runtime.
 
 ### Testing the Linux host layer in QEMU
 

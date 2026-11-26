@@ -5,10 +5,11 @@ Record the **host, runtime, and furthest verified stage** for each result. Booti
 ARM64 Linux VM does not mean that XNU ran. Building or probing a module does not mean
 Darwin userspace ran. A PureDarwin shell does not establish macOS compatibility.
 
-The active x86_64 target is native hosted XNU on Intel/AMD Linux with Tahoe 26; its port
-and physical-host acceptance are not complete. The complementary x86-64 TCG → ARM64
-Linux → PureDarwin console work in [PR #36](https://github.com/Personed/xnulinux/pull/36)
-and the QEMU/KVM guest launcher do not establish the native port.
+The active PC compatibility goal is x86-64 PC → QEMU TCG → ARM64 Linux → FKI/XNU →
+PureDarwin console, alongside the direct hosted-XNU path on compatible ARM64 Linux hosts.
+The full TCG route is tracked in [PR #36](https://github.com/Personed/xnulinux/pull/36)
+and remains under validation. Native x86_64/Tahoe hosting and QEMU/KVM macOS guests are
+separate experiments; neither substitutes for this route or establishes its acceptance.
 
 | Stage | What counts as evidence |
 | --- | --- |
@@ -40,9 +41,9 @@ Report the profile alongside the stage:
   a minimal test initramfs, not a full installed Linux distribution. This validates FKI's
   mapping and reuse in that profile; it is not a physical-PC compatibility claim, an XNU
   carve-out use test, or a PureDarwin boot.
-- **x86-64 PC → QEMU TCG → ARM64 Linux → PureDarwin console:** this complementary full
-  route is tracked in [#36]. Its acceptance workflow builds a paired PureDarwin image and
-  collection, requires a Darwin console command and guest-issued halt, then verifies XNU/FKI
+- **x86-64 PC → QEMU TCG → ARM64 Linux → PureDarwin console:** this is the active PC
+  compatibility route, tracked in [#36]. Its acceptance workflow builds a paired PureDarwin image
+  and collection, requires a Darwin console command and guest-issued halt, then verifies XNU/FKI
   unload, Linux guest power-off, and clean QEMU exit. The reference profile assigns 16 GiB
   guest RAM with `mem=7G`, uses 4 KiB pages and PAC at EL1, reserves an 8,156 MiB FKI
   carve-out at `0x200000000`, and assigns 7,900 MiB to XNU. It screens for at least 20 GiB
@@ -52,7 +53,7 @@ Report the profile alongside the stage:
   latest Ubuntu generic ARM64 kernel package at runtime; PR #52 proposes a pinned package
   (`7.0.0-44.44~24.04.1`) and immutable repository snapshot, but fixed expected package
   digests and availability checks remain pending. Results do not establish native
-  x86_64/Tahoe, QEMU/KVM, a macOS desktop, or support on every PC.
+  x86_64/Tahoe hosting, QEMU/KVM, a macOS desktop, or support on every PC.
 
   Run #72 on earlier #36 head `5312b29` emitted the Darwin command, guest halt, XNU unload,
   Linux power-off, and QEMU exit markers on Ubuntu 24.04 x86-64 with QEMU 8.2.2. It is not
@@ -110,9 +111,13 @@ relocated collection checked with #50's `--check`, not the synchronized #50/#52 
 manifest or cross-host matrix. #62's modules run #613 passed Linux 6.12 and ARM64 smoke
 jobs, while its x86-64 FKI, SPDX, and QEMU matrix jobs were cancelled. PR #64's separate
 run #95 CI result is described above; it is on the #52 branch and has not been integrated
-into main. These are useful complementary TCG results, not native x86_64 acceptance.
-- **Native x86-64 hosted XNU on Intel/AMD Linux:** this is the project target for Tahoe 26.
-  The x86_64 FKI host-backend build merged in [#48](https://github.com/Personed/xnulinux/pull/48) and passed compilation while preserving ARM64; it advertises no XNU execution capability.
+into main. These are TCG results for the active PC route, limited to the exact heads and
+virtualized runners recorded above; they do not establish bare-metal PC support or native
+x86_64 acceptance.
+- **Separate native x86-64 hosted-XNU/Tahoe experiment:** this is not the active PC
+  compatibility route. The x86_64 FKI host-backend build merged in
+  [#48](https://github.com/Personed/xnulinux/pull/48) and passed compilation while preserving ARM64;
+  it advertises no XNU execution capability.
   The fail-closed x86_64 XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47) still provides no execution support.
   The architecture-specific XNU entry/world switch and physical desktop acceptance are still pending.
   For each host, record the CPU vendor/model/features, Linux kernel and configuration,

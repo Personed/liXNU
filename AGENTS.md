@@ -2,29 +2,26 @@
 
 ## Project goal
 
-Port the hosted-XNU runtime to native x86_64 Linux PCs while preserving the working ARM64 hosted-XNU path.
+Make xnulinux executable on compatible ARM64 Linux hosts and on Intel/AMD x86-64 PCs through a QEMU TCG ARM64 Linux guest.
 
-- **ARM64 Linux:** preserve the existing direct XNU-in-Linux runtime using `fki.ko` and `xnu.ko`, including its build and runtime behavior and macOS 27 target.
-- **x86_64 Intel and AMD Linux:** port FKI, XNU hosting, machine-layer code, and architecture-specific build outputs to x86_64; target macOS Tahoe 26 x86_64, the latest macOS release compatible with Intel. Launching an unrelated macOS VM does not satisfy this target.
-- **Complementary tools:** retain the repository's QEMU/KVM guest launcher and QEMU TCG/ARM64 workflows as optional experiments and test harnesses. They do not replace or redefine the native x86_64 port.
-- Keep Intel and AMD acceptance separate. Builds and VM smoke checks do not establish physical-host support. Claim support for a vendor only after the native hosted-XNU path boots the target system on a physical host and passes host-integrity and shutdown checks.
+- **Compatible ARM64 Linux hosts:** preserve and validate the direct XNU-in-Linux runtime using `fki.ko` and `xnu.ko`, including the macOS 27 path. Record the CPU, kernel, PAC, 4 KiB page size, exception level, memory layout, and furthest verified stage for each host profile.
+- **Intel/AMD x86-64 PCs:** use QEMU TCG to boot ARM64 Linux, then run the hosted-XNU/PureDarwin path inside that guest. This is the active PC compatibility route and does not depend on VT-x or AMD-V. Keep host-visible RAM, guest RAM, operating system, QEMU build, and firmware requirements separate; the 20 GiB total / 4 GiB available screen is operational guidance, not a measured physical minimum.
+- Treat end-to-end validation as incomplete until reproducible build, install, boot, PureDarwin console, guest-issued halt, module unload, Linux guest power-off, and clean QEMU exit are recorded for each claimed profile. Hosted runner results do not establish physical-PC support.
+- Native x86_64 hosted-XNU/Tahoe and QEMU/KVM macOS guest work are separate experiments. They do not replace the active TCG route or establish its acceptance.
 
-## Native x86_64 hosted-XNU port
+## Separate native x86_64/Tahoe experiment
 
-- Build FKI, XNU, the machine layer, kexts, and kernel collections as architecture-specific x86_64 outputs while retaining ARM64 outputs and behavior.
-- Keep register state, exception entry, MMU/TLB operations, syscall delivery, Mach-O CPU types, boot handoff, and kernel collections architecture-aware. Reject architecture and ABI mismatches before entering XNU.
-- Establish a safe Linux/XNU execution boundary before running foreign kernel code. Verify Linux register, floating-point, exception, syscall, and memory state through entry, return, fault recovery, and shutdown.
-- Use user-provided Tahoe 26 artifacts that match the selected XNU build. Do not add Apple system images, firmware, or local secrets to Git or logs.
-- Measure Intel and AMD requirements independently. Record the tested Linux kernel, CPU features, memory, page size, XNU build, and furthest boot stage. A QEMU/KVM macOS guest or TCG ARM64 guest does not establish the native module port.
-- Keep user-visible support tables precise: ARM64 direct hosted XNU is the existing supported path; x86_64 native hosting remains experimental until full target and host-integrity checks pass.
+- Keep the native x86_64 FKI/XNU work architecture-aware and fail closed until entry, return, fault recovery, and shutdown are validated. Target user-provided Tahoe 26 artifacts only; do not add Apple system images, firmware, or local secrets to Git or logs.
+- Keep Intel and AMD physical acceptance separate. Record the tested Linux kernel, CPU features, memory, page size, XNU build, host-integrity checks, and furthest boot stage. A build, module probe, QEMU/KVM guest, or TCG guest is not native x86_64 hosted-XNU execution.
+- Label this work as an experiment in user-facing support tables; it is not the current Intel/AMD PC compatibility path.
 
-## Complementary QEMU TCG and PureDarwin checks
+## Active PC compatibility route: QEMU TCG and PureDarwin
 
-- Retain the QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin flow as an optional portability profile and development harness. It does not replace the native x86_64/Tahoe 26 goal and does not test the native x86_64 module path.
-- Report firmware, Linux boot, FKI configuration, carve-out allocation/reuse, XNU module probe, XNU carve-out use, PureDarwin console, guest-issued halt, module unload, Linux guest power-off, and QEMU exit as distinct stages. A module build or probe is not XNU execution; a PureDarwin console is not macOS desktop support.
-- The #36 reference profile assigns 16 GiB to the ARM64 guest and screens for 20 GiB total host RAM plus 4 GiB available before artifact preparation. Record the host values separately from guest RAM and identify the measurement phase. This screen is not a universal minimum or a performance claim.
-- Keep #36/#46 CI results separate from the local pinned-kernel result in #62. Preserve the overlap and kernel-input caveats, and do not describe the TCG route as accepted until the current integrated artifacts pass the console/halt/unload/power-off checks and the host matrix.
-- Record detailed stage limits, host capacity, input hashes, and current evidence in [`docs/portability-validation.md`](docs/portability-validation.md). Keep the support table and PR title/body aligned with the native x86_64 project goal.
+- Treat x86-64 PC → QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin as the current PC compatibility objective. Report firmware, Linux boot, module build/load, FKI configuration, carve-out allocation/reuse, XNU carve-out use, PureDarwin console, guest-issued halt, module unload, Linux guest power-off, and QEMU exit as distinct stages.
+- A module build or probe is not XNU execution; a PureDarwin console is not macOS desktop support. Keep the direct ARM64 Linux host profile separate from the x86-64 PC/TCG profile.
+- The #36 reference profile assigns 16 GiB to the ARM64 guest and screens for 20 GiB total host-visible RAM plus 4 GiB available before artifact preparation. Record these host values separately from guest RAM and identify the measurement phase. This screen is not a universal minimum or a performance claim.
+- Keep #36/#46 CI results separate from local pinned-kernel results in #62 and other stacked runs. Preserve overlap and kernel-input caveats. Do not claim the route supported until current integrated artifacts pass console/halt/unload/power-off checks on the stated profiles.
+- Record input hashes, host-capacity measurements, stage limits, and current evidence in [`docs/portability-validation.md`](docs/portability-validation.md). Keep README, acceptance criteria, and PR titles/bodies aligned with the TCG PC objective; keep native x86_64/Tahoe separate.
 
 ## Required PR coordination
 
@@ -42,9 +39,9 @@ The project owner explicitly authorized direct merging as soon as all required c
 
 Do not leave parallel agents to infer ownership from the code. Use the PR comments to divide overlapping work and confirm interface changes. Continue independent work while waiting on a reply; record unresolved dependencies in the PR.
 
-## Validation
+## Separate native x86_64 experiment: validation
 
-Keep x86_64 and ARM64 kernel header trees separate, and pass the architecture explicitly to Kbuild. Run the x86_64 commands on an x86_64 Linux host with matching headers; the ARM64 commands below run on an ARM64 Linux host with matching headers. The x86_64 FKI build compiles only the host backend; the x86_64 XNU target is a refusal stub, not a runtime implementation. The stub-load script starts its own disposable VM and taints only that guest kernel. On Debian/Ubuntu, module builds need `build-essential` and matching kernel headers; the stub VM test needs `qemu-system-x86`, `busybox-static`, `cpio`, `kmod`, and `sudo`, plus APT download access to the matching `linux-image-unsigned-$KERNEL_RELEASE` package. CI covers the x86_64 FKI build, the x86_64 fail-closed XNU test, and the ARM64 module build.
+These commands validate the separate native x86_64 experiment and its fail-closed stub; they do not accept the active TCG PC route. Keep x86_64 and ARM64 kernel header trees separate, and pass the architecture explicitly to Kbuild. Run the x86_64 commands on an x86_64 Linux host with matching headers; the ARM64 commands below run on an ARM64 Linux host with matching headers. The x86_64 FKI build compiles only the host backend; the x86_64 XNU target is a refusal stub, not a runtime implementation. The stub-load script starts its own disposable VM and taints only that guest kernel. On Debian/Ubuntu, module builds need `build-essential` and matching kernel headers; the stub VM test needs `qemu-system-x86`, `busybox-static`, `cpio`, `kmod`, and `sudo`, plus APT download access to the matching `linux-image-unsigned-$KERNEL_RELEASE` package. CI covers the x86_64 FKI build, the x86_64 fail-closed XNU test, and the ARM64 module build.
 
 ```sh
 X86_KDIR=/path/to/x86_64/kernel-headers
@@ -59,7 +56,7 @@ make -C "$ARM64_KDIR" ARCH=arm64 M="$PWD/xnu-ko" KBUILD_EXTRA_SYMBOLS="$PWD/fki-
 git diff --check
 ```
 
-Retain existing QEMU/KVM launcher and TCG checks as complementary coverage and label their results accurately. They do not replace x86_64 module builds or native runtime validation. Keep ARM64 module CI in `.github/workflows/modules.yml`; add x86_64 builds without dropping ARM64 coverage.
+Retain QEMU/KVM launcher checks as separate guest-launcher coverage. Treat TCG tests as the active PC compatibility path, keep ARM64 module CI in `.github/workflows/modules.yml`, and preserve the native x86_64/Tahoe work as a separate experiment.
 
 ## Blockers and evidence
 

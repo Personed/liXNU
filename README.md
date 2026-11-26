@@ -1,19 +1,24 @@
 # xnulinux
 
-Port xnulinux's hosted-XNU runtime to native x86_64 Linux PCs while preserving its working direct ARM64 path. The x86_64 target is macOS Tahoe 26, the latest macOS release compatible with Intel. The x86_64 hosted runtime is under development; QEMU/KVM guest launching and ARM64 TCG tests are complementary experiments, not proof of the native port.
+Make xnulinux executable on compatible ARM64 Linux hosts and on Intel/AMD x86-64 PCs
+through a QEMU TCG ARM64 Linux VM. The TCG path has reached the PureDarwin console and
+guest halt on selected virtualized Linux runners; its cross-host and physical-PC acceptance
+remains under validation. Native x86_64 hosted-XNU/Tahoe and QEMU/KVM macOS guests are
+separate experiments.
 
 On ARM64, xnulinux builds XNU, the open-source kernel of macOS, from Apple's published sources and runs it as a loadable kernel
 module (`xnu.ko`) inside an unmodified arm64 Linux kernel. The hosted XNU drives the CPU and MMU directly, so macOS
 processes run natively next to Linux processes on the same CPUs. Linux lends XNU its memory, timers, files, network and
 GPU through a small interface module (`fki.ko`).
 
-On x86_64 Linux PCs, the target is to build and run architecture-matched `fki.ko` and `xnu.ko` directly in Linux,
-hosting macOS Tahoe 26 x86_64. The port is not complete: no native x86_64 hosted-XNU desktop boot has been validated.
+On Intel/AMD x86-64 PCs, QEMU TCG boots an ARM64 Linux VM where `fki.ko` and `xnu.ko` run.
+This does not require VT-x or AMD-V. The full PureDarwin route is still under validation;
+native x86_64/Tahoe execution remains a separate experiment.
 
-The repository also contains a QEMU/KVM macOS guest launcher and QEMU TCG ARM64 tests. These are complementary
-experiments and do not satisfy the native x86_64 hosted-XNU target. Firmware, Linux userspace, module builds, the XNU
-module probe, the PureDarwin console, and a macOS desktop are separate validation stages; see
-[`docs/portability-validation.md`](docs/portability-validation.md).
+QEMU/KVM macOS guest launching is a separate experiment. For the PC compatibility route,
+distinguish the ARM64 UEFI/Linux smoke, module build and probe, PureDarwin console, and
+desktop evidence. See the [QEMU guide](docs/qemu.md) and
+[portability validation](docs/portability-validation.md).
 
 On a supported ARM64 host with a stock Ubuntu kernel, `insmod xnu.ko` boots a macOS 27 system disk made by Apple's own installer to the
 desktop: loginwindow, WindowServer, Dock, Finder, Safari and Chrome.
@@ -99,19 +104,19 @@ Working on two arm64 Linux setups:
 | Linux host | Guest target | Status |
 |---|---|---|
 | ARM64 with PAC and 4 KiB pages | macOS 27 ARM64 (direct hosted XNU) | Existing supported path; tested on Apple Silicon Linux VMs and NVIDIA DGX Spark as described above. |
-| Intel x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | The FKI host backend merged in [#48](https://github.com/Personed/xnulinux/pull/48) builds and preserves ARM64, but advertises no XNU execution capability; the fail-closed XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Native runtime and physical Intel acceptance remain pending. |
-| AMD x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | The FKI host backend merged in [#48](https://github.com/Personed/xnulinux/pull/48) builds and preserves ARM64, but advertises no XNU execution capability; the fail-closed XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Native runtime and physical AMD acceptance remain pending. |
-| Intel/AMD x86_64 with QEMU/KVM | User-prepared macOS guest | Complementary launcher experiment; does not use the hosted-XNU modules or validate the native port. |
-| Intel/AMD x86_64 with QEMU TCG | ARM64 Linux → PureDarwin console | Complementary profile: #50/#52 CI and #62/#64 local runs report console and guest-halt evidence. The synchronized #36/#46 manifest and cross-host matrix remain pending; this is not a native x86_64 result. |
+| Intel x86_64 PC | ARM64 Linux via QEMU TCG → PureDarwin console | UEFI guest-start smoke is validated on hosted runners; end-to-end route remains under validation. No physical Intel PC boot or minimum RAM is established; Windows and Intel-macOS full boots remain pending. |
+| AMD x86_64 PC | ARM64 Linux via QEMU TCG → PureDarwin console | Console/halt evidence exists on a virtualized AMD-model runner; physical AMD PC support and minimum RAM are not established. |
+| Native x86_64/Tahoe experiment | macOS Tahoe 26 x86_64 through native hosted XNU | FKI host backend builds but advertises no XNU execution capability; the XNU stub is fail-closed. No native runtime support is claimed. |
+| Intel/AMD x86_64 with QEMU/KVM | User-prepared macOS guest | Separate guest-launcher experiment; does not use the hosted-XNU modules or validate the TCG PC route. |
 
-The x86_64 native target is not a support claim yet: the FKI host backend exposes no XNU execution capabilities, and
-the architecture-specific XNU execution path plus physical Intel and AMD desktop boots with Linux host-integrity checks
-remain to be completed. QEMU/KVM guest launch, x86_64 Linux TCG smoke,
-and ARM64 module-probe results are separate checks and do not establish native x86_64 hosted-XNU support. See
-[`tests/x86_64/README.md`](tests/x86_64/README.md) and [`docs/portability-validation.md`](docs/portability-validation.md)
-for complementary launcher/tests and stage-specific evidence.
+The TCG PC route remains under validation: selected virtualized Linux runners have reached
+the PureDarwin console and guest halt, but the integrated host matrix and bare-metal
+Intel/AMD acceptance remain pending. Native x86_64/Tahoe work is a separate experiment;
+its FKI build and fail-closed XNU stub do not provide runtime support. See
+[`docs/portability-validation.md`](docs/portability-validation.md) for the exact stages,
+runner profiles, and limitations.
 
-### Complementary QEMU TCG and PureDarwin evidence
+### QEMU TCG and PureDarwin evidence
 
 The full TCG route in [#36](https://github.com/Personed/xnulinux/pull/36) uses a 16 GiB ARM64 guest; its separate
 reference host-capacity screen is 20 GiB total RAM and 4 GiB available before artifact preparation. These values
@@ -161,18 +166,19 @@ backend and its memory setup.
 - A macOS 27 installation (an Apple Virtualization VM disk) of your own. **No Apple binaries are in this repository or
   distributed by it**: the kexts Apple ships, the macOS system disk and its trust cache come from your own installation.
 
-### x86_64 native hosted-XNU target
+### Separate experiment: native x86_64 hosted-XNU/Tahoe 26
 
 - Linux on an Intel or AMD x86_64 PC. Kernel versions, CPU features, RAM, and page-size requirements are being established by the port.
 - User-provided macOS Tahoe 26 x86_64 artifacts that match the selected XNU build. No Apple system image or binary is provided here.
 - The x86_64 FKI host-backend build merged in [#48](https://github.com/Personed/xnulinux/pull/48), and the fail-closed x86_64 XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Neither milestone provides native XNU execution. The QEMU/KVM launcher below is a separate optional guest experiment.
 
-### Experimental Intel/AMD PC route via an ARM64 Linux VM (QEMU TCG)
+### Intel/AMD PC compatibility route under validation (QEMU TCG → ARM64 Linux)
 
-This route is under validation: QEMU TCG boots ARM64 Linux on the x86-64 host, then the hosted-XNU modules run inside
-that guest. It does not require VT-x or AMD-V and is separate from the native x86_64 hosted-XNU target above. CI has
-started ARM64 Linux guests, but complete PureDarwin boot on this profile is not yet validated. See the
-[QEMU guide](docs/qemu.md) for host requirements and installation steps.
+This is the active PC route under validation: QEMU TCG boots ARM64 Linux on the x86-64
+host, then the hosted-XNU modules run inside that guest. It does not require VT-x or AMD-V.
+Selected virtualized Linux runners have reached the PureDarwin console and guest halt, but
+the complete host matrix and physical-PC acceptance remain pending. See the
+[QEMU guide](docs/qemu.md) for requirements and installation steps.
 
 ## Building and running
 

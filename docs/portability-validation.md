@@ -45,11 +45,15 @@ Report the profile alongside the stage:
 The full-run job in the [PureDarwin ARM64 image workflow](../.github/workflows/puredarwin-arm64-image.yml) builds the
 pinned image and kernel collection, creates the HFS+ disk on Linux, and boots an ARM64 Linux guest with QEMU TCG on an
 x86-64 runner. It requires the real PureDarwin console to run `uname -s` and print `XNULINUX_USERLAND_OK`, then requires
-the guest's own `halt`, XNU module unload, and Linux power-off. Each host report records OS, CPU, total and available
-RAM snapshots before QEMU and when the report is written, QEMU version, guest input hashes, the build and guest
-manifests, preparation step outcomes, missing boot markers, and serial/QEMU output tails; reports and the two source
-manifests are retained for 30 days. Artifact-download and Python/QEMU setup failures continue to the report step so
-missing inputs or tools can be recorded for that host.
+the guest's own `halt`, XNU module unload, and Linux power-off. Each host report records OS, CPU, QEMU version, guest
+input hashes, the build and guest manifests, preparation step outcomes, missing boot markers, and serial/QEMU output
+tails; reports and the two source manifests are retained for 30 days. It records the RAM capacity-screen phase in
+`ram_capacity.measurement_phase`: native preflight before artifact downloads if the Python runner never writes a
+report, or Python after preparation and immediately before QEMU if it does. The separate
+`host.memory_available_at_report_phase` identifies when the final available-RAM snapshot was taken (preflight,
+pre-QEMU validation failure, QEMU start failure/timeout, or after QEMU exits). These are snapshots, not peak readings.
+Artifact-download and Python/QEMU setup failures continue to the report step so missing inputs or tools can be
+recorded for that host.
 
 ### Host matrix status
 

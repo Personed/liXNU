@@ -43,6 +43,23 @@ if [ ! -d $KF/PrivateHeaders ]; then
 		bash $DVM/k27/x12377/build-kernel.sh > $W/installhdrs.log 2>&1 ) || { tail -20 $W/installhdrs.log; exit 1; }
 fi
 
+# The static k27 link slots can put __KLD inside an oversized __TEXT_EXEC. Measure the kernel before linking the
+# collection; when the slots move, rebuild the kernel so its Mach-O uses the relocated addresses.
+KERNEL=$DVM/out/k27/kernel-k27.macho SEGADDRS=$DVM/k27/segaddrs.sh
+if [ ! -r "$KERNEL" ] || [ ! -w "$SEGADDRS" ]; then
+	echo "free-kc: cannot read $KERNEL or update $SEGADDRS" >&2
+	exit 1
+fi
+python3 $POC/scripts/free-kc/kernel-segaddrs.py "$KERNEL" "$SEGADDRS" --write > $W/kernel-segaddrs.log 2>&1 ||
+	{ cat $W/kernel-segaddrs.log; exit 1; }
+if grep -q '^relink kernel' $W/kernel-segaddrs.log; then
+	cat $W/kernel-segaddrs.log
+	( cd $DVM && JOBS="${JOBS:-12}" bash k27/build-kernel27.sh > $W/kernel-relink.log 2>&1 ) ||
+		{ tail -30 $W/kernel-relink.log; echo 'free-kc: kernel relink failed' >&2; exit 1; }
+	python3 $POC/scripts/free-kc/kernel-segaddrs.py "$KERNEL" "$SEGADDRS" ||
+		{ echo 'free-kc: relinked kernel still has overlapping executable segments' >&2; exit 1; }
+fi
+
 # the kexts (each step stops the build when a source fails)
 # corecrypto: the kernel's own view of its headers (it registers with libkern's and osfmk's interfaces), not the macOS target
 C=$F/corecrypto

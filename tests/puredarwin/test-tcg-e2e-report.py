@@ -4,6 +4,7 @@
 
 import importlib.util
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -46,6 +47,18 @@ def manifest_fixtures():
 
 
 class ArtifactManifestTests(unittest.TestCase):
+    def test_manifest_hash_uses_original_bytes_including_crlf(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            raw = b"arm64_guest_kernel_release=test\r\n"
+            path = Path(temp_dir) / "guest-manifest.txt"
+            path.write_bytes(raw)
+
+            contents, values, digest = RUNNER.read_manifest(path)
+
+        self.assertEqual(contents, raw.decode("utf-8"))
+        self.assertEqual(values, {"arm64_guest_kernel_release": "test"})
+        self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
+
     def test_accepts_matching_disk_kernel_and_initramfs_hashes(self):
         inputs, build, guest = manifest_fixtures()
 
@@ -205,7 +218,8 @@ class BootRunnerFailureTests(unittest.TestCase):
             (root / "build-manifest.txt").write_text(
                 f"puredarwin_disk_sha256={RUNNER.sha256_file(disk)}\n", encoding="utf-8"
             )
-            (root / "guest-manifest.txt").write_bytes(b"invalid-utf8=\xff\n")
+            invalid_manifest = b"invalid-utf8=\xff\r\n"
+            (root / "guest-manifest.txt").write_bytes(invalid_manifest)
             report_path = root / "puredarwin-tcg-boot-report.json"
             fake_host = {
                 "system": "Linux", "release": "test", "version": "test",
@@ -238,6 +252,9 @@ class BootRunnerFailureTests(unittest.TestCase):
             any("guest-manifest.txt is not valid UTF-8" in error for error in report["result"]["errors"])
         )
         self.assertIn("guest-manifest.txt is not valid UTF-8", report["manifests"]["guest"]["contents"])
+        self.assertEqual(
+            report["manifests"]["guest"]["sha256"], hashlib.sha256(invalid_manifest).hexdigest()
+        )
 
     def test_mismatched_kernel_hash_does_not_start_qemu_vm(self):
         with tempfile.TemporaryDirectory() as temp_dir:

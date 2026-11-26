@@ -155,19 +155,22 @@ def sha256_if_readable_file(path: Path) -> str | None:
         return None
 
 
-def read_manifest(path: Path) -> tuple[str | None, dict[str, str]]:
+def read_manifest(path: Path) -> tuple[str | None, dict[str, str], str | None]:
     try:
-        raw = path.read_bytes().decode("utf-8")
+        raw_bytes = path.read_bytes()
     except OSError:
-        return None, {}
+        return None, {}, None
+    raw_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+    try:
+        raw = raw_bytes.decode("utf-8")
     except UnicodeDecodeError as error:
-        return f"{MANIFEST_READ_ERROR_PREFIX}{path.name} is not valid UTF-8: {error}]", {}
+        return f"{MANIFEST_READ_ERROR_PREFIX}{path.name} is not valid UTF-8: {error}]", {}, raw_sha256
     values = {}
     for line in raw.splitlines():
         key, separator, value = line.partition("=")
         if separator:
             values[key.strip()] = value.strip()
-    return raw, values
+    return raw, values, raw_sha256
 
 
 def serial_evidence(path: Path) -> tuple[str, list[str], list[str]]:
@@ -352,8 +355,8 @@ def main() -> int:
     }
     build_manifest_path = args.kernel.parent / "build-manifest.txt"
     guest_manifest_path = args.kernel.parent / "guest-manifest.txt"
-    build_manifest_text, build_manifest = read_manifest(build_manifest_path)
-    guest_manifest_text, guest_manifest = read_manifest(guest_manifest_path)
+    build_manifest_text, build_manifest, build_manifest_sha256 = read_manifest(build_manifest_path)
+    guest_manifest_text, guest_manifest, guest_manifest_sha256 = read_manifest(guest_manifest_path)
     report = {
         "runner_label": os.environ.get("XNULINUX_RUNNER_LABEL", "local"),
         "host": host,
@@ -374,12 +377,12 @@ def main() -> int:
         "manifests": {
             "build": {
                 "path": build_manifest_path.name,
-                "sha256": hashlib.sha256(build_manifest_text.encode("utf-8")).hexdigest() if build_manifest_text is not None else None,
+                "sha256": build_manifest_sha256,
                 "contents": build_manifest_text,
             },
             "guest": {
                 "path": guest_manifest_path.name,
-                "sha256": hashlib.sha256(guest_manifest_text.encode("utf-8")).hexdigest() if guest_manifest_text is not None else None,
+                "sha256": guest_manifest_sha256,
                 "contents": guest_manifest_text,
             },
         },

@@ -77,7 +77,7 @@ simple_output=$tmp/simple-invocation.tar.gz
 [ "$(stat -c '%u' "$simple_output")" = "$EUID" ]
 
 # A symlink plus '..' must resolve the same physical output directory for
-# mktemp, cd, publication and cleanup.
+# staging, cd, publication and cleanup.
 mkdir -- "$output_dir/nested"
 ln -s -- "$output_dir/nested" "$tmp/output-link"
 symlink_output=$tmp/output-link/../via-symlink.tar.gz
@@ -85,7 +85,7 @@ PATH="$chmod_bin:$PATH" "$script" "$image" "$symlink_output" >/dev/null
 [ -f "$output_dir/via-symlink.tar.gz" ]
 [ ! -e "$tmp/via-symlink.tar.gz" ]
 
-# Replace the temporary directory after mktemp creates it, simulating a user
+# Replace the temporary directory after mkdir creates it, simulating a user
 # who can rename entries in the shared output directory. The exporter must
 # detect the changed owner before writing through the replacement symlink.
 attacker_dir=$tmp/attacker-owned
@@ -95,22 +95,23 @@ chmod 0700 "$attacker_dir"
 run_as_root chown 65534:65534 "$attacker_dir" "$attacker_dir/root.tar.gz"
 replace_bin=$tmp/replace-bin
 mkdir -- "$replace_bin"
-real_mktemp=$(command -v mktemp)
-cat >"$replace_bin/mktemp" <<'WRAPPER'
+real_mkdir=$(command -v mkdir)
+cat >"$replace_bin/mkdir" <<'WRAPPER'
 #!/usr/bin/env bash
 set -euo pipefail
-result=$("@REAL_MKTEMP@" "$@")
-case "$*" in
-  *'.puredarwin-root.'*)
-    mv -- "$result" "$result.original"
-    ln -s -- "@ATTACKER_DIR@" "$result"
+"@REAL_MKDIR@" "$@"
+last=''
+for arg do last=$arg; done
+case "$last" in
+  */.puredarwin-root.*)
+    mv -- "$last" "$last.original"
+    ln -s -- "@ATTACKER_DIR@" "$last"
     ;;
 esac
-printf '%s\n' "$result"
 WRAPPER
 attack_output=$output_dir/attack-output.tar.gz
-sed -i "s|@REAL_MKTEMP@|$real_mktemp|g; s|@ATTACKER_DIR@|$attacker_dir|g" "$replace_bin/mktemp"
-chmod +x "$replace_bin/mktemp"
+sed -i "s|@REAL_MKDIR@|$real_mkdir|g; s|@ATTACKER_DIR@|$attacker_dir|g" "$replace_bin/mkdir"
+chmod +x "$replace_bin/mkdir"
 if PATH="$replace_bin:$PATH" \
   "$script" "$image" "$attack_output" >/dev/null 2>&1; then
   echo 'Exporter accepted a replaced staging directory.' >&2

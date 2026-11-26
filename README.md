@@ -1,18 +1,20 @@
 # xnulinux
 
-Port xnulinux's hosted-XNU runtime to native x86_64 Linux PCs while preserving its working direct ARM64 path. The x86_64 target is macOS Tahoe 26, the latest macOS release compatible with Intel. The x86_64 hosted runtime is under development; QEMU/KVM guest launching and ARM64 TCG tests are complementary experiments, not proof of the native port.
+Run xnulinux on common x86-64 PCs through QEMU TCG → Linux ARM64 → FKI/XNU → the PureDarwin console, while preserving the existing direct ARM64 hosted-XNU path. This cross-host TCG route is the active PC acceptance target. Native x86_64 hosted-XNU for Tahoe 26 and the QEMU/KVM macOS guest are separate experiments and do not substitute for this route.
 
 On ARM64, xnulinux builds XNU, the open-source kernel of macOS, from Apple's published sources and runs it as a loadable kernel
 module (`xnu.ko`) inside an unmodified arm64 Linux kernel. The hosted XNU drives the CPU and MMU directly, so macOS
 processes run natively next to Linux processes on the same CPUs. Linux lends XNU its memory, timers, files, network and
 GPU through a small interface module (`fki.ko`).
 
-On x86_64 Linux PCs, the target is to build and run architecture-matched `fki.ko` and `xnu.ko` directly in Linux,
-hosting macOS Tahoe 26 x86_64. The port is not complete: no native x86_64 hosted-XNU desktop boot has been validated.
+On x86-64 PCs, the active portability route runs an ARM64 Linux guest under QEMU TCG and advances FKI/XNU to the
+PureDarwin console. Its acceptance requires the console marker and clean guest-requested halt; it does not claim a
+desktop or practical TCG performance on every PC. The native x86_64 hosted-XNU/Tahoe port remains a separate
+experiment with no native desktop boot validated.
 
-The repository also contains a QEMU/KVM macOS guest launcher and QEMU TCG ARM64 tests. These are complementary
-experiments and do not satisfy the native x86_64 hosted-XNU target. Firmware, Linux userspace, module builds, the XNU
-module probe, the PureDarwin console, and a macOS desktop are separate validation stages; see
+The repository also contains a QEMU/KVM macOS guest launcher, which is separate from the active TCG route. Firmware,
+Linux userspace, module builds, the XNU module probe, the PureDarwin console, and a macOS desktop are separate
+validation stages; see
 [`docs/portability-validation.md`](docs/portability-validation.md).
 
 On a supported ARM64 host with a stock Ubuntu kernel, `insmod xnu.ko` boots a macOS 27 system disk made by Apple's own installer to the
@@ -99,17 +101,15 @@ Working on two arm64 Linux setups:
 | Linux host | Guest target | Status |
 |---|---|---|
 | ARM64 with PAC and 4 KiB pages | macOS 27 ARM64 (direct hosted XNU) | Existing supported path; tested on Apple Silicon Linux VMs and NVIDIA DGX Spark as described above. |
-| Intel x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | The FKI host backend merged in [#48](https://github.com/Personed/xnulinux/pull/48) builds and preserves ARM64, but advertises no XNU execution capability; the fail-closed XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Native runtime and physical Intel acceptance remain pending. |
-| AMD x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | The FKI host backend merged in [#48](https://github.com/Personed/xnulinux/pull/48) builds and preserves ARM64, but advertises no XNU execution capability; the fail-closed XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Native runtime and physical AMD acceptance remain pending. |
-| Intel/AMD x86_64 with QEMU/KVM | User-prepared macOS guest | Complementary launcher experiment; does not use the hosted-XNU modules or validate the native port. |
-| Intel/AMD x86_64 with QEMU TCG | ARM64 Linux (complementary test profile) | Linux/module evidence only; not a native x86_64 hosted-XNU result. |
+| x86_64 PC with QEMU TCG | ARM64 Linux → PureDarwin console | Active PC acceptance route. Current-head full boot and the Linux/Windows/Intel-macOS matrix remain pending; see [the validation record](docs/portability-validation.md). |
+| Intel/AMD x86_64 Linux | macOS Tahoe 26 through native hosted XNU | Separate native-port experiment. The FKI host backend and fail-closed XNU stub from [#48](https://github.com/Personed/xnulinux/pull/48) and [#47](https://github.com/Personed/xnulinux/pull/47) do not provide native XNU execution. |
+| Intel/AMD x86_64 with QEMU/KVM | User-prepared macOS guest | Separate optional VM launcher; it does not validate the TCG route or native hosted XNU. |
 
-The x86_64 native target is not a support claim yet: the FKI host backend exposes no XNU execution capabilities, and
-the architecture-specific XNU execution path plus physical Intel and AMD desktop boots with Linux host-integrity checks
-remain to be completed. QEMU/KVM guest launch, x86_64 Linux TCG smoke,
-and ARM64 module-probe results are separate checks and do not establish native x86_64 hosted-XNU support. See
+The active x86_64 PC route is a QEMU TCG ARM64 guest reaching the PureDarwin console. Its current-head boot and
+cross-host matrix are still pending. The native x86_64 port remains experimental: the FKI host backend exposes no XNU
+execution capability, and no native hosted-XNU boot has been validated. See
 [`tests/x86_64/README.md`](tests/x86_64/README.md) and [`docs/portability-validation.md`](docs/portability-validation.md)
-for complementary launcher/tests and stage-specific evidence.
+for the separate native-port work, optional KVM launcher, and stage-specific TCG evidence.
 
 Shipping it as a hosted service (what is distributed, what a user installs to run Apple's macOS) is in
 [`docs/hosted-service.md`](docs/hosted-service.md).
@@ -130,7 +130,7 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 - A macOS 27 installation (an Apple Virtualization VM disk) of your own. **No Apple binaries are in this repository or
   distributed by it**: the kexts Apple ships, the macOS system disk and its trust cache come from your own installation.
 
-### x86_64 native hosted-XNU target
+### Separate experiment: x86_64 native hosted-XNU
 
 - Linux on an Intel or AMD x86_64 PC. Kernel versions, CPU features, RAM, and page-size requirements are being established by the port.
 - User-provided macOS Tahoe 26 x86_64 artifacts that match the selected XNU build. No Apple system image or binary is provided here.

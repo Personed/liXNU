@@ -2,14 +2,14 @@
 
 ## Project goal
 
-Port the hosted-XNU runtime to native x86_64 Linux PCs while preserving the working ARM64 hosted-XNU path.
+Make xnulinux runnable on common x86-64 PCs through QEMU TCG → Linux ARM64 → FKI/XNU → the PureDarwin console, while preserving the existing direct ARM64 hosted-XNU path.
 
+- **x86-64 PCs:** use QEMU TCG to start the ARM64 Linux guest; hardware virtualization is not required. Validate the PureDarwin console marker, guest-requested halt, XNU unload, and Linux power-off on the same pinned guest inputs across the host matrix.
 - **ARM64 Linux:** preserve the existing direct XNU-in-Linux runtime using `fki.ko` and `xnu.ko`, including its build and runtime behavior and macOS 27 target.
-- **x86_64 Intel and AMD Linux:** port FKI, XNU hosting, machine-layer code, and architecture-specific build outputs to x86_64; target macOS Tahoe 26 x86_64, the latest macOS release compatible with Intel. Launching an unrelated macOS VM does not satisfy this target.
-- **Complementary tools:** retain the repository's QEMU/KVM guest launcher and QEMU TCG/ARM64 workflows as optional experiments and test harnesses. They do not replace or redefine the native x86_64 port.
-- Keep Intel and AMD acceptance separate. Builds and VM smoke checks do not establish physical-host support. Claim support for a vendor only after the native hosted-XNU path boots the target system on a physical host and passes host-integrity and shutdown checks.
+- **Separate native x86_64 experiment:** retain the Intel/AMD Linux hosted-XNU port work and Tahoe 26 target as a distinct effort. It is not the acceptance route for x86-64 PCs in this goal, and build or VM smoke checks do not establish native physical-host support.
+- **Separate QEMU/KVM experiment:** retain the macOS guest launcher and label its results separately from QEMU TCG acceptance.
 
-## Native x86_64 hosted-XNU port
+## Separate experiment: native x86_64 hosted-XNU port
 
 - Build FKI, XNU, the machine layer, kexts, and kernel collections as architecture-specific x86_64 outputs while retaining ARM64 outputs and behavior.
 - Keep register state, exception entry, MMU/TLB operations, syscall delivery, Mach-O CPU types, boot handoff, and kernel collections architecture-aware. Reject architecture and ABI mismatches before entering XNU.
@@ -51,7 +51,7 @@ make -C "$ARM64_KDIR" ARCH=arm64 M="$PWD/xnu-ko" KBUILD_EXTRA_SYMBOLS="$PWD/fki-
 git diff --check
 ```
 
-Retain existing QEMU/KVM launcher and TCG checks as complementary coverage and label their results accurately. They do not replace x86_64 module builds or native runtime validation. Keep ARM64 module CI in `.github/workflows/modules.yml`; add x86_64 builds without dropping ARM64 coverage.
+Use the QEMU TCG → ARM64 Linux → PureDarwin console route as the active x86-64 PC acceptance path. Keep QEMU/KVM and native x86_64 port results separate and label their evidence accurately. Keep ARM64 module CI in `.github/workflows/modules.yml`; maintain any native x86_64 build checks as separate experiment coverage.
 
 ## Blockers and evidence
 

@@ -29,6 +29,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Network setup finds iptables in sudo secure_path
+        run: bash tests/host/test-vm-net-up-sudo-path.sh
       - name: Every source file has an SPDX-License-Identifier
         run: |
           missing=$(git ls-files '*.c' '*.h' '*.cpp' '*.mm' '*.m' '*.rs' '*.S' '*.s' '*.sh' '*.py' '*.metal' '*.comp' '*Makefile' |

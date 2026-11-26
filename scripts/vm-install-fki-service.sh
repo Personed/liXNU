@@ -6,6 +6,15 @@
 # Usage: vm-install-fki-service.sh [--dry-run]
 set -euo pipefail
 P=$(cd "$(dirname "$0")/.." && pwd)
+resolve_command() {
+  local name="$1" resolved
+  resolved=$(command -v "$name" 2>/dev/null || true)
+  if [ -z "$resolved" ]; then
+    # Installers may be launched with a user PATH that omits sbin directories.
+    resolved=$(sudo sh -c 'command -v "$1"' sh "$name" 2>/dev/null || true)
+  fi
+  printf '%s' "$resolved"
+}
 DRY_RUN=0
 [ "${1:-}" = --dry-run ] || [ "${1:-}" = --print ] && DRY_RUN=1
 
@@ -28,16 +37,52 @@ fi
 # nokaslr: arm64's EFI stub randomises the Linux kernel's physical load address across all EFI memory before mem=
 # takes effect, which otherwise places the kernel image inside the carve-out on some boots (fki then refuses to map it).
 G=/etc/default/grub.d/99-xnulinux.cfg
-if command -v update-grub >/dev/null 2>&1 && [ -f /etc/default/grub ]; then
+GRUB_DEFAULT=/etc/default/grub
+BLS_ENTRIES=/boot/loader/entries
+if [ -f "$GRUB_DEFAULT" ]; then
   sudo mkdir -p /etc/default/grub.d
   echo "GRUB_CMDLINE_LINUX=\"\$GRUB_CMDLINE_LINUX $CMDLINE_ARGS\"" | sudo tee "$G" >/dev/null
-  sudo update-grub >/dev/null 2>&1
-elif command -v grub2-mkconfig >/dev/null 2>&1 && [ -f /etc/default/grub ]; then
-  sudo mkdir -p /etc/default/grub.d
-  echo "GRUB_CMDLINE_LINUX=\"\$GRUB_CMDLINE_LINUX $CMDLINE_ARGS\"" | sudo tee "$G" >/dev/null
-  for cfg in /boot/grub2/grub.cfg /boot/efi/EFI/*/grub.cfg; do
-    [ -e "$cfg" ] && sudo grub2-mkconfig -o "$cfg" >/dev/null 2>&1 && break
-  done
+
+  if [ -d "$BLS_ENTRIES" ]; then
+    GRUBBY_BIN=$(resolve_command grubby)
+    if [ -n "$GRUBBY_BIN" ]; then
+      sudo "$GRUBBY_BIN" --update-kernel=ALL --args="$CMDLINE_ARGS"
+    else
+      GRUB2_MKCONFIG_BIN=$(resolve_command grub2-mkconfig)
+      if [ -z "$GRUB2_MKCONFIG_BIN" ]; then
+        echo "error: BLS boot entries found, but neither grubby nor grub2-mkconfig is available to apply '$CMDLINE_ARGS'" >&2
+        exit 1
+      fi
+      GRUB2_MKCONFIG_HELP="$("$GRUB2_MKCONFIG_BIN" --help 2>&1 || true)"
+      if ! grep -q -- '--update-bls-cmdline' <<<"$GRUB2_MKCONFIG_HELP"; then
+        echo "error: BLS boot entries found, but neither grubby nor grub2-mkconfig --update-bls-cmdline is available to apply '$CMDLINE_ARGS'" >&2
+        exit 1
+      fi
+      GRUB_CFG=
+      for cfg in /boot/grub2/grub.cfg /boot/efi/EFI/*/grub.cfg; do
+        if [ -e "$cfg" ]; then GRUB_CFG=$cfg; break; fi
+      done
+      if [ -z "$GRUB_CFG" ]; then
+        echo "error: BLS boot entries found, but no GRUB configuration file was found" >&2
+        exit 1
+      fi
+      sudo "$GRUB2_MKCONFIG_BIN" --update-bls-cmdline -o "$GRUB_CFG" >/dev/null 2>&1
+    fi
+  elif UPDATE_GRUB_BIN=$(resolve_command update-grub) && [ -n "$UPDATE_GRUB_BIN" ]; then
+    sudo "$UPDATE_GRUB_BIN" >/dev/null 2>&1
+  elif GRUB2_MKCONFIG_BIN=$(resolve_command grub2-mkconfig) && [ -n "$GRUB2_MKCONFIG_BIN" ]; then
+    GRUB_CFG=
+    for cfg in /boot/grub2/grub.cfg /boot/efi/EFI/*/grub.cfg; do
+      if [ -e "$cfg" ]; then GRUB_CFG=$cfg; break; fi
+    done
+    if [ -n "$GRUB_CFG" ]; then
+      sudo "$GRUB2_MKCONFIG_BIN" -o "$GRUB_CFG" >/dev/null 2>&1
+    else
+      echo "note: GRUB configuration file not found; add '$CMDLINE_ARGS' to your bootloader's kernel command line manually" >&2
+    fi
+  else
+    echo "note: GRUB not found; add '$CMDLINE_ARGS' to your bootloader's kernel command line manually" >&2
+  fi
 else
   echo "note: GRUB not found; add '$CMDLINE_ARGS' to your bootloader's kernel command line manually" >&2
 fi

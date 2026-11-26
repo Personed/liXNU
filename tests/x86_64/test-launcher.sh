@@ -150,6 +150,12 @@ expect_check_failure wrong_arch 'requires an x86_64 Linux host' HOST_ARCH=aarch6
 expect_check_failure missing_qemu_img 'qemu-img executable not found' QEMU_IMG="$BIN_DIR/missing qemu-img"
 expect_check_failure missing_flock 'flock executable not found' FLOCK="$BIN_DIR/missing flock"
 
+UNREADABLE_STATE_DIR="$TMP_DIR/unreadable state directory"
+mkdir -p -- "$UNREADABLE_STATE_DIR"
+chmod 300 -- "$UNREADABLE_STATE_DIR"
+expect_check_failure unreadable_state_dir 'STATE_DIR must be a readable, writable, and searchable directory' "STATE_DIR=$UNREADABLE_STATE_DIR"
+chmod 700 -- "$UNREADABLE_STATE_DIR"
+
 KVM_OUTPUT="$TMP_DIR/kvm-unavailable.out"
 if env "${BASE_ENV[@]}" ACCEL=kvm KVM_DEVICE="$TMP_DIR/missing-kvm" "$LAUNCHER" --check >"$KVM_OUTPUT" 2>&1; then
   fail 'missing KVM device unexpectedly passed preflight'
@@ -170,7 +176,7 @@ done
 
 STATE_FILE="$TMP_DIR/not-a-directory"
 printf 'not a directory\n' >"$STATE_FILE"
-expect_check_failure unusable_state_dir 'STATE_DIR is not a writable directory' "STATE_DIR=$STATE_FILE"
+expect_check_failure unusable_state_dir 'STATE_DIR must be a readable, writable, and searchable directory' "STATE_DIR=$STATE_FILE"
 
 LEGACY_STATE_DIR="$TMP_DIR/legacy overlay state"
 LEGACY_OVERLAY_OUTPUT="$TMP_DIR/legacy-overlay.out"
@@ -330,5 +336,19 @@ fi
 assert_contains "$CHANGED_BASE_OUTPUT" 'DISK contents changed for the existing overlay'
 [[ "$(sha256sum -- "$QEMU_LOG" | awk '{print $1}')" == "$QEMU_LOG_BEFORE_CHANGED_BASE" ]] || fail 'changed base reached QEMU'
 [[ "$(<"$QEMU_IMG_COUNT")" == 1 ]] || fail 'changed base created an additional overlay'
+
+# A user disk can be stored inside its state directory and may even have a
+# hash-shaped disk-*.qcow2 filename; it must not be mistaken for an old overlay.
+SOURCE_STATE_DIR="$TMP_DIR/source disk state"
+SOURCE_DISK_IN_STATE="$SOURCE_STATE_DIR/disk-0123456789abcdefabcd.qcow2"
+SOURCE_STATE_IMG_COUNT="$TMP_DIR/source state qemu-img count"
+mkdir -p -- "$SOURCE_STATE_DIR"
+printf 'source image stored next to VM state\n' >"$SOURCE_DISK_IN_STATE"
+env "${BASE_ENV[@]}" DISK="$SOURCE_DISK_IN_STATE" STATE_DIR="$SOURCE_STATE_DIR" QEMU_IMG_COUNT="$SOURCE_STATE_IMG_COUNT" ACCEL=tcg \
+  "$LAUNCHER" >"$TMP_DIR/source-in-state.out" 2>&1 || {
+  cat "$TMP_DIR/source-in-state.out" >&2
+  fail 'source disk inside STATE_DIR was mistaken for a legacy overlay'
+}
+[[ "$(<"$SOURCE_STATE_IMG_COUNT")" == 1 ]] || fail 'source disk inside STATE_DIR did not receive a separate overlay'
 
 printf 'PASS: launcher preflight, TCG/KVM arguments, protected SMC handling, and persistent disk identity\n'

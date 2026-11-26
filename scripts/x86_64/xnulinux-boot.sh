@@ -147,7 +147,8 @@ else
 fi
 STATE_DIR="${STATE_DIR:-$XDG_STATE_HOME/xnulinux/x86_64}"
 if [[ -e "$STATE_DIR" ]]; then
-  [[ -d "$STATE_DIR" && -w "$STATE_DIR" && -x "$STATE_DIR" ]] || fail "STATE_DIR is not a writable directory: $STATE_DIR"
+  [[ -d "$STATE_DIR" && -r "$STATE_DIR" && -w "$STATE_DIR" && -x "$STATE_DIR" ]] \
+    || fail "STATE_DIR must be a readable, writable, and searchable directory: $STATE_DIR"
 else
   STATE_PARENT="$STATE_DIR"
   while [[ ! -e "$STATE_PARENT" ]]; do
@@ -183,6 +184,8 @@ fi
 # reconstructed after the base image was restored or replaced.
 for existing_overlay in "$STATE_DIR"/disk-*.qcow2; do
   [[ -e "$existing_overlay" || -L "$existing_overlay" ]] || continue
+  [[ "$existing_overlay" != "$DISK_PATH" ]] || continue
+  [[ "${existing_overlay##*/}" =~ ^disk-[a-f0-9]{20}\.qcow2$ ]] || continue
   if [[ "$existing_overlay" != "$DISK_OVERLAY" ]]; then
     fail "unassociated disk overlay exists in STATE_DIR: $existing_overlay (back it up and migrate deliberately, or use a new STATE_DIR to start fresh)"
   fi

@@ -12,7 +12,7 @@ Support Linux PCs without removing the working ARM64 path:
 
 - KVM is the default accelerator. QEMU 10 or newer, `qemu-img`, and `flock` (util-linux) are required. QEMU `host` is the default guest CPU model under KVM so the guest sees the host's actual CPU model/features. TCG is an explicit development/test path only and defaults to QEMU `max`.
 - The x86 host feature floor is SSE4.2, AVX, FMA, MOVBE, POPCNT, LZCNT, BMI1, AVX2 and BMI2. AMD guests need matching OpenCore AMD kernel patches and physical AMD validation.
-- The x86 launcher accepts a user-prepared raw or qcow2 boot disk with EFI/OpenCore. It writes guest changes to a persistent qcow2 overlay and keeps OVMF variables in the per-VM state directory. A state directory is for one running QEMU process. Do not write to the source disk or firmware template.
+- The x86 launcher accepts a user-prepared raw or qcow2 boot disk with EFI/OpenCore. It writes guest changes to a persistent qcow2 overlay and keeps OVMF variables in the per-VM state directory. `STATE_DIR` must be readable, writable, and searchable so the launcher can check existing disk state. A state directory is for one VM and one running QEMU process. Do not write to the source disk or firmware template.
 - Do not add Apple macOS images, Apple firmware, or the local `APPLE_SMC_OSK` value to Git or logs. Never put the SMC value in QEMU's argv or environment; pass it through a mode-0600 temporary QEMU config that is removed after exit. Do not claim that a TCG Linux boot is a macOS or KVM test.
 - Keep user-visible feature/support tables precise: ARM64 uses modules; x86_64 uses a QEMU/KVM guest.
 

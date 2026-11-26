@@ -277,8 +277,7 @@ Report the profile alongside the stage:
   Windows and macOS full-route results, and all memory-sweep profile outcomes, remain
   pending. PR #36 run #118 passed on
   tested head `c55a700`, not current head `93e3cf4`. PR #46 run #79 failed in `kclink`
-  before host preparation or boot. The earlier Windows run #71 reached XNU loading but
-  failed with an older kernel layout; it is not Windows compatibility evidence. Keep every
+  before host preparation or boot. Earlier Windows matrix job [#71](https://github.com/Personed/xnulinux/actions/runs/45845436111) (job [`140017731012`](https://github.com/Personed/xnulinux/actions/runs/45845436111/job/140017731012)) ran on PR #46's synthetic merge commit [`3ee7ffb`](https://github.com/Personed/xnulinux/commit/3ee7ffb3ea60b0ffb5314152f4d0cac96e716691), combining then-current PR #46 head [`a227f9b`](https://github.com/Personed/xnulinux/commit/a227f9b104509d63080b47cbe1e46e5de9a9a70f) with base [`c1c0d39`](https://github.com/Personed/xnulinux/commit/c1c0d39d131933be3235aa78e56dcf4e8a291a6b) from the fixed-layout #44 branch. QEMU 11.1.0 and Linux exited 0 after booting the ARM64 guest, but loading XNU faulted at `macho_copy+0x10c`; Darwin console, halt, and unload markers were absent. This records that older kernel artifact/layout failure, not Windows incompatibility or a current-head pass. Keep every
   result tied to its tested SHA and base.
 
   The reduced 6 GiB guest profile passed on #52 head `8d41fa9` in run #138 and on the

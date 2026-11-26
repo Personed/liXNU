@@ -41,8 +41,10 @@ disk and firmware files, omitting `--installer`. Connect using `ssh -p 2222 USER
 the guest's SSH service is available. The forwarding rule listens only on the host loopback
 address. Omit `--ssh-port` when you do not need it.
 
-`--graphical` opens a local QEMU window through Cocoa on macOS, GTK on Linux, or SDL on Windows.
-Use a QEMU package with that display backend and run from a desktop session. For a terminal-only
+`--graphical` checks the installed QEMU display backends, then prefers Cocoa on macOS, GTK on Linux,
+or SDL on Windows. Linux and macOS can fall back to SDL when their preferred backend is not present.
+If the QEMU build has no supported graphical backend, the launcher reports that before starting
+the VM. Run from a desktop session. For a terminal-only
 guest, omit `--graphical` and configure Linux or its installer to use `console=ttyAMA0`. The QEMU
 terminal can switch between guest serial and the QEMU monitor with `Ctrl+A`, then `C`.
 
@@ -58,6 +60,8 @@ For the experimental 16 GiB VM profile, the QEMU `virt` RAM starts at `0x4000000
 `0x200000000` for XNU. Build `fki.ko` first, then install that service and reboot inside the VM.
 Use `GPU=off` for the hosted system. The optional QEMU graphical display is for Linux's console.
 
-The QEMU launcher has been exercised from x86-64 Linux through the ARM64 Debian installer.
+The QEMU launcher has been exercised from x86-64 Linux through the ARM64 Debian installer and in
+CI by starting an ARM64 guest through UEFI firmware on Ubuntu. Its argument construction is also
+checked on Linux, macOS and Windows.
 A test module allocated 2 MiB at the documented address in a 16 GiB guest booted directly
 into Linux. A complete hosted PureDarwin or macOS boot using the UEFI profile remains unverified.

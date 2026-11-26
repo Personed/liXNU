@@ -29,6 +29,40 @@ def drive(path, options):
     return f"file={str(path).replace(',', ',,')},{options}"
 
 
+def choose_display_backend(qemu, host):
+    preferred = {
+        "Linux": ("gtk", "sdl"),
+        "Darwin": ("cocoa", "sdl"),
+        "Windows": ("sdl",),
+    }.get(host)
+    if preferred is None:
+        raise ValueError(f"no graphical QEMU backend configured for {host}")
+
+    result = subprocess.run(
+        [qemu, "-display", "help"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    available_text = result.stdout or ""
+    available = {
+        backend
+        for backend in ("gtk", "sdl", "cocoa")
+        if any(line.strip().split()[0].split(",", 1)[0].rstrip(":") == backend
+               for line in available_text.splitlines() if line.strip())
+    }
+    for backend in preferred:
+        if backend in available:
+            return backend
+
+    choices = ", ".join(sorted(available)) or "none detected"
+    raise ValueError(
+        f"QEMU has no graphical backend suitable for {host} (available: {choices}); "
+        "install a QEMU build with GTK, SDL, or Cocoa support"
+    )
+
+
 def build_command(args):
     network = "user,id=net0"
     if args.ssh_port:
@@ -57,13 +91,7 @@ def build_command(args):
             "-device", "scsi-cd,bus=scsi.0,drive=installer,bootindex=0",
         ]
     if args.graphical:
-        display = {
-            "Linux": "gtk",
-            "Darwin": "cocoa",
-            "Windows": "sdl",
-        }.get(platform.system())
-        if display is None:
-            raise ValueError(f"no graphical QEMU backend configured for {platform.system()}")
+        display = choose_display_backend(args.qemu, platform.system())
         command += [
             "-display", display,
             "-device", "virtio-gpu-pci",
@@ -99,7 +127,10 @@ def main():
         if any(path.samefile(other) for other in files[:index]):
             parser.error("the disk, firmware images and installer must be separate files")
 
-    command = build_command(args)
+    try:
+        command = build_command(args)
+    except ValueError as error:
+        parser.error(str(error))
 
     try:
         # POSIX supervisors can signal QEMU by the PID they started.

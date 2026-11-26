@@ -40,16 +40,24 @@ class QemuLauncherTest(unittest.TestCase):
 
     def test_graphics_backend_matches_host(self):
         for host, backend in (("Linux", "gtk"), ("Darwin", "cocoa"), ("Windows", "sdl")):
-            with self.subTest(host=host), mock.patch.object(qemu_vm.platform, "system", return_value=host):
+            with self.subTest(host=host), \
+                 mock.patch.object(qemu_vm.platform, "system", return_value=host), \
+                 mock.patch.object(qemu_vm.subprocess, "run", return_value=mock.Mock(stdout=f"{backend}\n")) as probe:
                 command = qemu_vm.build_command(self.args)
             self.assertEqual(command[command.index("-display") + 1], backend)
+            self.assertEqual(probe.call_args.args[0], ["qemu-system-aarch64", "-display", "help"])
 
-    def test_current_platform_has_a_graphical_backend(self):
-        backends = {"Linux": "gtk", "Darwin": "cocoa", "Windows": "sdl"}
-        host = qemu_vm.platform.system()
-        self.assertIn(host, backends)
-        command = qemu_vm.build_command(self.args)
-        self.assertEqual(command[command.index("-display") + 1], backends[host])
+    def test_uses_sdl_when_preferred_backend_is_missing(self):
+        with mock.patch.object(qemu_vm.platform, "system", return_value="Linux"), \
+             mock.patch.object(qemu_vm.subprocess, "run", return_value=mock.Mock(stdout="sdl\n")):
+            command = qemu_vm.build_command(self.args)
+        self.assertEqual(command[command.index("-display") + 1], "sdl")
+
+    def test_reports_when_no_supported_graphics_backend_is_available(self):
+        with mock.patch.object(qemu_vm.platform, "system", return_value="Linux"), \
+             mock.patch.object(qemu_vm.subprocess, "run", return_value=mock.Mock(stdout="vnc\n")):
+            with self.assertRaisesRegex(ValueError, "no graphical backend suitable"):
+                qemu_vm.build_command(self.args)
 
     def test_headless_mode_and_escaped_paths(self):
         self.args.graphical = False

@@ -21,6 +21,7 @@ mkdir -p ~/w && cd ~/w
 cd dvm
 HOST_MULTIARCH=$(dpkg-architecture -qDEB_HOST_MULTIARCH 2>/dev/null || printf '%s-linux-gnu' "$(uname -m)")
 python3 - "$HOST_MULTIARCH" <<'PY'
+import shutil
 import sys
 p='scripts/setup-env.py'; s=open(p).read()
 a=s.find("    apple = linux / 'appleclang'"); b=s.find("    # bin26: the kernel's adapters")

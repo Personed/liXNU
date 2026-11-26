@@ -12,7 +12,8 @@ usage() {
 Usage: build-xnu-kernel.sh [--check]
 
 Build the pinned Tahoe 26 XNU source as an x86_64 macOS development kernel.
-This works on Intel macOS natively and on Apple Silicon macOS as a cross-build.
+Intel macOS is the native build target; Apple Silicon cross-build support is
+experimental until the CI probe produces and validates its artifact.
 The build uses pinned AvailabilityVersions, XNU, and libdispatch revisions
 with Xcode 26.1.1's macOS 26.1 SDK. It does not use or modify a system disk.
 
@@ -52,12 +53,26 @@ readonly SDK_VERSION='26.1'
 readonly XCODE_VERSION='26.1.1'
 
 HOST_OS="$(uname -s)"
-HOST_ARCH="$(uname -m)"
+HOST_PROCESS_ARCH="$(uname -m)"
 [[ "$HOST_OS" == Darwin ]] || fail 'the pinned Apple build tools require a macOS build host'
-case "$HOST_ARCH" in
-  x86_64) BUILD_HOST_MODE='native' ;;
-  arm64) BUILD_HOST_MODE='cross' ;;
-  *) fail "the x86_64 XNU build requires an Intel or Apple Silicon macOS host (found $HOST_ARCH)" ;;
+HOST_PROCESS_TRANSLATED="$(sysctl -in sysctl.proc_translated 2>/dev/null || true)"
+case "$HOST_PROCESS_TRANSLATED" in
+  1)
+    # uname -m reports the Rosetta process architecture, not Apple Silicon.
+    HOST_ARCH='arm64'
+    BUILD_HOST_MODE='cross'
+    HOST_PROCESS_TRANSLATED='true'
+    ;;
+  ''|0)
+    HOST_ARCH="$HOST_PROCESS_ARCH"
+    HOST_PROCESS_TRANSLATED='false'
+    case "$HOST_ARCH" in
+      x86_64) BUILD_HOST_MODE='native' ;;
+      arm64) BUILD_HOST_MODE='cross' ;;
+      *) fail "the x86_64 XNU build requires an Intel or Apple Silicon macOS host (found $HOST_ARCH)" ;;
+    esac
+    ;;
+  *) fail "unexpected sysctl.proc_translated value: $HOST_PROCESS_TRANSLATED" ;;
 esac
 
 for tool in git make xcrun xcodebuild sysctl python3 shasum ditto; do
@@ -196,7 +211,6 @@ verify_firehose_compile_arguments() {
   if ! python3 - "$LIBDISPATCH_LOG" "$LIBDISPATCH_BUILD_DIR/obj" "$SDK_DIR" <<'PY'
 import os
 import pathlib
-import re
 import shlex
 import sys
 
@@ -207,16 +221,48 @@ if not log_path.is_file():
     raise SystemExit(f"missing libdispatch build log: {log_path}")
 
 log_lines = log_path.read_text(errors="replace").splitlines()
-compile_lines = [
-    line for line in log_lines
-    if "firehose_buffer.c" in line and re.search(r"(?:^|/)clang(?:\s|$)", line)
-]
-if len(compile_lines) != 1:
-    raise SystemExit(
-        f"expected one logged clang command for firehose_buffer.c, found {len(compile_lines)}"
-    )
+compile_commands = []
+for line in log_lines:
+    if "firehose_buffer.c" not in line:
+        continue
+    try:
+        tokens = shlex.split(line)
+    except ValueError:
+        continue
+    clang_indexes = [
+        index for index, token in enumerate(tokens)
+        if pathlib.PurePath(token).name == "clang"
+    ]
+    if len(clang_indexes) == 1:
+        clang_index = clang_indexes[0]
+        compile_commands.append((line, tokens, clang_index))
 
-response_paths = re.findall(r"@([^\s]+common-args\.resp)", compile_lines[0])
+# Keep an escaped-space fixture here because normal CI Xcode paths do not
+# contain spaces, while developer installations sometimes do.
+fixture = (
+    r"/Applications/Xcode\ 26.1.1.app/Contents/Developer/Toolchains/"
+    r"XcodeDefault.xctoolchain/usr/bin/clang -isysroot /tmp/sdk\ path "
+    r"-I/tmp/include\ path"
+)
+fixture_tokens = shlex.split(fixture)
+if (
+    pathlib.PurePath(fixture_tokens[0]).name != "clang"
+    or fixture_tokens[1:]
+    != ["-isysroot", "/tmp/sdk path", "-I/tmp/include path"]
+):
+    raise SystemExit("could not parse a clang command with escaped Xcode and SDK paths")
+
+if len(compile_commands) != 1:
+    raise SystemExit(
+        f"expected one logged clang command for firehose_buffer.c, found {len(compile_commands)}"
+    )
+_, compile_tokens, clang_index = compile_commands[0]
+command_args = compile_tokens[clang_index + 1:]
+
+response_paths = [
+    token[1:] for token in command_args
+    if token.startswith("@") and pathlib.PurePath(token[1:]).name == "common-args.resp"
+]
 if len(response_paths) != 1:
     raise SystemExit("firehose_buffer.c clang command does not identify one response file")
 response_path = pathlib.Path(response_paths[0]).resolve()
@@ -226,10 +272,6 @@ if not response_path.is_file():
     raise SystemExit(f"missing Firehose compiler response file: {response_path}")
 
 response_args = shlex.split(response_path.read_text(errors="replace"))
-clang_match = re.search(r"(?<!\S)/\S*/clang(?=\s)", compile_lines[0])
-if not clang_match:
-    raise SystemExit("could not parse the logged firehose_buffer.c clang command")
-command_args = shlex.split(compile_lines[0][clang_match.start():])
 argument_sets = (command_args, response_args)
 
 sysroots = []
@@ -237,8 +279,10 @@ for args in argument_sets:
     for index, arg in enumerate(args):
         if arg == "-isysroot" and index + 1 < len(args):
             sysroots.append(args[index + 1])
-        elif arg.startswith("-isysroot="):
-            sysroots.append(arg.split("=", 1)[1])
+        elif arg.startswith("-isysroot") and arg != "-isysroot":
+            # Clang's joined form is -isysroot<dir>; preserve '=' as part of
+            # the path so an unsupported -isysroot=<dir> cannot false-pass.
+            sysroots.append(arg[len("-isysroot"):])
 if not sysroots or any(pathlib.Path(path).resolve() != sdk_root for path in sysroots):
     raise SystemExit(f"Firehose compile uses SDKROOT {sysroots}; expected only {sdk_root}")
 
@@ -517,6 +561,8 @@ iig=$IIG
 jobs=$JOBS
 build_host_arch=$HOST_ARCH
 build_host_mode=$BUILD_HOST_MODE
+build_process_arch=$HOST_PROCESS_ARCH
+build_process_translated=$HOST_PROCESS_TRANSLATED
 target_arch=x86_64
 EOF
 
@@ -546,7 +592,7 @@ python3 - "$PACKAGE_KERNEL" "$RESULT" "$XNU_COMMIT" "$XNU_TAG" "$SOURCE_VERSION"
   "$LIBDISPATCH_COMMIT" "$LIBDISPATCH_TAG" "$FIREHOSE_ARCHIVE_SHA256" \
   "$AVAILABILITY_COMMIT" "$AVAILABILITY_TAG" "$AVAILABILITY_TOOL_SHA256" \
   "$SDK_PUBLIC_AVAILABILITY_SHA256" "$MACHINE_CPU_NUMBER_SHA256" "$I386_CPU_NUMBER_SHA256" \
-  "$HOST_ARCH" "$BUILD_HOST_MODE" <<'PY'
+  "$HOST_ARCH" "$BUILD_HOST_MODE" "$HOST_PROCESS_ARCH" "$HOST_PROCESS_TRANSLATED" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -562,6 +608,8 @@ result = {
     "target_architecture": sys.argv[9],
     "build_host_arch": sys.argv[19],
     "build_host_mode": sys.argv[20],
+    "build_process_arch": sys.argv[21],
+    "build_process_translated": sys.argv[22] == "true",
     "xnu_commit": sys.argv[3],
     "xnu_tag": sys.argv[4],
     "xnu_source_version": sys.argv[5],

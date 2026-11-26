@@ -80,4 +80,37 @@ for overlay_base in "$OVERLAY" "$EXTERNAL_OVERLAY"; do
   }
   [[ ! -e "$REAL_LAUNCH_QEMU_LOG" ]] || { printf 'launcher started QEMU for a managed overlay\n' >&2; exit 1; }
 done
-printf 'PASS: QEMU opens and persists symlinked qcow2 overlays; the launcher rejects managed overlays selected by link or target\n'
+
+# A user-prepared qcow2 base may use the reserved filename shape by coincidence.
+# Without xnulinux's .base ownership sidecar, it remains a valid source image.
+USER_STATE_DIR="$TMP_DIR/user source state"
+USER_BASE="$USER_STATE_DIR/disk-aaaaaaaaaaaaaaaaaaaa.qcow2"
+USER_QEMU_LOG="$TMP_DIR/user-source-started-qemu"
+mkdir -p -- "$USER_STATE_DIR"
+"$QEMU_IMG" create -q -f qcow2 "$USER_BASE" 1M
+[[ ! -e "${USER_BASE%.qcow2}.base" ]] || { printf 'user qcow2 fixture unexpectedly has an ownership sidecar\n' >&2; exit 1; }
+USER_BASE_SHA256_BEFORE="$(sha256sum -- "$USER_BASE" | awk '{print $1}')"
+USER_LAUNCH_OUTPUT="$TMP_DIR/user-source-launch.out"
+env \
+  "QEMU=$FAKE_QEMU" \
+  "QEMU_IMG=$QEMU_IMG" \
+  "DISK=$USER_BASE" \
+  "DISK_FORMAT=qcow2" \
+  "OVMF_CODE=$OVMF_CODE" \
+  "OVMF_VARS_TEMPLATE=$OVMF_VARS" \
+  "STATE_DIR=$USER_STATE_DIR" \
+  "APPLE_SMC_OSK=$SMC_KEY" \
+  "ACCEL=tcg" \
+  "REAL_LAUNCH_QEMU_LOG=$USER_QEMU_LOG" \
+  "$LAUNCHER" >"$USER_LAUNCH_OUTPUT" 2>&1 || {
+    cat "$USER_LAUNCH_OUTPUT" >&2
+    printf 'launcher rejected an unowned user qcow2 base with the reserved filename shape\n' >&2
+    exit 1
+  }
+[[ -e "$USER_QEMU_LOG" ]] || { cat "$USER_LAUNCH_OUTPUT" >&2; printf 'launcher did not start QEMU for the user base\n' >&2; exit 1; }
+[[ "$(sha256sum -- "$USER_BASE" | awk '{print $1}')" == "$USER_BASE_SHA256_BEFORE" ]] \
+  || { printf 'launcher changed the user qcow2 base\n' >&2; exit 1; }
+USER_DISK_ID="$(printf '%s\0' "$USER_BASE" | sha256sum | awk '{print substr($1, 1, 20)}')"
+[[ -f "$USER_STATE_DIR/disk-$USER_DISK_ID.base" ]] \
+  || { printf 'launcher did not write an ownership sidecar for its new overlay\n' >&2; exit 1; }
+printf 'PASS: symlinked managed overlays are rejected; an unowned user qcow2 base with the reserved filename shape is accepted and remains unchanged\n'

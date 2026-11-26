@@ -17,6 +17,12 @@ The final deliverable is a hybrid bootable ISO with **Try xnulinux** as the defa
 - Run from USB by default, reading system files as needed so the complete image need not fit in RAM. Offer a separate copy-to-RAM entry only if validated and enough memory is available.
 - Bundle only redistributable components. Do not ship proprietary Apple system images, binaries, firmware, or credentials. Identify the open components included and describe any separately supplied prerequisites without conflating them with offline Live USB support.
 
+## Installer candidate
+
+Use [Calamares](https://calamares.io/docs/install/) as the first graphical installer candidate. Run it in the Linux host environment, not inside Darwin. Let its standard modules do partitioning, deployment of the Linux base from the ISO, and UEFI bootloader setup. Add only the xnulinux-specific step: provision the matched FKI/XNU modules and redistributable system payload, and enable the normal startup service that launches hosted XNU. Keep the same published runtime inputs in Live and installed modes.
+
+Expose **Install xnulinux** separately from the default live entry. Require an explicit target, show a summary of planned disk changes, and require confirmation before writes. Start on a blank test disk in UEFI mode; validate cancel/no writes and first reboot without USB before supporting dual boot, encryption, or Secure Boot. The installer is a proposal and ships only after the selected runtime and installation path are validated.
+
 ## Release acceptance
 
 - Build the ISO reproducibly from pinned inputs and publish the SHA-256 and build manifest. Test the image written to a physical USB drive, not just attached as a virtual optical disc.

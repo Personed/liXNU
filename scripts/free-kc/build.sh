@@ -20,6 +20,8 @@ DVM="${DVM:-$HOME/w/dvm}"
 W="${FREE_KC_WORK:-$HOME/w/free-kc}"
 OUT="${OUT:-/lib/firmware/xnu/kc-free.bin}"
 DVM=$(cd -- "$DVM" >/dev/null && pwd -P)
+mkdir -p -- "$W"
+W=$(cd -- "$W" >/dev/null && pwd -P)
 PD_URL=https://github.com/AFK-surf/PureDarwin PD_REV=b3b4b2812fdd1c5c251dc3089b5a1a9e00d29970
 MBEDTLS_URL=https://github.com/Mbed-TLS/mbedtls
 MBEDTLS_REV=$(sed -n 's/^MBEDTLS_REV=//p' "$POC/kexts/free/corecrypto/mbedtls.rev")
@@ -70,7 +72,7 @@ mbedtls_sources=()
 for f in "${mbedtls_sources_relative[@]}"; do
 	mbedtls_sources+=("$S/mbedtls/library/$f")
 done
-( cd "$C" && run_kcc "$O/corecrypto" -I "$C" -I "$S/mbedtls/include" -I "$S/mbedtls/library" --after "$C/compat" \
+( cd "$C" && python3 "$POC/scripts/free-kc/kcc.py" "$O/corecrypto" -I "$C" -I "$S/mbedtls/include" -I "$S/mbedtls/library" --after "$C/compat" \
 	-D 'MBEDTLS_CONFIG_FILE="mbedtls_config_xnulinux.h"' cc_kext.c cc_digest.c cc_aes.c cc_des.c cc_chachapoly.c cc_rsa.c \
 	cc_platform.c cc_selftest.c "${mbedtls_sources[@]}" )
 # PureDarwin's AMFI stub, with PureDarwin's CoreEntitlements headers (it declares their coreentitlements_t itself) and

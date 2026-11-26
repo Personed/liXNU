@@ -79,7 +79,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                     "FAKE_MBEDTLS_REV": mbedtls_revision,
                     "FREE_KC_WORK": str(root / "free-kc-work"),
                     "OUT": str(root / "kc-free.bin"),
-                    "POC": str(poc_link),
+                    "POC": "../poc",
                     "PATH": str(fake_bin) + os.pathsep + env["PATH"],
                 }
             )

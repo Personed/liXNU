@@ -11,12 +11,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Kernel headers
+        id: kernel
         run: |
           sudo apt-get update -qq
           pkg=$(apt-cache search --names-only '^linux-headers-[0-9.]+-[0-9]+-generic$' | awk '{print $1}' | sort -V | tail -1)
           echo "headers: $pkg"
           sudo apt-get install -y -qq "$pkg" >/dev/null
-          echo "KDIR=/usr/src/${pkg#linux-headers-}" | sed 's|/usr/src/|/usr/src/linux-headers-|' >> "$GITHUB_ENV"
+          echo "KDIR=/usr/src/$pkg" >> "$GITHUB_ENV"
+          echo "release=${pkg#linux-headers-}" >> "$GITHUB_OUTPUT"
       - name: fki.ko
         run: make -C "$KDIR" M="$PWD/fki-ko" modules
       - name: xnu.ko
@@ -25,6 +27,39 @@ jobs:
         run: |
           test "$(modinfo -F license fki-ko/fki.ko)" = GPL
           test "$(modinfo -F license xnu-ko/xnu.ko)" = Proprietary
+      - name: Prepare ARM64 smoke test inputs
+        env:
+          KERNEL_RELEASE: ${{ steps.kernel.outputs.release }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/qemu-inputs"
+          cp fki-ko/fki.ko xnu-ko/xnu.ko "$RUNNER_TEMP/qemu-inputs/"
+          cd "$(mktemp -d)"
+          apt-get download "linux-image-unsigned-$KERNEL_RELEASE" busybox-static
+          dpkg-deb -x linux-image-unsigned-*.deb kernel
+          dpkg-deb -x busybox-static_*.deb busybox
+          cp "kernel/boot/vmlinuz-$KERNEL_RELEASE" "$RUNNER_TEMP/qemu-inputs/kernel"
+          cp "$(find busybox -type f -name busybox)" "$RUNNER_TEMP/qemu-inputs/busybox"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qemu-arm64-inputs
+          path: ${{ runner.temp }}/qemu-inputs/
+          retention-days: 3
+  qemu:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: qemu-arm64-inputs
+          path: qemu-inputs
+      - name: Install QEMU
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-arm cpio zstd
+      - name: Smoke test the ARM64 modules on x86-64
+        run: tests/qemu/run.sh qemu-inputs/{kernel,busybox,fki.ko,xnu.ko}
   spdx:
     runs-on: ubuntu-24.04
     steps:

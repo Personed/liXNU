@@ -63,10 +63,22 @@ directory to fork it intentionally.
 bash tests/x86_64/test-launcher.sh
 bash tests/x86_64/test-tcg-smoke.sh
 tests/x86_64/tcg-smoke.sh /path/to/x86_64/vmlinuz /path/to/initrd.cpio.gz
+tests/x86_64/test-boundary-probe-vm.sh /path/to/x86_64/kernel-headers
 ```
 
 The smoke initramfs must print `XNU_LINUX_TCG_BOOTED` on its serial console and shut down before the timeout. TCG boots
 only a disposable Linux guest; it does not demonstrate macOS boot, KVM, Intel/AMD compatibility or useful performance.
+
+The boundary probe builds a separate test module and boots it only in a disposable x86_64 Linux VM. It pins each online
+CPU with `work_on_cpu`, switches to a temporary stack, deliberately clobbers callee-saved GPRs and RFLAGS, then checks
+normal and synthetic software-abort returns against host snapshots of the task, CPU, kernel stack/RSP, CR3 root plus
+PCID, and FS/GS/KERNEL_GS bases. An ioctl calls `kernel_fpu_begin/end` while the userspace test holds distinct YMM
+patterns; the test also exercises Linux syscalls before and after each ioctl. The VM must unload both modules and power
+off cleanly. TCG runs on every CI attempt; the script adds a KVM run when `/dev/kvm` and host XSAVE/AVX are available.
+
+This is a host-only call/return test. It does not enter XNU, change `fki.h`, enable FKI capabilities, change CR3 or GS,
+install or replace Linux IDT, page-fault, general-protection, or syscall handlers, or run C under foreign host state.
+Passing it does not establish native XNU runtime support or prove the proposed early exception/syscall bridge.
 
 `build-fki.sh KDIR` now builds the x86_64 FKI host backend. `build-xnu-objects.sh KDIR` compiles `macho.o` and `adt.o`
 as validation objects without linking them into `xnu.ko`; on x86_64 `macho_rebase()` returns `-EOPNOTSUPP` rather than

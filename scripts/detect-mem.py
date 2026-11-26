@@ -122,18 +122,14 @@ def compute_layout(ranges):
         linux_mb = (linux_total_mb // 2) * 2
         linux_mem_str = f"{linux_mb}M"
 
-    # Recompute exact carve_base from linux_mb across the RAM ranges.
-    rem = linux_mb * MIB
-    carve_base = None
-    for i, (s, e) in enumerate(ranges):
-        sz = e - s
-        if i < target_idx:
-            rem -= sz
-        else:
-            carve_base = align_up(s + rem, ALIGN_2M)
-            break
+    # The whole-GiB rounding can put Linux's memory limit below the total size of
+    # earlier regions. In that case Linux stops before this region, so start the
+    # carve-out at its beginning instead of applying a negative offset here.
+    linux_bytes_before_target = before_bytes
+    linux_bytes_in_target = max(0, linux_mb * MIB - linux_bytes_before_target)
+    carve_base = align_up(t_start + linux_bytes_in_target, ALIGN_2M)
 
-    if carve_base is None or carve_base + carve_bytes > usable_end:
+    if carve_base + carve_bytes > usable_end:
         # Adjust carve_mb to fit cleanly up to usable_end.
         carve_mb = ((usable_end - carve_base) // ALIGN_2M) * 2
         if carve_mb < 1024:

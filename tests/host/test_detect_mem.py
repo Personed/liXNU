@@ -56,6 +56,20 @@ class TestDetectMem(unittest.TestCase):
         self.assertEqual(layout["carve_base"], "0xa40000000")
         self.assertEqual(layout["carve_mb"], 8156)
 
+    def test_fragmented_regions_with_rounding_below_prior_memory(self):
+        iomem = (
+            "80000000-17fffffff : System RAM\n"
+            "200000000-31fffffff : System RAM\n"
+            "800000000-a3fffffff : System RAM\n"
+        )
+        ranges = detect_mem.parse_iomem(iomem)
+        layout = detect_mem.compute_layout(ranges)
+        carve_base = int(layout["carve_base"], 16)
+        carve_end = carve_base + layout["carve_mb"] * detect_mem.MIB
+        self.assertEqual(layout["linux_mem"], "8G")
+        self.assertTrue(any(start <= carve_base and carve_end <= end for start, end in ranges))
+        self.assertEqual(carve_base, ranges[-1][0])
+
     def test_masked_iomem_raises(self):
         iomem = "00000000-00000000 : System RAM\n00000000-00000000 : System RAM\n"
         with self.assertRaisesRegex(ValueError, "masked"):

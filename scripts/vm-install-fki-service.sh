@@ -10,11 +10,19 @@ DRY_RUN=0
 [ "${1:-}" = --dry-run ] || [ "${1:-}" = --print ] && DRY_RUN=1
 
 if [ -z "${LINUX_MEM:-}" ] || [ -z "${CARVE_BASE:-}" ] || [ -z "${CARVE_MB:-}" ]; then
+  REQUESTED_LINUX_MEM=${LINUX_MEM:-}
+  REQUESTED_CARVE_BASE=${CARVE_BASE:-}
+  REQUESTED_CARVE_MB=${CARVE_MB:-}
+  REQUESTED_RAM_MB=${RAM_MB:-}
   if [ -r /proc/iomem ] && grep -qE '^[0-9a-fA-F]*[1-9a-fA-F][0-9a-fA-F]*-.*: System RAM$' /proc/iomem 2>/dev/null; then
     eval "$(python3 "$P/scripts/detect-mem.py")"
   else
     eval "$(sudo python3 "$P/scripts/detect-mem.py")"
   fi
+  LINUX_MEM=${REQUESTED_LINUX_MEM:-$LINUX_MEM}
+  CARVE_BASE=${REQUESTED_CARVE_BASE:-$CARVE_BASE}
+  CARVE_MB=${REQUESTED_CARVE_MB:-$CARVE_MB}
+  RAM_MB=${REQUESTED_RAM_MB:-${RAM_MB:-}}
 fi
 
 CMDLINE_ARGS="mem=$LINUX_MEM nokaslr log_buf_len=128M"

@@ -22,6 +22,7 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
+#include <linux/version.h>
 #include <linux/vmalloc.h>
 #include <linux/wait.h>
 
@@ -183,6 +184,7 @@ static long hc_xlate_one(struct mm_struct *mm, unsigned long va, u64 *pa)
 	if (!vma)
 		return -EFAULT;
 	if (vma->vm_flags & (VM_IO | VM_PFNMAP)) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
 		struct follow_pfnmap_args args = { .vma = vma, .address = va };
 		int err = follow_pfnmap_start(&args);
 		if (err)
@@ -190,6 +192,17 @@ static long hc_xlate_one(struct mm_struct *mm, unsigned long va, u64 *pa)
 		*pa = (u64)args.pfn << PAGE_SHIFT;
 		follow_pfnmap_end(&args);
 		return 0;
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(6, 10, 0)
+		unsigned long pfn;
+		int err = follow_pfn(vma, va, &pfn);
+		if (err)
+			return err;
+		*pa = (u64)pfn << PAGE_SHIFT;
+		return 0;
+#else
+		/* Kernels 6.10 and 6.11 export neither follow_pfn nor follow_pfnmap_start. */
+		return -EOPNOTSUPP;
+#endif
 	}
 	if (get_user_pages_remote(mm, va, 1, FOLL_WRITE, &pg, NULL) != 1) {
 		return -EFAULT;

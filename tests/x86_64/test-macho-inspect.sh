@@ -11,3 +11,5 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
   "$REPO/xnu-ko/macho_parse_x86_64.c" \
   -o "$BUILD/xnu-macho-inspect"
 python3 "$REPO/tests/x86_64/test-macho-inspect.py" "$BUILD/xnu-macho-inspect"
+LC_ALL=C PYTHONUTF8=0 python3 "$REPO/tests/x86_64/test-macho-inspect.py" \
+  "$BUILD/xnu-macho-inspect"

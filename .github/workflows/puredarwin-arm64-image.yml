@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: PureDarwin ARM64 image
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/puredarwin-arm64-image.yml'
+      - 'docs/free-kc.md'
+      - 'scripts/puredarwin-root.sh'
+      - 'scripts/mk-puredarwin-disk.sh'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  image:
+    name: Build pinned ARM64 guest image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            extra-substituters = https://hydra.lab004.dev
+            extra-trusted-public-keys = hydra.lab004.dev-1:gPXVaEarmWgIFDuqmpf+9gXetBCC9jxzkZg+CZ8cC+M=
+      - name: Build the pinned PureDarwin ARM64 release
+        env:
+          PUREDARWIN_REV: b3b4b2812fdd1c5c251dc3089b5a1a9e00d29970
+        run: |
+          set -euo pipefail
+          out=$(nix build -L --no-link --print-out-paths \
+            "git+https://github.com/AFK-surf/PureDarwin?submodules=1&rev=${PUREDARWIN_REV}#hydraJobs.release.arm64-virt-minimal")
+          image=$(find "$out" -maxdepth 1 -type f -name '*.img.zst' -print -quit)
+          test -n "$image" || { echo "No compressed ARM64 image found in $out" >&2; exit 1; }
+          test -f "$image.sha256"
+          cp "$image" "$RUNNER_TEMP/"
+          cp "$image.sha256" "$RUNNER_TEMP/"
+          image_name=$(basename "$image")
+          (
+            cd "$RUNNER_TEMP"
+            sha256sum --check "$image_name.sha256"
+            image_sha256=$(sha256sum "$image_name" | awk '{print $1}')
+            image_bytes=$(stat -c '%s' "$image_name")
+            {
+              echo '## PureDarwin ARM64 image input'
+              echo
+              echo "- AFK-surf/PureDarwin revision: \`${PUREDARWIN_REV}\`"
+              echo "- Artifact file: \`${image_name}\`"
+              echo "- Size: ${image_bytes} bytes"
+              echo "- SHA-256: \`${image_sha256}\`"
+              echo '- Validation stage: pinned build input and artifact checksum integrity only; byte-for-byte rebuild reproducibility and xnulinux/FKI boot are not tested by this workflow.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          )
+      - name: Upload the image and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: puredarwin-arm64-virt
+          path: |
+            ${{ runner.temp }}/puredarwin-*.img.zst
+            ${{ runner.temp }}/puredarwin-*.img.zst.sha256
+          if-no-files-found: error
+          retention-days: 3

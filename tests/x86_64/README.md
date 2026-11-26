@@ -67,8 +67,9 @@ they are not pass/fail tests for the selected QEMU/KVM path.
   of changed base contents, detection of unassociated legacy overlays, rejection of a managed overlay selected as its
   own base, a backed qcow2 source with an overlay-shaped filename, an overlay symlinked from another volume, and a
   hash-named disk stored inside a symlinked `STATE_DIR`.
-- `test-qemu-overlay-symlink.sh` uses `qemu-img` and `qemu-io` to open a backing chain through a symlink, write and
-  reopen the overlay, and confirm the backing image remains unchanged.
+- `test-qemu-overlay-symlink.sh` uses real `qemu-img` and `qemu-io` to open a backing chain through a symlink, write
+  and reopen the overlay, confirm the backing image remains unchanged, and verify that the launcher rejects the
+  managed overlay selected through either its symlink or external target.
 - QEMU 10.0.13 booted a disposable Debian 6.12.118 x86_64 guest with a BusyBox initramfs under TCG. The guest printed
   `XNU_LINUX_TCG_BOOTED` and powered off cleanly.
 - The actual QEMU 10.0.13 launcher passed `--check` with real `qemu-img`, and a paused TCG invocation accepted its Q35,

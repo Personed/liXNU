@@ -11,18 +11,26 @@ sudo ip link set xnu0 up
 sudo sysctl -q -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
 
 up=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
-if [ -n "$up" ] && command -v iptables >/dev/null 2>&1; then
-  sudo iptables -t nat -C POSTROUTING -s 192.168.77.0/24 -o "$up" -j MASQUERADE 2>/dev/null ||
-    sudo iptables -t nat -A POSTROUTING -s 192.168.77.0/24 -o "$up" -j MASQUERADE
-  sudo iptables -C FORWARD -i xnu0 -j ACCEPT 2>/dev/null || sudo iptables -I FORWARD -i xnu0 -j ACCEPT
-  sudo iptables -C FORWARD -o xnu0 -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null ||
-    sudo iptables -I FORWARD -o xnu0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+if [ -n "$up" ]; then
+  iptables_bin=$(command -v iptables 2>/dev/null || true)
+  if [ -z "$iptables_bin" ]; then
+    # Services may have a restricted PATH even though sudo can find iptables in
+    # its secure_path. Resolve the privileged executable once and use its full path.
+    iptables_bin=$(sudo sh -c 'command -v iptables' 2>/dev/null || true)
+  fi
+fi
+if [ -z "$up" ]; then
+  echo "vm-net-up: no default route; skipping NAT"
+elif [ -n "$iptables_bin" ]; then
+  sudo "$iptables_bin" -t nat -C POSTROUTING -s 192.168.77.0/24 -o "$up" -j MASQUERADE 2>/dev/null ||
+    sudo "$iptables_bin" -t nat -A POSTROUTING -s 192.168.77.0/24 -o "$up" -j MASQUERADE
+  sudo "$iptables_bin" -C FORWARD -i xnu0 -j ACCEPT 2>/dev/null || sudo "$iptables_bin" -I FORWARD -i xnu0 -j ACCEPT
+  sudo "$iptables_bin" -C FORWARD -o xnu0 -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null ||
+    sudo "$iptables_bin" -I FORWARD -o xnu0 -m state --state RELATED,ESTABLISHED -j ACCEPT
   # The way out can have a smaller MTU than en0's 1500 (Google Cloud: 1460). Without this the hosted system announces an MSS
   # of 1460, the far end's full-size segments do not fit, and a TLS handshake with a large reply (github.com, npm) never ends.
-  sudo iptables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null ||
-    sudo iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
-elif [ -z "$up" ]; then
-  echo "vm-net-up: no default route; skipping NAT"
+  sudo "$iptables_bin" -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null ||
+    sudo "$iptables_bin" -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
 else
   echo "vm-net-up: iptables not found; skipping NAT" >&2
 fi

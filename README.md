@@ -121,8 +121,9 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 
 - An Intel or AMD x86_64 Linux PC with VT-x or AMD-V, `/dev/kvm` accessible to the running user, and SSE4.2, AVX, FMA,
   MOVBE, POPCNT, LZCNT, BMI1, AVX2 and BMI2 exposed by the host CPU.
-- QEMU 10 or newer, `qemu-img`, `flock` (from util-linux), and OVMF 4 MiB firmware files. Package names and OVMF paths vary by distribution;
-  override `OVMF_CODE` and `OVMF_VARS_TEMPLATE` when needed.
+- QEMU 10 or newer, `qemu-img`, `flock` (from util-linux), and OVMF 4 MiB firmware files. The launcher auto-detects
+  common Debian/Ubuntu, Fedora/RHEL, Arch, and openSUSE layouts; override `OVMF_CODE` and `OVMF_VARS_TEMPLATE`, or add
+  a custom directory with `OVMF_DIR`, when needed.
 - A user-prepared bootable macOS Tahoe 26 x86_64 raw or qcow2 image with a working EFI/OpenCore setup. AMD images must
   include matching OpenCore AMD kernel patches. No Apple system image is provided here.
 - The 64-byte Apple SMC OSK value supplied locally through `APPLE_SMC_OSK`; do not commit it or paste it into logs. The launcher writes it to a mode-0600 temporary QEMU config, keeps it out of QEMU's argv and environment, and removes the config when QEMU exits.
@@ -179,8 +180,9 @@ printf '\n'
 scripts/x86_64/xnulinux-boot.sh --check
 ```
 
-If OVMF is installed outside `/usr/share/OVMF/`, set `OVMF_CODE` and `OVMF_VARS_TEMPLATE` to the corresponding 4 MiB
-files before preflight. If preflight succeeds, run:
+If OVMF is not auto-detected, set `OVMF_CODE` and `OVMF_VARS_TEMPLATE` to the corresponding 4 MiB files before
+preflight. `OVMF_DIR` adds one custom directory to the search path. Fedora's qcow2 firmware pair is passed to QEMU as
+qcow2; raw pairs remain raw, and existing NVRAM state keeps its own format. If preflight succeeds, run:
 
 ```sh
 scripts/x86_64/xnulinux-boot.sh

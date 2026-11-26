@@ -41,6 +41,7 @@ jobs:
       - name: Build pinned XNU for x86_64
         env:
           XNU_X86_BUILD_DIR: ${{ runner.temp }}/xnulinux-x86_64-xnu
+          XNU_X86_KDKROOT: ${{ vars.XNU_X86_KDKROOT }}
         run: scripts/x86_64/build-xnu-kernel.sh
       - name: Verify Intel-native host and x86_64 target manifest
         env:
@@ -144,6 +145,8 @@ jobs:
     # This probes the x86_64 target build from Apple Silicon; it is not Intel runtime validation.
     runs-on: macos-26
     timeout-minutes: 120
+    env:
+      XNU_X86_KDKROOT: ${{ vars.XNU_X86_KDKROOT }}
     steps:
       - uses: actions/checkout@v4
       - name: Select pinned Xcode
@@ -156,11 +159,28 @@ jobs:
           xcodebuild -version
           xcrun --find clang
           xcrun --find ld
+      - name: Check matching KDK availability
+        id: kdk
+        shell: bash
+        run: |
+          kdk_root="${XNU_X86_KDKROOT:-/Library/Developer/KDKs/KDK_26.5_25F71.kdk}"
+          status_file="$RUNNER_TEMP/xnu-x86-cross-build-status.txt"
+          if [[ -d "$kdk_root" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            printf 'cross_build=enabled\nkdk_root=%s\n' "$kdk_root" > "$status_file"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            printf 'cross_build=skipped_no_matching_kdk\nexpected_kdk=KDK_26.5_25F71.kdk\nchecked_path=%s\n' \
+              "$kdk_root" > "$status_file"
+            echo "SKIP: no matching KDK at $kdk_root; upstream XNU requires a KDK for Apple Silicon builds. This is not cross-build or runtime evidence."
+          fi
       - name: Cross-build pinned XNU for x86_64
+        if: steps.kdk.outputs.available == 'true'
         env:
           XNU_X86_BUILD_DIR: ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe
         run: scripts/x86_64/build-xnu-kernel.sh
       - name: Verify cross-build host and target manifest
+        if: steps.kdk.outputs.available == 'true'
         env:
           XNU_X86_BUILD_DIR: ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe
         run: |
@@ -223,7 +243,11 @@ jobs:
           assert manifest["xnu_target_sdkroot_overlay_notes"] >= 0, manifest
           assert manifest["xnu_target_commands_without_explicit_isysroot"] == 0, manifest
           PY
+      - name: Report KDK-gated cross-build skip
+        if: steps.kdk.outputs.available != 'true'
+        run: cat "$RUNNER_TEMP/xnu-x86-cross-build-status.txt"
       - uses: actions/upload-artifact@v4
+        if: steps.kdk.outputs.available == 'true'
         with:
           name: xnu-tahoe26.5-source-x86_64-host-arm64-${{ github.sha }}
           path: |
@@ -252,5 +276,6 @@ jobs:
             ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/xnu-target-include-diagnostics.log
             ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/xnu-warning-policy-probe.log
             ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/kdk-preflight.log
+            ${{ runner.temp }}/xnu-x86-cross-build-status.txt
           if-no-files-found: ignore
           retention-days: 5

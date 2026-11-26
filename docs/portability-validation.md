@@ -77,16 +77,21 @@ Report the profile alongside the stage:
 4. Immediately before starting one manual boot invocation, begin capturing the complete
    live kernel log. Keep this unfiltered log so the XNU DRAM interval and execution
    messages are not discarded; the `fki: darwin console:` lines are included in the
-   same capture.
+   same capture. Create a private, unique log for every run so later attempts do not
+   overwrite prior evidence or expose physical addresses to other local accounts.
    ```sh
-   sudo journalctl -kf -n 0 -o cat | tee /var/tmp/xnulinux-kernel.log
+   LOG=$(mktemp /var/tmp/xnulinux-kernel.XXXXXX.log)
+   printf 'capturing this boot attempt in %s\n' "$LOG"
+   sudo journalctl -kf -n 0 -o short-iso | tee "$LOG"
    ```
    The launcher may retry a failed contiguous allocation; each such attempt records
    `xnu: contiguous allocation failed, err`. Match the DRAM interval and XNU execution
-   evidence that follow the last allocation-failure record in this captured stream.
-   After allocation succeeds, the launcher does not start another retry. Its archived
-   `--wait` log can contain multiple allocation attempts from the same invocation, so
-   use this ordering to associate the interval with the attempt that entered XNU.
+   evidence that follow the last allocation-failure record in this captured stream. If
+   the first allocation succeeds, use the first attempt's DRAM interval after the
+   capture begins. After allocation succeeds, the launcher does not start another
+   retry. Its archived `--wait` log can contain multiple allocation attempts from the
+   same invocation, so use this ordering to associate the interval with the attempt
+   that entered XNU.
    In a second terminal at the checkout, point the boot script to the absolute
    paths for your disk and UUID file. Set `RAM_MB` to a tested value that fits
    your carve-out; 7900 MiB is the existing example for an 8 GiB carve-out.

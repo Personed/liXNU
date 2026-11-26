@@ -76,19 +76,26 @@ kernel has; and a kext's load tag.
    an unclean shutdown, check the HFS+ partition on Linux before booting again.
 
    ```sh
-   set -e
-   scripts/xnulinux-boot.sh stop
-   loop=$(sudo losetup --find --show --partscan pd.img)
-   trap 'sudo losetup --detach "$loop"' EXIT
-   if ! sudo fsck.hfsplus -f "${loop}p1"; then
-     echo "HFS+ check failed; do not boot this disk until it is repaired." >&2
-     exit 1
-   fi
-   sudo losetup --detach "$loop"
-   trap - EXIT
+   (
+     set -e
+     if systemctl cat xnulinux.service >/dev/null 2>&1; then
+       sudo systemctl stop xnulinux.service
+     fi
+     scripts/xnulinux-boot.sh stop
+     loop=$(sudo losetup --find --show --partscan pd.img)
+     trap 'sudo losetup --detach "$loop"' EXIT
+     if ! sudo fsck.hfsplus -f "${loop}p1"; then
+       echo "HFS+ check failed; do not boot this disk until it is repaired." >&2
+       exit 1
+     fi
+     sudo losetup --detach "$loop"
+     trap - EXIT
+   )
    ```
 
-   Stop the hosted system and ensure the partition is unmounted before checking it. The image uses GPT, so run
+   Stop the hosted system and any `xnulinux.service` supervisor so it cannot restart during the check, and ensure the
+   partition is unmounted before checking it. The subshell keeps `set -e` and a failed check from changing the terminal
+   session. The image uses GPT, so run
    `fsck.hfsplus` on the first partition exposed by `losetup --partscan`, not on `pd.img`. If the check fails, repair the
    volume before booting it again.
 3. In the VM, after `scripts/vm-xnu-rebuild.sh`: `scripts/free-kc/build.sh`, which writes `/lib/firmware/xnu/kc-free.bin`.

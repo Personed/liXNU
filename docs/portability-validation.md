@@ -67,9 +67,9 @@ Report the profile alongside the stage:
   Mach-O inspection found `__TEXT_EXEC` and `__KLD` ranges overlap in the built image. Current #36
   head `97727ac` adds a file-backed range check; run #74 failed in `kclink` before boot because file-backed
   `__TEXT_EXEC` and `__KLD` overlap at `0x3854000-0x3858000`, so run #72 does not validate that changed head. PR #50
-  proposes relocating `__KLD`/`__LAST` and relinking; its new run #86 is rebuilding the pinned guest image. PR #52's
-  run #81 built its pinned guest image and is building the PureDarwin disk/collection, but #52 is
-  still based on an older #50 head and needs a rebase before its results validate the canonical relink. Cross-host
+  proposes relocating `__KLD`/`__LAST` and relinking; its new run #86 is rebuilding the pinned guest image. PR #52
+  is now rebased onto #50 head `cfc4406`; its new run #87 is rebuilding the pinned guest image. PR #57 separately
+  retains the final post-relink segment-check output but still targets the earlier #50 head `3dfcc0e`. Cross-host
   Windows and Intel-macOS checks are proposed in [#46](https://github.com/Personed/xnulinux/pull/46); its run #79
   built the guest image, then failed the XNU source build in `kclink` on the same file-backed `__TEXT_EXEC`/`__KLD`
   overlap. Guest preparation and host boots were skipped. It is based on the pre-relocation, pre-pin head and gives

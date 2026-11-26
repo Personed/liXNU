@@ -108,9 +108,9 @@ prepared the guest, and passed the full console command, guest halt, XNU unload,
 on Ubuntu 24.04 x86-64. A later Mach-O inspection found overlapping `__TEXT_EXEC`/`__KLD` ranges. Current #36 head
 `97727ac` adds a file-backed range check; run #74 failed before boot on that overlap, so run #72 does not validate
 the current layout. PR #50 proposes relocating `__KLD`/`__LAST` and relinking; run #86 is rebuilding the pinned
-guest image. PR #52 pins the ARM64 guest kernel and records input hashes; run #81 built that image and is building
-the PureDarwin disk/collection, but #52 is still based on an older #50 head and needs a rebase before its results
-can validate the canonical relink. Cross-host PR #46 run #79 built the guest image but failed the XNU source build
+guest image. PR #52 pins the ARM64 guest kernel and records input hashes; it is now rebased onto #50 head `cfc4406`,
+and run #87 is rebuilding that pinned guest image. PR #57 separately retains the final post-relink segment-check
+output but still targets the earlier #50 head `3dfcc0e`. Cross-host PR #46 run #79 built the guest image but failed the XNU source build
 at the same `__TEXT_EXEC`/`__KLD` overlap; preparation and host boots were skipped. It is based on the
 pre-relocation/pre-pin head and provides no host acceptance. PR #58 adds guest-input hash checks and reliable
 per-host preflight reports; run #85 is building its guest image, with review still requesting macOS preflight

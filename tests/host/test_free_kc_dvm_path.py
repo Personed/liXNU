@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+"""Check that the free collection builder exports a canonical DVM path."""
+
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "scripts/free-kc/build.sh"
+
+
+class FreeKernelCollectionPathTest(unittest.TestCase):
+    def test_relative_dvm_is_canonicalized_before_build_commands(self):
+        source = SCRIPT.read_text(encoding="utf-8")
+        pd_revision = re.search(r"\bPD_REV=([0-9a-f]+)", source).group(1)
+        mbedtls_revision = re.search(
+            r"^MBEDTLS_REV=(.+)$",
+            (ROOT / "kexts/free/corecrypto/mbedtls.rev").read_text(encoding="utf-8"),
+            re.MULTILINE,
+        ).group(1)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            launch = root / "launch"
+            vm = root / "vm"
+            fake_bin = root / "bin"
+            launch.mkdir()
+            fake_bin.mkdir()
+            kernel_framework = (
+                vm
+                / "out/x12377/build/xnu/k27h-dst/System/Library/Frameworks/Kernel.framework/Versions/A"
+            )
+            (kernel_framework / "PrivateHeaders").mkdir(parents=True)
+
+            git = fake_bin / "git"
+            git.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = \"-C\" ] && [ \"$3\" = \"rev-parse\" ]; then\n"
+                "  case \"$2\" in\n"
+                "    */pd) printf '%s\\n' \"$FAKE_PD_REV\"; exit 0 ;;\n"
+                "    */mbedtls) printf '%s\\n' \"$FAKE_MBEDTLS_REV\"; exit 0 ;;\n"
+                "  esac\n"
+                "fi\n"
+                "exit 88\n",
+                encoding="utf-8",
+            )
+            git.chmod(0o755)
+
+            python = fake_bin / "python3"
+            python.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$DVM\" > \"$DVM_CAPTURE\"\n"
+                "exit 73\n",
+                encoding="utf-8",
+            )
+            python.chmod(0o755)
+
+            capture = root / "dvm-value.txt"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "DVM": "../vm",
+                    "DVM_CAPTURE": str(capture),
+                    "FAKE_PD_REV": pd_revision,
+                    "FAKE_MBEDTLS_REV": mbedtls_revision,
+                    "FREE_KC_WORK": str(root / "free-kc-work"),
+                    "OUT": str(root / "kc-free.bin"),
+                    "PATH": str(fake_bin) + os.pathsep + env["PATH"],
+                }
+            )
+            result = subprocess.run(
+                ["bash", str(SCRIPT)],
+                cwd=launch,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 73, result.stdout)
+            self.assertEqual(capture.read_text(encoding="utf-8").strip(), str(vm.resolve()))
+
+
+if __name__ == "__main__":
+    unittest.main()

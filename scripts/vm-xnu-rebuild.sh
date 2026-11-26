@@ -5,7 +5,9 @@
 # (k27/segaddrs.sh) follow the kernel's size: when kc27-layout.py moves them, the kernel is linked again.
 set -e -o pipefail	# a failed kernel build stops here: never repackage the previous kernel
 POC=${POC:-$(cd "$(dirname "$0")/.." && pwd)}	# this repository: its patches, kexts and linker
-cd "${DVM:-$HOME/w/dvm}"
+DVM=${DVM:-$HOME/w/dvm}
+DVM=$(cd -- "$DVM" && pwd -P)
+cd "$DVM"
 export PATH=$PATH:/usr/lib/llvm-21/bin
 T=out/k27/xnu
 # back to the tree's own sources: every file the patches touched last time (.linux64-patched) or touch now, then the

@@ -27,8 +27,7 @@ $report = [ordered]@{
         processor = $processor.Name
         logical_cpus = [Environment]::ProcessorCount
         memory_total_bytes = $totalBytes
-        memory_available_bytes = $availableBytes
-        memory_available_at_report_bytes = $availableBytes
+        memory_available_before_artifact_preparation_bytes = $availableBytes
     }
     qemu_version = 'not checked'
     profile = 'ARM64 Linux, 4 KiB pages, PAC at EL1, fixed 16 GiB QEMU guest-memory setting'
@@ -37,7 +36,7 @@ $report = [ordered]@{
         build = [ordered]@{ path = 'build-manifest.txt'; sha256 = $null; contents = $null }
         guest = [ordered]@{ path = 'guest-manifest.txt'; sha256 = $null; contents = $null }
     }
-    preparation_steps = [ordered]@{ status = 'native host preflight only; boot has not started' }
+    preparation_steps = [ordered]@{ status = 'native host preflight before artifact preparation; boot has not started' }
     ram_capacity = [ordered]@{
         minimum_total_ram_bytes = $minimumTotal
         minimum_available_before_qemu_bytes = $minimumAvailable

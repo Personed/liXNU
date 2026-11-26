@@ -128,6 +128,7 @@ jobs:
         run: |
           python3 tests/puredarwin/test-template-layout.py
           python3 tests/puredarwin/test-segment-copies.py
+          python3 tests/puredarwin/test-tcg-e2e-report.py
           bash scripts/vm-xnu-build.sh
           bash scripts/free-kc/build.sh
           cp "$HOME/w/dvm/out/k27/kernel-k27.macho" "$RUNNER_TEMP/puredarwin-e2e-inputs/kernel.macho"

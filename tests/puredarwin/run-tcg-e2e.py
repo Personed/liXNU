@@ -154,6 +154,19 @@ def read_manifest(path: Path) -> tuple[str | None, dict[str, str]]:
     return raw, values
 
 
+def read_preflight_memory_bytes(path: Path) -> int | None:
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(report, dict) or not isinstance(report.get("host"), dict):
+        return None
+    value = report["host"].get("memory_available_before_artifact_preparation_bytes")
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
+
+
 def serial_evidence(path: Path) -> tuple[str, list[str], list[str]]:
     try:
         log = path.read_text(encoding="utf-8", errors="replace")
@@ -179,7 +192,6 @@ def output_tail(value) -> str:
 
 
 def save_report(report: dict, serial_log: Path, *, write_summary: bool = True) -> None:
-    report["host"]["memory_available_at_report_bytes"] = available_memory_bytes()
     temp_dir = Path(os.environ.get("RUNNER_TEMP", str(serial_log.parent)))
     report_path = temp_dir / "puredarwin-tcg-boot-report.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -191,11 +203,20 @@ def save_report(report: dict, serial_log: Path, *, write_summary: bool = True) -
     host = report["host"]
     memory = host["memory_total_bytes"]
     memory_text = f"{memory / (1024 ** 3):.1f} GiB" if memory else "unavailable"
-    available = host["memory_available_bytes"]
-    available_text = f"{available / (1024 ** 3):.1f} GiB" if available is not None else "unavailable"
-    available_at_report = host["memory_available_at_report_bytes"]
-    available_at_report_text = (
-        f"{available_at_report / (1024 ** 3):.1f} GiB" if available_at_report is not None else "unavailable"
+    available_before_artifacts = host["memory_available_before_artifact_preparation_bytes"]
+    available_before_artifacts_text = (
+        f"{available_before_artifacts / (1024 ** 3):.1f} GiB"
+        if available_before_artifacts is not None else "unavailable"
+    )
+    available_before_qemu = host["memory_available_before_qemu_bytes"]
+    available_before_qemu_text = (
+        f"{available_before_qemu / (1024 ** 3):.1f} GiB"
+        if available_before_qemu is not None else "unavailable"
+    )
+    available_after_qemu = host["memory_available_after_qemu_attempt_bytes"]
+    available_after_qemu_text = (
+        f"{available_after_qemu / (1024 ** 3):.1f} GiB"
+        if available_after_qemu is not None else "not observed"
     )
     result = report["result"]
     lines = [
@@ -205,7 +226,8 @@ def save_report(report: dict, serial_log: Path, *, write_summary: bool = True) -
         f"- Host OS: {host['system']} {host['release']} ({host['architecture']})",
         f"- Host CPU: {host['processor']}",
         f"- Host resources: {host['logical_cpus']} logical CPUs / {memory_text} total RAM",
-        f"- Available RAM snapshots: {available_text} before QEMU / {available_at_report_text} when report was written",
+        f"- Available RAM snapshots: {available_before_artifacts_text} before artifact preparation / "
+        f"{available_before_qemu_text} before QEMU / {available_after_qemu_text} after QEMU attempt",
         f"- RAM capacity screen: {'passed' if report['ram_capacity']['capacity_screen_passed'] else 'capacity-limited'}",
         f"- QEMU: {report['qemu_version']}",
         f"- Profile: {report['profile']}",
@@ -256,6 +278,9 @@ def main() -> int:
     if args.timeout_seconds < 1:
         parser.error("--timeout-seconds must be positive")
 
+    temp_dir = Path(os.environ.get("RUNNER_TEMP", str(args.serial_log.parent)))
+    preflight_path = temp_dir / "puredarwin-tcg-boot-report.json"
+    memory_available_before_artifacts = read_preflight_memory_bytes(preflight_path)
     host = host_facts()
     args.serial_log.parent.mkdir(parents=True, exist_ok=True)
     input_hashes = {
@@ -267,9 +292,16 @@ def main() -> int:
     guest_manifest_path = args.kernel.parent / "guest-manifest.txt"
     build_manifest_text, build_manifest = read_manifest(build_manifest_path)
     guest_manifest_text, guest_manifest = read_manifest(guest_manifest_path)
+    report_host = dict(host)
+    report_host.pop("memory_available_bytes", None)
+    report_host.update({
+        "memory_available_before_artifact_preparation_bytes": memory_available_before_artifacts,
+        "memory_available_before_qemu_bytes": None,
+        "memory_available_after_qemu_attempt_bytes": None,
+    })
     report = {
         "runner_label": os.environ.get("XNULINUX_RUNNER_LABEL", "local"),
-        "host": host,
+        "host": report_host,
         "ram_capacity": ram_capacity(host),
         "qemu_version": "unavailable",
         "profile": PROFILE,
@@ -317,6 +349,8 @@ def main() -> int:
         manifest_errors.append("build-manifest.txt is missing")
     elif not expected_disk_sha:
         manifest_errors.append("build manifest has no puredarwin_disk_sha256")
+    elif input_hashes["disk_sha256"] is None:
+        manifest_errors.append("downloaded PureDarwin disk SHA-256 could not be computed")
     elif expected_disk_sha.lower() != input_hashes["disk_sha256"].lower():
         manifest_errors.append("downloaded PureDarwin disk SHA-256 does not match the build manifest")
     if not guest_manifest_text:
@@ -348,6 +382,11 @@ def main() -> int:
         print("TCG boot could not start: " + "; ".join(manifest_errors + host_errors), file=sys.stderr)
         save_report(report, args.serial_log)
         return 1
+
+    memory_before_qemu = available_memory_bytes()
+    report["host"]["memory_available_before_qemu_bytes"] = memory_before_qemu
+    host["memory_available_bytes"] = memory_before_qemu
+    report["ram_capacity"] = ram_capacity(host)
 
     command = [
         qemu,
@@ -383,6 +422,7 @@ def main() -> int:
         result = subprocess.run(command, check=False, timeout=args.timeout_seconds, text=True, capture_output=True)
     except (OSError, subprocess.TimeoutExpired) as error:
         log, _, missing = serial_evidence(args.serial_log)
+        report["host"]["memory_available_after_qemu_attempt_bytes"] = available_memory_bytes()
         report["result"] = {
             "passed": False,
             "returncode": None,
@@ -400,6 +440,7 @@ def main() -> int:
 
     log, messages, missing = serial_evidence(args.serial_log)
 
+    report["host"]["memory_available_after_qemu_attempt_bytes"] = available_memory_bytes()
     report["result"] = {
         "passed": result.returncode == 0 and not missing,
         "returncode": result.returncode,

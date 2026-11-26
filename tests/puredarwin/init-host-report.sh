@@ -20,7 +20,7 @@ if [[ "${RUNNER_OS:-Linux}" == "macOS" ]]; then
 			/Pages free:|Pages inactive:|Pages speculative:|Pages purgeable:/ {
 				gsub(/[^0-9]/, "", $NF); pages += $NF
 			}
-			END { print pages * page_size + 0 }
+			END { printf "%.0f\n", pages * page_size }
 		')
 	else
 		memory_available=null
@@ -31,8 +31,8 @@ else
 	architecture=$(uname -m)
 	processor=$(awk -F: '/^model name[[:space:]]*:/ { sub(/^[[:space:]]+/, "", $2); print $2; exit }' /proc/cpuinfo)
 	logical_cpus=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo null)
-	memory_total=$(awk '/^MemTotal:/ { print $2 * 1024; exit }' /proc/meminfo)
-	memory_available=$(awk '/^MemAvailable:/ { print $2 * 1024; exit }' /proc/meminfo)
+	memory_total=$(awk '/^MemTotal:/ { printf "%.0f\n", $2 * 1024; exit }' /proc/meminfo)
+	memory_available=$(awk '/^MemAvailable:/ { printf "%.0f\n", $2 * 1024; exit }' /proc/meminfo)
 fi
 
 system=$(clean "$system")
@@ -68,8 +68,7 @@ cat > "$report" <<EOF
     "processor": "$processor",
     "logical_cpus": $logical_cpus,
     "memory_total_bytes": $memory_total,
-    "memory_available_bytes": $memory_available,
-    "memory_available_at_report_bytes": $memory_available
+    "memory_available_before_artifact_preparation_bytes": $memory_available
   },
   "qemu_version": "not checked",
   "profile": "ARM64 Linux, 4 KiB pages, PAC at EL1, fixed 16 GiB QEMU guest-memory setting",
@@ -78,7 +77,7 @@ cat > "$report" <<EOF
     "build": {"path": "build-manifest.txt", "sha256": null, "contents": null},
     "guest": {"path": "guest-manifest.txt", "sha256": null, "contents": null}
   },
-  "preparation_steps": {"status": "native host preflight only; boot has not started"},
+  "preparation_steps": {"status": "native host preflight before artifact preparation; boot has not started"},
   "ram_capacity": {
     "minimum_total_ram_bytes": $total_min,
     "minimum_available_before_qemu_bytes": $available_min,

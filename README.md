@@ -1,19 +1,19 @@
 # xnulinux
 
-Run xnulinux on common x86-64 PCs through QEMU TCG by booting an ARM64 Linux guest, then running FKI/XNU inside that guest through the PureDarwin console. Preserve xnulinux's existing direct ARM64 hosted-XNU path. A macOS Tahoe guest through x86-64 QEMU/KVM is a separate experiment.
+Port xnulinux's hosted-XNU runtime to native x86_64 Linux PCs while preserving its working direct ARM64 path. The x86_64 target is macOS Tahoe 26, the latest macOS release compatible with Intel. The x86_64 hosted runtime is under development; QEMU/KVM guest launching and ARM64 TCG tests are complementary experiments, not proof of the native port.
 
 On ARM64, xnulinux builds XNU, the open-source kernel of macOS, from Apple's published sources and runs it as a loadable kernel
 module (`xnu.ko`) inside an unmodified arm64 Linux kernel. The hosted XNU drives the CPU and MMU directly, so macOS
 processes run natively next to Linux processes on the same CPUs. Linux lends XNU its memory, timers, files, network and
 GPU through a small interface module (`fki.ko`).
 
-On x86-64 PCs, QEMU TCG boots an ARM64 Linux guest, where `fki.ko` and `xnu.ko` run. The target validation reaches a real
-PureDarwin console command and guest-issued halt. Firmware, Linux userspace, FKI allocation, XNU execution, the
-PureDarwin console, and a macOS desktop are separate validation stages; see
-[`docs/portability-validation.md`](docs/portability-validation.md).
+On x86_64 Linux PCs, the target is to build and run architecture-matched `fki.ko` and `xnu.ko` directly in Linux,
+hosting macOS Tahoe 26 x86_64. The port is not complete: no native x86_64 hosted-XNU desktop boot has been validated.
 
-The separate x86-64 QEMU/KVM experiment runs a user-prepared macOS Tahoe guest. It does not use the project's ARM64
-modules and does not establish the TCG/PureDarwin path.
+The repository also contains a QEMU/KVM macOS guest launcher and QEMU TCG ARM64 tests. These are complementary
+experiments and do not satisfy the native x86_64 hosted-XNU target. Firmware, Linux userspace, module builds, the XNU
+module probe, the PureDarwin console, and a macOS desktop are separate validation stages; see
+[`docs/portability-validation.md`](docs/portability-validation.md).
 
 On a supported ARM64 host with a stock Ubuntu kernel, `insmod xnu.ko` boots a macOS 27 system disk made by Apple's own installer to the
 desktop: loginwindow, WindowServer, Dock, Finder, Safari and Chrome.
@@ -48,7 +48,10 @@ host into the hosted Darwin userspace.*
 *Inside the hosted macOS on DGX Spark: About This Mac (`Chip: Unknown`, `7.80 GB` memory, `macOS Golden Gate 27.2`)
 alongside `sysctl machdep.cpu` (`ARM processor`, `hw.cpufamily: 0`, `hw.ncpu: 4`) and `hw.optional.arm`.*
 
-## How it works
+## Current ARM64 hosting model
+
+This diagram and the following CPU/memory details describe the existing ARM64 runtime. The native x86_64 port needs its
+own architecture-specific entry, exception, register, and memory-management implementation.
 
 ```
  macOS processes (launchd, WindowServer, Safari...)    Linux processes (systemd, sshd, xnudrmd...)
@@ -96,15 +99,16 @@ Working on two arm64 Linux setups:
 | Linux host | Guest target | Status |
 |---|---|---|
 | ARM64 with PAC and 4 KiB pages | macOS 27 ARM64 (direct hosted XNU) | Existing supported path; tested on Apple Silicon Linux VMs and NVIDIA DGX Spark as described above. |
-| Intel/AMD x86_64 with QEMU TCG | ARM64 Linux → FKI/XNU → PureDarwin console | Active x86-64 portability target; full acceptance is tracked in #36. The current profile uses 16 GiB guest RAM plus host overhead and does not claim every PC or practical TCG speed. |
-| Intel/AMD x86_64 with VT-x/AMD-V and QEMU/KVM | User-prepared macOS Tahoe 26 x86_64 | Separate experimental path; physical desktop and host-integrity acceptance remain unverified. |
+| Intel x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | Target architecture; FKI/XNU port and physical Intel acceptance are pending. |
+| AMD x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | Target architecture; FKI/XNU port and physical AMD acceptance are pending. |
+| Intel/AMD x86_64 with QEMU/KVM | User-prepared macOS guest | Complementary launcher experiment; does not use the hosted-XNU modules or validate the native port. |
+| Intel/AMD x86_64 with QEMU TCG | ARM64 Linux (complementary test profile) | Linux/module evidence only; not a native x86_64 hosted-XNU result. |
 
-QEMU TCG does not require VT-x/AMD-V. The end-to-end workflow in #36 builds a real PureDarwin disk and free collection,
-boots ARM64 Linux on x86-64, and requires a Darwin console command, guest-issued halt, module unload, and Linux power-off.
-Its current head is still awaiting CI; the profile does not establish compatibility or performance on every PC, a GUI,
-networking, or Tahoe/KVM support. The separate Tahoe/KVM path still needs physical desktop and host-integrity checks. See
+The x86_64 native target is not a support claim yet: the architecture-specific FKI/XNU port and physical Intel and AMD
+desktop boots with Linux host-integrity checks remain to be completed. QEMU/KVM guest launch, x86_64 Linux TCG smoke,
+and ARM64 module-probe results are separate checks and do not establish native x86_64 hosted-XNU support. See
 [`tests/x86_64/README.md`](tests/x86_64/README.md) and [`docs/portability-validation.md`](docs/portability-validation.md)
-for setup and stage-specific evidence.
+for complementary launcher/tests and stage-specific evidence.
 
 Shipping it as a hosted service (what is distributed, what a user installs to run Apple's macOS) is in
 [`docs/hosted-service.md`](docs/hosted-service.md).
@@ -125,25 +129,11 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 - A macOS 27 installation (an Apple Virtualization VM disk) of your own. **No Apple binaries are in this repository or
   distributed by it**: the kexts Apple ships, the macOS system disk and its trust cache come from your own installation.
 
-### x86_64 QEMU TCG path
+### x86_64 native hosted-XNU target
 
-- An x86-64 PC with QEMU 10 or newer. TCG does not require VT-x or AMD-V; it can run on Intel and AMD hosts.
-- An ARM64 Linux image and enough host RAM for the guest plus QEMU/Linux overhead. The full PureDarwin acceptance profile
-  in #36 uses 16 GiB of guest RAM; smaller Linux/FKI profiles are separate and do not validate the PureDarwin boot.
-- The full x86-64 TCG route, its guest kernel, FKI carve-out, and validation limits are documented in
-  [`docs/portability-validation.md`](docs/portability-validation.md).
-
-### Separate experimental x86_64 QEMU/KVM path
-
-- An Intel or AMD x86_64 Linux PC with VT-x or AMD-V, `/dev/kvm` accessible to the running user, and SSE4.2, AVX, FMA,
-  MOVBE, POPCNT, LZCNT, BMI1, AVX2 and BMI2 exposed by the host CPU.
-- QEMU 10 or newer, `qemu-img`, `flock` (from util-linux), and OVMF 4 MiB firmware files. Package names and OVMF paths vary by distribution;
-  override `OVMF_CODE` and `OVMF_VARS_TEMPLATE` when needed.
-- A user-prepared bootable macOS Tahoe 26 x86_64 raw or qcow2 image with a working EFI/OpenCore setup. AMD images must
-  include matching OpenCore AMD kernel patches. No Apple system image is provided here.
-- The 64-byte Apple SMC OSK value supplied locally through `APPLE_SMC_OSK`; do not commit it or paste it into logs. The launcher writes it to a mode-0600 temporary QEMU config, keeps it out of QEMU's argv and environment, and removes the config when QEMU exits.
-- Enough physical RAM for the configured guest allocation plus Linux/QEMU overhead. The default guest allocation is
-  8 GiB and can be changed with `RAM_MB`.
+- Linux on an Intel or AMD x86_64 PC. Kernel versions, CPU features, RAM, and page-size requirements are being established by the port.
+- User-provided macOS Tahoe 26 x86_64 artifacts that match the selected XNU build. No Apple system image or binary is provided here.
+- The native FKI/XNU x86_64 port is under development; the repository's QEMU/KVM launcher is a separate optional experiment.
 
 ## Building and running
 
@@ -166,9 +156,9 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 6. GPU (optional, on the Mac): `gpu/venus/build-darwin.sh` builds the hosted Vulkan driver, `gpu/xnu-cpu-metal/` the
    Metal plugin (see its README).
 
-### Separate experimental x86_64 macOS guest (QEMU/KVM)
+### Experimental x86_64 macOS guest (QEMU/KVM)
 
-This path requires a bootable image prepared separately by the user. QEMU writes macOS changes to a persistent qcow2
+This optional launcher is separate from the native hosted-XNU port and does not count as x86_64 module/runtime acceptance. It requires a bootable image prepared separately by the user. QEMU writes macOS changes to a persistent qcow2
 overlay under `$XDG_STATE_HOME/xnulinux/x86_64` when `XDG_STATE_HOME` is set, or `~/.local/state/xnulinux/x86_64`
 otherwise; OVMF variable state is stored there too. Only one QEMU process can use a state directory at a time; use a
 readable, writable, and searchable `STATE_DIR` for each VM. The source image and firmware templates stay untouched. The overlay grows as the

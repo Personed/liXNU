@@ -1,11 +1,11 @@
 # x86_64 PC support
 
 The native x86_64 hosted-XNU port is in progress. The FKI Linux host backend now builds on x86_64 and preserves the
-existing ARM64 backend, but it reports no XNU execution capabilities. As a result, `xnu.ko` still refuses to load on
-x86_64. The current XNU implementation in `xnu_main.c` and `world.S` is AArch64-only and requires the FKI PAC
-capability. PR #47 adds a separate x86_64 module target that fails closed; it does not execute XNU. A successful FKI
-build is not evidence that macOS runs on x86_64; the architecture-specific XNU entry, context switch, address-space
-and fault paths remain to be implemented and verified.
+existing ARM64 backend, but it reports no XNU execution capabilities. The current XNU implementation in `xnu_main.c`
+and `world.S` is AArch64-only and requires the FKI PAC capability. This PR's base does not contain an x86_64 XNU
+target; separate PR #47 proposes a fail-closed stub and is still pending. Neither this FKI build nor that stub executes
+XNU. The architecture-specific XNU entry, context switch, address-space and fault paths remain to be implemented and
+verified before macOS can run natively on x86_64.
 
 ## Supplemental QEMU/KVM guest path
 
@@ -90,7 +90,8 @@ implemented.
   OVMF, AppleSMC, AHCI, E1000, USB and VGA arguments. This checked command/device setup only.
 - The x86_64 FKI module now builds against Debian 6.12.118 x86_64 headers. It reports zero execution capabilities,
   and the current XNU startup requires `FKI_CAP_PAC`. `xnu_main.c` and `world.S` still contain AArch64-only code;
-  PR #47's x86_64 target only provides a fail-closed stub, and native macOS execution is not implemented.
+  native macOS execution is not implemented. PR #47 proposes an x86_64 fail-closed stub; that separate PR has not yet
+  merged or been validated as part of this change.
 - ARM64 `fki.ko` and `xnu.ko` cross-compiled against Debian 6.12.118 ARM64 headers. This is a build check, not an ARM64
   runtime smoke test.
 - This environment has no `/dev/kvm`, no Tahoe disk and no physical Intel/AMD/ARM hardware. No macOS boot, native KVM

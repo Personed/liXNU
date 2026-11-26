@@ -9,7 +9,6 @@ import re
 import shutil
 import subprocess
 import sys
-import threading
 import time
 
 
@@ -31,6 +30,54 @@ def parse_memory_size(value: str, option: str) -> int:
     if size < 1:
         raise ValueError(f"{option} must be positive")
     return size
+
+
+def run_with_timeout(command: list[str], timeout_seconds: int) -> tuple[int, int, bool]:
+    """Run one direct child, returning its exit status, exact peak RSS in KiB, and timeout flag."""
+    pid = os.fork()
+    if pid == 0:
+        try:
+            os.execvp(command[0], command)
+        except OSError as error:
+            print(f"could not execute {command[0]}: {error}", file=sys.stderr)
+            os._exit(127)
+
+    deadline = time.monotonic() + timeout_seconds
+    kill_deadline = None
+    timed_out = False
+    while True:
+        done, status, usage = os.wait4(pid, os.WNOHANG)
+        if done == pid:
+            if os.WIFEXITED(status):
+                returncode = os.WEXITSTATUS(status)
+            elif os.WIFSIGNALED(status):
+                returncode = -os.WTERMSIG(status)
+            else:
+                returncode = 1
+            return returncode, usage.ru_maxrss, timed_out
+
+        now = time.monotonic()
+        if not timed_out and now >= deadline:
+            timed_out = True
+            kill_deadline = now + 30
+            try:
+                os.kill(pid, 15)
+            except ProcessLookupError:
+                pass
+        elif timed_out and kill_deadline is not None and now >= kill_deadline:
+            try:
+                os.kill(pid, 9)
+            except ProcessLookupError:
+                pass
+            done, status, usage = os.wait4(pid, 0)
+            if os.WIFEXITED(status):
+                returncode = os.WEXITSTATUS(status)
+            elif os.WIFSIGNALED(status):
+                returncode = -os.WTERMSIG(status)
+            else:
+                returncode = 1
+            return returncode, usage.ru_maxrss, timed_out
+        time.sleep(0.1)
 
 
 def main() -> int:
@@ -138,47 +185,15 @@ def main() -> int:
         f"{args.fki_carve_mb} MiB FKI carve-out at {carve_base_hex}, "
         f"XNU RAM {args.xnu_ram_mb} MiB"
     )
-    timeout_cmd = [
-        "timeout", "--foreground", "--signal=TERM", "--kill-after=30s",
-        f"{args.timeout_seconds}s", *command,
-    ]
-    peak_rss_kib = 0
-    stop_monitor = threading.Event()
-
-    def monitor_qemu_rss() -> None:
-        nonlocal peak_rss_kib
-        qemu_name = os.path.basename(qemu)
-        while not stop_monitor.is_set():
-            for pid in filter(str.isdigit, os.listdir("/proc")):
-                try:
-                    with open(f"/proc/{pid}/cmdline", "rb") as cmdline_file:
-                        executable = cmdline_file.read().split(b"\0", 1)[0].decode(errors="ignore")
-                    if not executable.endswith(qemu_name):
-                        continue
-                    with open(f"/proc/{pid}/status", encoding="utf-8") as status_file:
-                        for line in status_file:
-                            if line.startswith("VmRSS:"):
-                                peak_rss_kib = max(peak_rss_kib, int(line.split()[1]))
-                                break
-                except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError):
-                    pass
-            time.sleep(0.2)
-
-    monitor = threading.Thread(target=monitor_qemu_rss, daemon=True)
-    monitor.start()
-    boot_error = None
     try:
-        try:
-            result = subprocess.run(timeout_cmd, check=False, timeout=args.timeout_seconds + 45)
-        except (OSError, subprocess.TimeoutExpired) as error:
-            boot_error = error
-    finally:
-        stop_monitor.set()
-        monitor.join()
+        returncode, peak_rss_kib, timed_out = run_with_timeout(command, args.timeout_seconds)
+    except OSError as error:
+        print(f"TCG boot could not start: {error}", file=sys.stderr)
+        return 1
 
     print(f"QEMU peak RSS: {peak_rss_kib} KiB ({peak_rss_kib / 1048576:.2f} GiB)", flush=True)
-    if boot_error is not None:
-        print(f"TCG boot could not complete: {boot_error}", file=sys.stderr)
+    if timed_out:
+        print(f"TCG boot timed out after {args.timeout_seconds} seconds", file=sys.stderr)
         return 1
 
     log = args.serial_log.read_text(encoding="utf-8", errors="replace") if args.serial_log.exists() else ""
@@ -194,8 +209,8 @@ def main() -> int:
     base_digits = carve_base_hex[2:]
     if not any(re.search(rf"xnu: contiguous DRAM at phys 0x0*{re.escape(base_digits)}\b", line) for line in messages):
         missing.append(f"XNU contiguous DRAM at physical {carve_base_hex}")
-    if result.returncode != 0 or missing:
-        print(f"QEMU exit status: {result.returncode}", file=sys.stderr)
+    if returncode != 0 or missing:
+        print(f"QEMU exit status: {returncode}", file=sys.stderr)
         if missing:
             print("Missing boot evidence: " + "; ".join(missing), file=sys.stderr)
         print("--- serial log tail ---", file=sys.stderr)

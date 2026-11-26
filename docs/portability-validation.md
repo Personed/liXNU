@@ -1,14 +1,11 @@
 <!-- SPDX-License-Identifier: GPL-2.0-only -->
 # Portability validation
 
-Record the **host, runtime, and furthest verified stage** for each result. Booting an
+Record the **host, runtime, and furthest verified stage** for each result. Booting the
 ARM64 Linux VM does not mean that XNU ran. Building or probing a module does not mean
 Darwin userspace ran. A PureDarwin shell does not establish macOS compatibility.
 
-The active x86_64 target is native hosted XNU on Intel/AMD Linux with Tahoe 26; its port
-and physical-host acceptance are not complete. The complementary x86-64 TCG → ARM64
-Linux → PureDarwin console work in [PR #36](https://github.com/Personed/xnulinux/pull/36)
-and the QEMU/KVM guest launcher do not establish the native port.
+The complementary x86-64 TCG → ARM64 Linux → PureDarwin console acceptance is tracked in [PR #36](https://github.com/Personed/xnulinux/pull/36). It does not establish Tahoe/KVM or physical Intel/AMD support.
 
 | Stage | What counts as evidence |
 | --- | --- |
@@ -20,8 +17,7 @@ and the QEMU/KVM guest launcher do not establish the native port.
 | XNU uses the carve-out | With a compatible collection loaded, capture `xnu: contiguous DRAM at phys` and `xnu: contiguous DRAM size` from the host log. Mark this stage only when that complete returned interval lies inside the configured carve-out. The separate FKI probe above does not establish this stage. |
 | PureDarwin userspace | The real, paired PureDarwin disk and free kernel collection boot; execute a command on the Darwin console and observe the result. Record a clean halt separately. |
 | ARM64 hosted macOS desktop | A user-provided compatible system disk and matching XNU collection reach an interactive desktop through the ARM64 FKI/XNU path; record input, rendering backend, and networking separately. |
-| Native x86_64 hosted macOS desktop | Architecture-matched x86_64 `fki.ko` and `xnu.ko` host Tahoe 26 directly on Linux and reach the desktop on a physical Intel or AMD PC. Record host-integrity checks and guest-initiated clean shutdown; report Intel and AMD separately. |
-| Supplemental QEMU/KVM guest desktop | A user-prepared Tahoe 26 x86_64 disk reaches the desktop in a QEMU/KVM guest. This optional launcher does not use the project's x86_64 hosted-XNU modules and is not evidence of the native port. |
+| x86_64 Tahoe desktop | A user-prepared Tahoe 26 x86_64 disk with EFI/OpenCore reaches the desktop under QEMU/KVM on physical Intel or AMD hardware. This launcher does not use the project's ARM64 XNU collection; record KVM use, host-integrity checks, and guest-initiated clean shutdown. |
 
 Report the profile alongside the stage:
 
@@ -45,16 +41,15 @@ Report the profile alongside the stage:
   unload and Linux power-off. The current profile uses 16 GiB guest RAM, 4 KiB pages, PAC
   at EL1, and a fixed FKI carve-out; results apply only to that measured profile and do not
   establish Tahoe/KVM or support on every PC.
-- **Native x86-64 hosted XNU on Intel/AMD Linux:** this is the project target for Tahoe 26.
-  The architecture-specific FKI/XNU port and physical desktop acceptance are still pending.
-  For each host, record the CPU vendor/model/features, Linux kernel and configuration,
-  memory, page size, source and system build, desktop result, host-integrity checks before
-  and after, and guest-issued shutdown. Keep physical Intel and AMD evidence separate.
-- **Supplemental x86-64 macOS guest on Intel/AMD Linux:** the QEMU/KVM launcher in [#16]
-  is an optional guest path, not a port of the FKI/XNU modules. Record QEMU, accelerator,
-  Tahoe build, OpenCore configuration and guest result as launcher evidence only. An
-  x86_64 Linux TCG smoke is not evidence of macOS boot. See
-  [`tests/x86_64/README.md`](../tests/x86_64/README.md) for launcher prerequisites and limits.
+- **x86-64 macOS guest on Intel/AMD Linux:** the QEMU/KVM launcher in [#16] is the
+  project's x86_64 target, not a port of the ARM64 XNU/FKI modules. It remains experimental
+  until physical Intel and AMD hosts reach the Tahoe 26 desktop and pass host-integrity
+  and clean-shutdown checks. Report KVM and TCG separately; an x86_64 Linux TCG smoke is
+  not evidence of macOS boot. For each physical host, record the CPU vendor/model/features,
+  Linux kernel, QEMU version and accelerator, Tahoe build, OpenCore configuration, desktop
+  result, host-integrity checks before and after, and guest-initiated shutdown. The ARM64
+  collection and FKI carve-out fields below do not apply to this profile. See
+  [`tests/x86_64/README.md`](../tests/x86_64/README.md) for host prerequisites and limits.
 
 ## First end-to-end check for a new ARM64 FKI host profile
 
@@ -124,7 +119,7 @@ Report the profile alongside the stage:
 
 ```text
 Repo commit(s) / PR(s):
-Profile (ARM64 hosted XNU, native x86_64 hosted XNU, supplemental QEMU/KVM guest, or TCG test):
+Profile (ARM64 FKI/PureDarwin, x86_64 Tahoe/KVM, or TCG development):
 Outer machine + CPU / OS + version:
 Runtime + version / accelerator:
 TCG Linux stage and result (if applicable; do not label as a macOS result):
@@ -137,14 +132,7 @@ XNU collection revision / digest and matching PureDarwin disk digest:
 XNU stage and contiguous DRAM interval / configured carve-out comparison:
 PureDarwin console command / guest-issued halt result:
 
-Native x86_64 hosted-XNU profile (only when applicable):
-CPU vendor/model/features / Linux kernel / page size / RAM:
-Tahoe build / matching XNU source and collection revision:
-Native hosted desktop / disk, input, network, rendering / result:
-Linux host-integrity checks before and during / result:
-Guest-issued shutdown / module unload / result:
-
-Supplemental QEMU/KVM guest profile (only when applicable):
+x86_64 Tahoe/KVM profile (only when applicable):
 Physical CPU vendor/model/features / Linux kernel / RAM:
 QEMU version / KVM active (yes/no):
 Tahoe build / prepared disk SHA-256 / OpenCore version and configuration:

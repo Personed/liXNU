@@ -208,7 +208,7 @@ verify_firehose_header_closure() {
 }
 
 verify_firehose_compile_arguments() {
-  if ! python3 - "$LIBDISPATCH_LOG" "$LIBDISPATCH_BUILD_DIR/obj" "$SDK_DIR" <<'PY'
+  if ! python3 - "$LIBDISPATCH_LOG" "$LIBDISPATCH_BUILD_DIR/obj" "$SDK_DIR" "$BASE_SDK_DIR" <<'PY'
 import os
 import pathlib
 import shlex
@@ -218,6 +218,7 @@ import tempfile
 log_path = pathlib.Path(sys.argv[1])
 objroot = pathlib.Path(sys.argv[2]).resolve()
 sdk_root = pathlib.Path(sys.argv[3]).resolve()
+base_sdk_root = pathlib.Path(sys.argv[4]).resolve()
 if not log_path.is_file():
     raise SystemExit(f"missing libdispatch build log: {log_path}")
 
@@ -294,8 +295,8 @@ for args in argument_sets:
             # Clang's joined form is -isysroot<dir>; preserve '=' as part of
             # the path so an unsupported -isysroot=<dir> cannot false-pass.
             sysroots.append(arg[len("-isysroot"):])
-if not sysroots or any(pathlib.Path(path).resolve() != sdk_root for path in sysroots):
-    raise SystemExit(f"Firehose compile uses SDKROOT {sysroots}; expected only {sdk_root}")
+if not sysroots or any(pathlib.Path(path).resolve() != base_sdk_root for path in sysroots):
+    raise SystemExit(f"Firehose compile uses SDKROOT {sysroots}; expected only {base_sdk_root}")
 
 include_paths = []
 for args in argument_sets:
@@ -320,10 +321,11 @@ if missing:
     raise SystemExit(f"Firehose compiler is missing staged SDK include paths: {missing}")
 
 print(f"Verified Firehose compiler response file: {response_path}")
-print(f"Verified Firehose SDKROOT and staged include paths: {sdk_root}")
+print(f"Verified Firehose base SDKROOT: {base_sdk_root}")
+print(f"Verified staged XNU header include paths: {sdk_root}")
 PY
   then
-    fail 'Firehose compile command did not use the staged XNU SDK overlay'
+    fail 'Firehose compile command did not use the Xcode base SDK and staged XNU header overlay'
   fi
 }
 
@@ -521,10 +523,9 @@ mkdir -p "$LIBDISPATCH_BUILD_DIR/obj" "$LIBDISPATCH_BUILD_DIR/sym" "$LIBDISPATCH
 printf 'Building libfirehose_kernel from %s for x86_64\n' "$LIBDISPATCH_TAG"
 if xcodebuild \
   -project "$LIBDISPATCH_SOURCE_DIR/libdispatch.xcodeproj" \
-  -target libfirehose_kernel -configuration Release -sdk "$SDK_DIR" \
+  -target libfirehose_kernel -configuration Release -sdk macosx \
   ARCHS=x86_64 VALID_ARCHS=x86_64 PRODUCT_NAME=firehose_kernel \
   HEADER_SEARCH_PATHS="\$(inherited) $SDK_DIR/usr/local/include $SDK_DIR/usr/local/include/os $SDK_DIR/usr/local/include/firehose" \
-  SDKROOT="$SDK_DIR" \
   OBJROOT="$LIBDISPATCH_BUILD_DIR/obj" SYMROOT="$LIBDISPATCH_BUILD_DIR/sym" \
   DSTROOT="$LIBDISPATCH_DSTROOT" \
   install >"$LIBDISPATCH_LOG" 2>&1; then

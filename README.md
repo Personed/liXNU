@@ -130,10 +130,8 @@ On Linux, build the probe against the supplied ARM64 kernel headers and run the 
 Python 3 and zstd:
 
 ```sh
-make -C "$KDIR" M="$PWD/tests/qemu" \\
-  KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
-tests/qemu/run.sh /path/to/arm64/vmlinuz /path/to/arm64/static-busybox \\
-  /path/to/fki.ko /path/to/xnu.ko tests/qemu/fki-carve-probe.ko
+make -C "$KDIR" M="$PWD/tests/qemu" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
+tests/qemu/run.sh /path/to/arm64/vmlinuz /path/to/arm64/static-busybox /path/to/fki.ko /path/to/xnu.ko tests/qemu/fki-carve-probe.ko
 ```
 
 Build the modules against the supplied ARM64 kernel's headers. To run the check on a different host, prepare

@@ -70,8 +70,12 @@ Report the profile alongside the stage:
   not show that all guest RAM stayed resident or rule out host overcommit/swap. This is
   TCG evidence for that workflow, not native-hosted-XNU evidence or the synchronized
   #52/#62/#64/#58 cross-host acceptance. PR #50 is not yet integrated into #36.
-  PR #52 image run #91 passed, with modules run #600 queued; its fixed expected package
-  digests and package-availability checks remain pending. PR #57 run #92 remains in
+  PR #52 run #91 passed the pinned-package build, guest-preparation, and TCG console/halt
+  workflow using package `7.0.0-44.44~24.04.1`; modules run #600 remains queued, while
+  fixed expected package digests remain pending. Its Microsoft-hypervisor Ubuntu runner
+  exposed an AMD EPYC 9V45 virtual CPU, 4 vCPU, and 16,367,524 kB total RAM (about 15.6
+  GiB), also below the 20 GiB reference screen; this is virtualized AMD-model evidence,
+  not physical AMD acceptance. PR #57 run #92 remains in
   progress, with modules run #602 queued; PR #58 run #90 failed, with modules run #597
   queued; and follow-up PR #64 run #95 is in progress, with modules run #644 queued.
   Their launcher checks passed, but these stacked results do not replace an integrated
@@ -80,7 +84,7 @@ Report the profile alongside the stage:
   The earlier Windows run #71 faulted while loading XNU with an older kernel layout and is
   not a Windows compatibility result. The proposed Windows (16 GB) and Intel-macOS (14 GB)
   runners are below the 16 GiB guest allocation plus host overhead; a larger runner or
-  separately validated profile remains necessary. Status checked 2026-11-26 17:33 UTC.
+  separately validated profile remains necessary. Status checked 2026-11-26 17:35 UTC.
 
   Merged PR #62 and follow-up PR #64 record separate local evidence using the exact #52
   kernel package `7.0.0-44.44~24.04.1`: both ARM64 modules built against its headers, the

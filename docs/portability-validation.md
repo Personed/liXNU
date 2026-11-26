@@ -64,7 +64,10 @@ Report the profile alongside the stage:
   head `97727ac` adds a file-backed range check; run #74 is rebuilding it, so run #72 does not yet validate that
   changed head. The Ubuntu kernel package is still selected at runtime rather than pinned. Cross-host Windows and
   Intel-macOS checks are proposed in [#46](https://github.com/Personed/xnulinux/pull/46); its run #75 is building
-  the guest image and has not reached the host matrix. Its proposed
+  the guest image and has not reached the host matrix. An earlier Windows job (#71) started QEMU 11.1.0 but hit an
+  ARM64 write-permission fault in `macho_copy` while loading `xnu.ko` with the older #44 kernel layout; it did not
+  reach a Darwin marker, so this is not a Windows host pass or a Windows host limitation. PR #50 proposes relocating
+  `__KLD`/`__LAST` and relinking; repeat the host matrix with that accepted layout. The proposed
   public runners have 16 GB (Windows) and 14 GB (Intel macOS), below guest allocation
   plus host overhead; larger runners or a validated lower-memory profile are needed
   before those rows can be supported. This profile does not establish a universal

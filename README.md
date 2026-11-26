@@ -151,8 +151,8 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 
 Run `scripts/xnulinux-boot.sh --check` on the Linux host (inside the Linux VM if you use one). It checks the
 architecture, page size, headers for the running kernel, and the compiler selected by Kbuild before you prepare a disk. It also
-reports when Linux does not advertise address pointer authentication. Booting XNU also depends on the FKI
-backend and its memory setup.
+reports when Linux does not advertise address pointer authentication. Use the [host-preparation guide](docs/hosted-service.md#3-operator-preparing-a-host)
+for FKI carve-out setup; booting XNU also depends on the FKI backend and its memory setup.
 
 - An arm64 Linux host with PAC (`FEAT_PAuth`), 4K pages, and at least 16 GB of RAM (8 GB reserved for the hosted
   kernel). Tested on:

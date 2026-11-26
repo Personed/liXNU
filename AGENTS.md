@@ -36,13 +36,18 @@ Do not leave parallel agents to infer ownership from the code. Use the PR commen
 
 ## Validation
 
-For x86_64 architecture, module, or documentation changes, run the relevant checks:
+Keep x86_64 and ARM64 kernel header trees separate. The x86_64 FKI build compiles only the host backend; the x86_64 XNU target is a refusal stub, not a runtime implementation. The x86_64 stub-load test taints its kernel and must run only in a disposable VM. CI covers the x86_64 FKI build, the x86_64 fail-closed XNU test, and the ARM64 module build.
 
 ```sh
-make -C "$KDIR" M="$PWD/fki-ko" ARCH=x86_64 modules
-make -C "$KDIR" M="$PWD/xnu-ko" ARCH=x86_64 modules
-make -C "$KDIR" M="$PWD/fki-ko" ARCH=arm64 modules
-make -C "$KDIR" M="$PWD/xnu-ko" ARCH=arm64 modules
+X86_KDIR=/path/to/x86_64/kernel-headers
+ARM64_KDIR=/path/to/arm64/kernel-headers
+
+tests/x86_64/build-fki.sh "$X86_KDIR"
+make -C "$X86_KDIR" M="$PWD/xnu-ko" modules
+tests/x86_64/test-xnu-stub-vm.sh "$X86_KDIR"  # disposable x86_64 Linux VM only
+
+make -C "$ARM64_KDIR" M="$PWD/fki-ko" modules
+make -C "$ARM64_KDIR" M="$PWD/xnu-ko" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
 git diff --check
 ```
 

@@ -13,8 +13,33 @@ if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
   exit 2
 fi
 ROOT=$1 OUT=$2 SIZE=${3:-1g}
+case "$OUT" in
+  /*) ;;
+  *) OUT=$PWD/$OUT ;;
+esac
+OUT_DIR=$(dirname "$OUT")
+if [ ! -d "$OUT_DIR" ]; then
+  echo "Output directory does not exist: $OUT_DIR" >&2
+  exit 1
+fi
+if [ -e "$OUT" ] || [ -L "$OUT" ]; then
+  echo "Refusing to replace existing output path: $OUT" >&2
+  exit 1
+fi
 as_root=()
 if [ "$EUID" -ne 0 ]; then as_root=(sudo); fi
+
+publish_disk() {
+  # A hard link publishes the completed image without replacing a destination
+  # created after the initial check. Keep the staging file in OUT_DIR so both
+  # paths are on the same filesystem.
+  if ! ln "$D" "$OUT"; then
+    echo "Cannot publish $OUT; it may have appeared during the build, or the output filesystem may not support hard links." >&2
+    return 1
+  fi
+  rm "$D"
+  D=''
+}
 
 populate_root() {
   if [ "$(uname -s)" = Linux ]; then
@@ -49,7 +74,7 @@ make_linux_disk() {
   # Keep the output file intact if formatting, extraction or unmounting fails.
   D='' M='' loop='' mounted=''
   trap cleanup_linux_disk EXIT
-  D=$(mktemp "$(dirname -- "$OUT")/.puredarwin-disk.XXXXXX")
+  D=$(mktemp "$OUT_DIR/.puredarwin-disk.XXXXXX")
   M=$(mktemp -d)
   truncate -s "$SIZE" -- "$D"
   sfdisk --quiet "$D" >/dev/null <<'GPT'
@@ -68,7 +93,7 @@ GPT
   mounted=
   "${as_root[@]}" losetup -d "$loop"
   loop=
-  mv -T -- "$D" "$OUT"
+  publish_disk
 }
 
 cleanup_linux_disk() {
@@ -79,24 +104,42 @@ cleanup_linux_disk() {
 }
 
 make_macos_disk() {
-  M=$(mktemp -d); D="$OUT.dmg"
-  rm -f "$D"
+  M=$(mktemp -d)
+  IMG_DIR=$(mktemp -d "$OUT_DIR/.puredarwin-disk.XXXXXX")
+  D=$IMG_DIR/pd.dmg
+  mounted=1
+  trap cleanup_macos_disk EXIT
   hdiutil create -quiet -size "$SIZE" -fs "Journaled HFS+" -volname PureDarwin -layout GPTSPUD "$D"
   hdiutil attach -quiet -owners on -nobrowse -mountpoint "$M" "$D"
-  trap 'hdiutil detach -quiet "$M" 2>/dev/null || true' EXIT
   populate_root
-  local plist
   plist=$(mktemp)
   diskutil info -plist "$M" > "$plist"
   uuid=$(plutil -extract DiskUUID raw "$plist")
   rm -f "$plist"
-  sync; hdiutil detach -quiet "$M"; trap - EXIT; rmdir "$M"
-  mv "$D" "$OUT"
+  sync
+  hdiutil detach -quiet "$M"
+  mounted=''
+  rmdir "$M"
+  M=''
+  publish_disk
+}
+
+cleanup_macos_disk() {
+  if [ -n "$mounted" ]; then
+    if ! hdiutil detach -quiet "$M" 2>/dev/null; then
+      echo "Could not detach the HFS+ volume; leaving the staged disk image at $D." >&2
+      return 1
+    fi
+    mounted=''
+  fi
+  if [ -n "$M" ]; then rmdir "$M" || return 1; M=''; fi
+  if [ -n "$D" ]; then rm -f "$D" || return 1; D=''; fi
+  if [ -n "$IMG_DIR" ]; then rmdir "$IMG_DIR" || return 1; IMG_DIR=''; fi
 }
 
 case "$(uname -s)" in
   Linux) make_linux_disk ;;
-  Darwin) make_macos_disk ;;
+  Darwin) D='' M='' IMG_DIR='' mounted=''; make_macos_disk ;;
   *) echo "PureDarwin disk creation requires Linux or macOS." >&2; exit 1 ;;
 esac
 printf 'ROOT_UUID=%s\nBOOT_UUID=%s\n' "$uuid" "$uuid"

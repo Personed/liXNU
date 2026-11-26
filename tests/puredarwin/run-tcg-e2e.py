@@ -93,6 +93,10 @@ def host_facts() -> dict:
     }
 
 
+def qemu_path(path: Path) -> str:
+    return path.resolve().as_posix()
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -185,15 +189,15 @@ def main() -> int:
         "-m", "16G",
         "-nodefaults",
         "-display", "none",
-        "-serial", f"file:{args.serial_log}",
+        "-serial", f"file:{qemu_path(args.serial_log)}",
         "-monitor", "none",
         "-no-reboot",
         "-object", "rng-builtin,id=rng0",
         "-device", "virtio-rng-device,rng=rng0",
-        "-drive", f"if=none,id=puredarwin,format=raw,file={args.disk}",
+        "-drive", f"if=none,id=puredarwin,format=raw,file={qemu_path(args.disk)}",
         "-device", "virtio-blk-device,drive=puredarwin",
-        "-kernel", str(args.kernel),
-        "-initrd", str(args.initramfs),
+        "-kernel", qemu_path(args.kernel),
+        "-initrd", qemu_path(args.initramfs),
         "-append", "console=ttyAMA0 rdinit=/init nokaslr mem=7G loglevel=1",
     ]
     print(f"Host: {host['system']} {host['release']} ({host['architecture']})")

@@ -2,25 +2,20 @@
 
 ## Project goal
 
-Run xnulinux on common x86-64 PCs through QEMU TCG by booting an ARM64 Linux guest, then loading FKI/XNU inside that guest and advancing to the PureDarwin console. Keep the existing native ARM64 hosted-XNU path working.
+Run macOS on Intel and AMD x86_64 PCs through QEMU/KVM while preserving the working ARM64 hosted-XNU path.
 
-- **x86-64 PC via QEMU TCG:** boot ARM64 Linux and run the ARM64-only `fki.ko` and `xnu.ko` modules inside that guest. The target for this goal is a real PureDarwin console command and guest-issued clean halt. TCG does not require VT-x/AMD-V, but memory needs and speed vary by PC; report the exact tested profile and do not claim every PC from one CI run.
-- **Native ARM64 Linux:** preserve the existing direct XNU-in-Linux runtime using `fki.ko` and `xnu.ko`, including its build and runtime behavior.
-- **Separate x86-64 macOS/KVM experiment:** a user-prepared Tahoe guest is a distinct experiment. The project modules remain ARM64-only; do not present them as an x86 runtime or add unsafe no-op x86 hooks. A Linux TCG boot is not evidence of a macOS/KVM boot.
+- **ARM64 Linux:** preserve the existing direct XNU-in-Linux runtime using `fki.ko` and `xnu.ko`, including its build and runtime behavior.
+- **x86_64 Intel and AMD Linux:** use QEMU/KVM to run a user-prepared macOS Tahoe 26 x86_64 guest, the latest macOS release compatible with Intel. The project modules and world-switch code remain ARM64-only; do not present them as an x86_64 runtime or add unsafe no-op x86 hooks.
+- **ARM64 Linux under QEMU TCG on an x86_64 PC:** keep this as a complementary compatibility and development profile for the PureDarwin console. It does not replace the native x86_64 macOS guest target and does not establish Tahoe, KVM, or physical-hardware support.
+- Keep Intel and AMD acceptance separate. Launcher tests and TCG Linux checks do not establish support. Claim support for a vendor only after a physical host boots Tahoe to the desktop and passes host-integrity and shutdown checks.
 
-## x86-64 QEMU TCG guest
+## x86_64 macOS/KVM runtime
 
-- Use QEMU TCG on the x86-64 PC to boot ARM64 Linux; build and load `fki.ko` and `xnu.ko` inside the guest. Firmware, Linux userspace, FKI allocation, XNU execution, the PureDarwin console, and guest shutdown are separate evidence stages.
-- The full PureDarwin acceptance profile in #36 uses 16 GiB of ARM64 guest RAM plus host overhead. Record the host CPU, RAM, OS, QEMU version, guest kernel/config, carve-out and console result. Do not claim practical TCG speed or compatibility with lower-memory PCs until those profiles are tested.
-- TCG acceptance does not establish a desktop, GPU, networking, KVM, macOS, or universal hardware support.
-
-## Separate x86-64 macOS/KVM experiment
-
-- This path is separate from the active TCG/PureDarwin goal. KVM is its default accelerator. QEMU 10 or newer, `qemu-img`, and `flock` (util-linux) are required. QEMU `host` is the default guest CPU model under KVM so the guest sees the host's actual CPU model/features. TCG is also available for the x86 macOS launcher tests and defaults to QEMU `max`.
+- KVM is the default accelerator. QEMU 10 or newer, `qemu-img`, and `flock` (util-linux) are required. QEMU `host` is the default guest CPU model under KVM so the guest sees the host's actual CPU model/features. TCG is an explicit development/test path only and defaults to QEMU `max`.
 - The x86 host feature floor is SSE4.2, AVX, FMA, MOVBE, POPCNT, LZCNT, BMI1, AVX2 and BMI2. AMD guests need matching OpenCore AMD kernel patches and physical AMD validation.
 - The x86 launcher accepts a user-prepared raw or qcow2 boot disk with EFI/OpenCore. It writes guest changes to a persistent qcow2 overlay and keeps OVMF variables in the per-VM state directory. `STATE_DIR` must be readable, writable, and searchable so the launcher can check existing disk state. A state directory is for one VM and one running QEMU process. The `.base` sidecar identifies launcher-owned overlays; a user source image with the reserved overlay filename pattern is accepted when it has no matching sidecar. Existing overlays may be stored elsewhere and symlinked into `STATE_DIR` if the link resolves to a regular file. Do not use that VM's managed overlay as `DISK` with the same state directory; choose its original base or a separate directory to fork the overlay. Do not write to the source disk or firmware template.
 - Do not add Apple macOS images, Apple firmware, or the local `APPLE_SMC_OSK` value to Git or logs. Never put the SMC value in QEMU's argv or environment; pass it through a mode-0600 temporary QEMU config that is removed after exit. Do not claim that a TCG Linux boot is a macOS or KVM test.
-- Keep user-visible feature/support tables precise: native ARM64 and ARM64-in-TCG use the hosted XNU modules; the separate macOS experiment uses a QEMU/KVM guest.
+- Keep user-visible feature/support tables precise: ARM64 uses the hosted XNU modules; x86_64 uses a QEMU/KVM macOS guest. Label the ARM64 TCG path separately.
 
 ## Required PR coordination
 
@@ -34,7 +29,7 @@ Project work is coordinated continuously through pull request comments. For **ev
 
 ## Merge policy
 
-Do not merge or enable auto-merge without explicit user authorization. Green checks are required for validation but do not grant merge permission. Never merge while a required check is pending or failed.
+The project owner explicitly authorized merging pull requests as soon as all required automated checks are green; do not wait for a human review. Never merge while a required check is pending or failed. Use auto-merge when it is available and enforces the checks; otherwise monitor the checks and merge directly once they are green. If a repository rule independently requires human approval and blocks a merge, report the exact restriction and continue other work; do not disable repository protections without separate authorization.
 
 Do not leave parallel agents to infer ownership from the code. Use the PR comments to divide overlapping work and confirm interface changes. Continue independent work while waiting on a reply; record unresolved dependencies in the PR.
 

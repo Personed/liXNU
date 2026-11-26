@@ -65,13 +65,16 @@ Report the profile alongside the stage:
   failed run #74 before boot on the same file-backed overlap. PR #50's segment relocation
   workflow run #89 passed its own end-to-end Linux x86-64 TCG route on the #36 head plus
   the #50 relocation: source build, guest preparation, Darwin console
-  `XNULINUX_USERLAND_OK`, guest halt, XNU unload, Linux power-off, and QEMU exit all passed
+  `XNULINUX_USERLAND_OK`, guest halt, XNU/FKI unload, Linux power-off, and QEMU exit all passed
   on Ubuntu 24.04.5 x86-64 with QEMU 8.2.2. Its nested KVM-backed Intel runner reported
   runner-OS `MemTotal` of 15.3 GiB, below the #36 20 GiB reference screen; outer physical
   RAM and available RAM before artifact preparation were not reported. Functional success
   does not show that all guest RAM stayed resident or rule out host overcommit/swap. This is
-  TCG evidence for that workflow, not native-hosted-XNU evidence or the synchronized
-  #52/#62/#64/#58 cross-host acceptance. PR #50 is not yet integrated into #36.
+  The guest init runs `rmmod xnu` and then `rmmod fki`, and emits its unload
+  marker only after both checks pass. The relocation code is integrated into the current
+  #36 source branch at `93e3cf4`, but run #89 predates that head; no current-head
+  end-to-end rerun is recorded yet. This remains virtualized TCG evidence, not physical-PC
+  acceptance, native hosted-XNU evidence, or the synchronized #52/#62/#64/#58 host matrix.
   PR #52 run #91 passed the pinned-package build, guest-preparation, and TCG console/halt
   workflow using package `7.0.0-44.44~24.04.1`. Its Microsoft-hypervisor Ubuntu runner
   exposed an AMD EPYC 9V45 virtual CPU, 4 vCPU, and runner-OS `MemTotal` of 16,367,524 kB

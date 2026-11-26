@@ -489,7 +489,16 @@ int fki_window_l1(unsigned long va, unsigned long long **l1_va, fki_u64 *l1_pa)
 		if (!page)
 			return -ENOMEM;
 		pa = virt_to_phys(page);
-		old = cmpxchg(&l0[idx], 0, pa | 3);
+		{
+			struct page *root_page = phys_to_page(ttbr1 & ~0xfffULL);
+			u64 *l0_write = vmap(&root_page, 1, VM_MAP, PAGE_KERNEL);
+			if (!l0_write) {
+				free_page((unsigned long)page);
+				return -ENOMEM;
+			}
+			old = cmpxchg(&l0_write[idx], 0, pa | 3);
+			vunmap(l0_write);
+		}
 		if (old) {
 			free_page((unsigned long)page);
 			if ((old & 3) != 3)
@@ -683,7 +692,6 @@ int fki_arch_init(void)
 void fki_arch_exit(void)
 {
 	u64 ttbr1 = read_sysreg(ttbr1_el1) & GENMASK_ULL(47, 1);
-	u64 *l0 = phys_to_virt(ttbr1 & ~0xfffULL);
 	int i;
 
 	for (i = 0; i < 512; i++) {
@@ -700,7 +708,17 @@ void fki_arch_exit(void)
 		for (j = 0; j < 512; j++)
 			if (l1[j])
 				used = 1;
-		if (!used && cmpxchg(&l0[i], desc, 0) == desc) {
+		if (!used) {
+			struct page *root_page = phys_to_page(ttbr1 & ~0xfffULL);
+			u64 *l0_write = vmap(&root_page, 1, VM_MAP, PAGE_KERNEL);
+			u64 old = -1;
+			if (l0_write) {
+				old = cmpxchg(&l0_write[i], desc, 0);
+				vunmap(l0_write);
+			}
+			used = old != desc;
+		}
+		if (!used) {
 			dsb(ishst);
 			__tlbi(vmalle1is);
 			dsb(ish);

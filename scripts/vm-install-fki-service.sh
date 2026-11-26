@@ -44,38 +44,67 @@ if [ -f "$GRUB_DEFAULT" ]; then
   sudo mkdir -p "$GRUB_DEFAULT_DIR"
   echo "GRUB_CMDLINE_LINUX=\"\$GRUB_CMDLINE_LINUX $CMDLINE_ARGS\"" | sudo tee "$G" >/dev/null
 
-  if [ -d "$BLS_ENTRIES" ]; then
+  BLS_ENABLED=0
+  if [ -d "$BLS_ENTRIES" ] && ! grep -qE '^[[:space:]]*GRUB_ENABLE_BLSCFG=(false|no|0|"false"|'\''false'\'')' "$GRUB_DEFAULT" 2>/dev/null; then
+    BLS_ENABLED=1
+  fi
+
+  if [ "$BLS_ENABLED" = 1 ]; then
     GRUBBY_BIN=$(resolve_command grubby)
     if [ -z "$GRUBBY_BIN" ]; then
       echo "error: BLS boot entries found, but grubby is required to apply and verify '$CMDLINE_ARGS'" >&2
       exit 1
     fi
     sudo "$GRUBBY_BIN" --update-kernel=ALL --args="$CMDLINE_ARGS"
-    BLS_ENTRY_COUNT=0
-    for entry in "$BLS_ENTRIES"/*.conf; do
-      [ -f "$entry" ] || continue
-      BLS_ENTRY_COUNT=$((BLS_ENTRY_COUNT + 1))
-      if ! awk -v expected="mem=$LINUX_MEM" '
-        $1 == "options" {
-          option_lines++
+    if GRUBBY_INFO=$(sudo "$GRUBBY_BIN" --info=ALL 2>/dev/null) && printf '%s\n' "$GRUBBY_INFO" | grep -q '^args='; then
+      if ! printf '%s\n' "$GRUBBY_INFO" | awk -v expected="mem=$LINUX_MEM" '
+        /^args=/ {
+          val = substr($0, 6)
+          gsub(/^"|"$/, "", val)
+          entries++
+          n = split(val, a, /[[:space:]]+/)
           count = 0
-          for (i = 2; i <= NF; i++) {
-            if ($i ~ /^mem=/) {
+          for (i = 1; i <= n; i++) {
+            if (a[i] ~ /^mem=/) {
               count++
-              if ($i != expected) wrong = 1
+              if (a[i] != expected) wrong = 1
             }
           }
           if (count != 1) wrong = 1
         }
-        END { exit (wrong || option_lines != 1) }
-      ' "$entry"; then
-        echo "error: BLS entry does not contain exactly one effective mem=$LINUX_MEM argument: $entry" >&2
+        END { exit (wrong || entries == 0) }
+      '; then
+        echo "error: BLS entries do not contain exactly one effective mem=$LINUX_MEM argument (checked via grubby --info=ALL)" >&2
         exit 1
       fi
-    done
-    if [ "$BLS_ENTRY_COUNT" -eq 0 ]; then
-      echo "error: BLS boot entries directory contains no kernel entries: $BLS_ENTRIES" >&2
-      exit 1
+    else
+      if ! sudo sh -c '
+        dir=$1; expected=$2; count=0
+        for entry in "$dir"/*.conf; do
+          [ -f "$entry" ] || continue
+          count=$((count + 1))
+          awk -v expected="$expected" "
+            \$1 == \"options\" {
+              option_lines++
+              c = 0
+              for (i = 2; i <= NF; i++) {
+                if (\$i ~ /^mem=/) {
+                  c++
+                  if (\$i != expected) wrong = 1
+                }
+              }
+              if (c != 1) wrong = 1
+            }
+            END { exit (wrong || option_lines != 1) }
+          " "$entry" || { echo "error: BLS entry does not contain exactly one effective $expected argument: $entry" >&2; exit 1; }
+        done
+        if [ "$count" -eq 0 ]; then
+          echo "error: BLS boot entries directory contains no kernel entries: $dir" >&2
+          exit 1
+        fi
+      ' sh "$BLS_ENTRIES" "mem=$LINUX_MEM"; then
+        exit 1
+      fi
     fi
   elif UPDATE_GRUB_BIN=$(resolve_command update-grub) && [ -n "$UPDATE_GRUB_BIN" ]; then
     sudo "$UPDATE_GRUB_BIN" >/dev/null 2>&1

@@ -6,6 +6,12 @@ on:
   push:
   pull_request:
 jobs:
+  cli-installer:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: CLI and installer tests
+        run: sudo python3 -m unittest -v tests.host.test_cli
   build:
     runs-on: ubuntu-24.04-arm
     steps:

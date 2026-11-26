@@ -10,6 +10,19 @@ concurrency:
   group: modules-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  build-x86_64-fki:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Kernel headers
+        run: |
+          sudo apt-get update -qq
+          pkg=$(apt-cache search --names-only '^linux-headers-[0-9.]+-[0-9]+-generic$' | awk '{print $1}' | sort -V | tail -1)
+          test -n "$pkg" || { echo "no x86_64 generic kernel headers found" >&2; exit 1; }
+          sudo apt-get install -y -qq "$pkg" >/dev/null
+          echo "KDIR=/usr/src/$pkg" >> "$GITHUB_ENV"
+      - name: Build x86_64 FKI host backend
+        run: tests/x86_64/build-fki.sh "$KDIR"
   build:
     runs-on: ubuntu-24.04-arm
     steps:

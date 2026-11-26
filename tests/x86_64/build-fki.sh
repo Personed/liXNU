@@ -14,5 +14,5 @@ BUILD=$(mktemp -d)
 trap 'rm -rf "$BUILD"' EXIT
 
 cp -a "$REPO/fki-ko" "$BUILD/fki-ko"
-make -C "$KDIR" M="$BUILD/fki-ko" modules
+make -C "$KDIR" M="$BUILD/fki-ko" CONFIG_DEBUG_INFO_BTF_MODULES= modules
 test -s "$BUILD/fki-ko/fki.ko"

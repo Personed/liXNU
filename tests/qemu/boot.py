@@ -18,6 +18,11 @@ def guest_reported_success(log):
     )
 
 
+def reports_smoke_success(log: str) -> bool:
+    marker = "xnulinux QEMU smoke test passed"
+    return any(line.startswith(marker) for line in log.splitlines())
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("images", type=Path, help="directory with Image and initramfs from prepare.sh")
@@ -57,7 +62,7 @@ def main():
 
     if result.returncode:
         return result.returncode
-    if not guest_reported_success(log):
+    if not reports_smoke_success(log):
         print("Guest did not report a successful smoke test", file=sys.stderr)
         return 1
     return 0

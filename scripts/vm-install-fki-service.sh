@@ -93,7 +93,7 @@ if [ -f "$GRUB_DEFAULT" ]; then
 
   BLS_ENABLED=0
   if [ -d "$BLS_ENTRIES" ]; then
-    BLS_CFG_VAL=$(awk -F= '/^[[:space:]]*GRUB_ENABLE_BLSCFG=/{v=$2; gsub(/["'\''[:space:]]/, "", v); last=v} END{print last}' "$GRUB_DEFAULT" 2>/dev/null || true)
+    BLS_CFG_VAL=$(awk -F= '/^[[:space:]]*GRUB_ENABLE_BLSCFG=/{v=$2; sub(/[[:space:]]#.*/, "", v); gsub(/["'\''[:space:]]/, "", v); last=v} END{print last}' "$GRUB_DEFAULT" 2>/dev/null || true)
     case "$BLS_CFG_VAL" in
       false|no|0) BLS_ENABLED=0 ;;
       *) BLS_ENABLED=1 ;;

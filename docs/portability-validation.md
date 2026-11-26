@@ -65,7 +65,9 @@ profile with 6 GiB QEMU RAM, Linux `mem=2G`, a 3,072 MiB FKI carve-out at `0xc00
 and 2,816 MiB XNU RAM. It reported host `MemTotal: 16078392 kB`,
 `MemAvailable: 15173240 kB` before artifacts and `14787768 kB` at boot, plus QEMU peak RSS
 3,826,452 KiB (3.65 GiB). The console, guest halt, XNU/FKI unload, Linux power-off, and QEMU
-exit 0 passed. The tested init prints `XNULINUX_E2E_XNU_UNLOADED` only after `rmmod xnu`
+exit 0 passed. This run used the valid 4 KiB / 48-bit TTBR1 geometry; it did not inject an
+incompatible geometry and does not establish that the guard rejects one. The tested init
+prints `XNULINUX_E2E_XNU_UNLOADED` only after `rmmod xnu`
 and `rmmod fki` both succeed ([source at the run's head](https://github.com/Personed/xnulinux/blob/e61f578799257685b2c1741afd7fba43c947cf69/tests/puredarwin/init#L101-L109)). Earlier #52 run #138
 and #69 run #115 also passed this profile, with #138 reporting XNU/FKI unload. A separate
 local 6 GiB boot measured 3,851,024 KiB (3.67 GiB) RSS. These results establish a
@@ -241,7 +243,10 @@ Report the profile alongside the stage:
   3,072 MiB FKI at `0xc0000000`, 2,816 MiB XNU, and a 6,144 MiB QEMU RSS cap). PR #52 pins
   the guest package `7.0.0-44.44~24.04.1` and snapshot `20261126T000000Z`; follow-up #75
   contains fixed `.deb` SHA-256 checks and validation of built-in VirtIO configuration
-  when module files are absent.
+  when module files are absent. The #36 workflow selects the latest Ubuntu generic ARM64
+  kernel package at runtime; the #52 profile uses its pinned version and snapshot. Treat
+  those as different kernel inputs and compare each run's manifests rather than assuming
+  their results use the same kernel.
 
   Earlier #36 run #72 on head `5312b29` printed console and shutdown markers, but is not
   a valid pass because the built collection contained a file-backed `__TEXT_EXEC` / `__KLD`
@@ -272,7 +277,9 @@ Report the profile alongside the stage:
   Windows and macOS full-route results, and all memory-sweep profile outcomes, remain
   pending. PR #36 run #118 passed on
   tested head `c55a700`, not current head `93e3cf4`. PR #46 run #79 failed in `kclink`
-  before host preparation or boot. Keep every result tied to its tested SHA and base.
+  before host preparation or boot. The earlier Windows run #71 reached XNU loading but
+  failed with an older kernel layout; it is not Windows compatibility evidence. Keep every
+  result tied to its tested SHA and base.
 
   The reduced 6 GiB guest profile passed on #52 head `8d41fa9` in run #138 and on the
   #52-equivalent tree `3421056` in #72 run #140; earlier #69 head `3eb5e0e` also passed.

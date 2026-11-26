@@ -6,8 +6,11 @@ set -ex
 POC=$(cd "$(dirname "$0")/.." && pwd)
 export DEBIAN_FRONTEND=noninteractive
 if [ ! -x /usr/lib/llvm-21/bin/clang ]; then
+  . /etc/os-release
+  LLVM_CODENAME=${LLVM_CODENAME:-${VERSION_CODENAME:-}}
+  [ -n "$LLVM_CODENAME" ] || { echo "Set LLVM_CODENAME to the apt.llvm.org distribution codename" >&2; exit 1; }
   wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
-  echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" | sudo tee /etc/apt/sources.list.d/llvm21.list
+  echo "deb http://apt.llvm.org/$LLVM_CODENAME/ llvm-toolchain-$LLVM_CODENAME-21 main" | sudo tee /etc/apt/sources.list.d/llvm21.list
   sudo apt-get update -qq
 fi
 sudo -E apt-get install -y -qq build-essential autoconf automake libtool pkg-config git python3 python3-yaml python3-packaging \

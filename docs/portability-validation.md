@@ -90,8 +90,10 @@ Report the profile alongside the stage:
   `XNULINUX_USERLAND_OK`, `XNULINUX_E2E_GUEST_HALT_OK`, `XNULINUX_E2E_XNU_UNLOADED`, and
   Linux `reboot: Power down`. The [run-tcg-e2e.py script at head `5570fae`](https://github.com/Personed/xnulinux/blob/5570faef5f457eb9426a00102db4d73062de5c64/tests/puredarwin/run-tcg-e2e.py)
   requires QEMU's return code to be 0, and the boot job passed. It does not check or emit a
-  separate FKI-unload marker, so FKI unload is not verified by this run; the retained log
-  also has no standalone QEMU exit-status line. Run [#95](https://github.com/Personed/xnulinux/actions/runs/45867603529)
+  separate FKI-unload marker. The guest-init script at `5570fae` runs `rmmod xnu`, checks
+  it is absent, then runs `rmmod fki` and checks the host-call device is gone before emitting
+  `XNULINUX_E2E_XNU_UNLOADED`; the successful workflow therefore verifies both unload commands.
+  The retained log has no standalone QEMU exit-status line, but the harness requires QEMU return code 0. Run [#95](https://github.com/Personed/xnulinux/actions/runs/45867603529)
   validates that synchronized #52/#64 branch on this virtual runner only. PR #64 merged into the #52
   branch as `c360e99`; this is not main-integrated or cross-host matrix acceptance. These
   stacked results do not replace a current #36/#46 console/halt run with the same manifest.
@@ -152,7 +154,7 @@ free_collection_sha256=a75c376745786254a827db587a96bd359ccc274db8685f9ed276c734d
 xnu_kernel_sha256=a708781c01b971a7837e70ae1118e70ccf5d513db64948c92b92f744c6e34f94
 ```
 
-Both boot logs contain `XNULINUX_E2E_XNU_UNLOADED`; neither log or harness records a separate FKI-unload marker. These runs therefore verify the XNU unload marker but do not establish FKI unload.
+Both boot logs contain `XNULINUX_E2E_XNU_UNLOADED`. In the exact guest-init scripts from #138 head `8d41fa9` and #140 commit `e61f578`, init runs `rmmod xnu`, confirms `/sys/module/xnu` is absent, runs `rmmod fki`, confirms `/dev/xnu-hostcall` is absent, and emits the common success marker only after both unload checks pass. These runs therefore validate both unload commands; the serial log has no standalone FKI-unload marker.
 
 - **Native x86-64 hosted XNU on Intel/AMD Linux:** this is the project target for Tahoe 26.
   The x86_64 FKI host-backend build merged in [#48](https://github.com/Personed/xnulinux/pull/48) and passed compilation while preserving ARM64; it advertises no XNU execution capability.

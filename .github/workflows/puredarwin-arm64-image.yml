@@ -127,6 +127,7 @@ jobs:
           OUT: ${{ runner.temp }}/puredarwin-e2e-inputs/kc-free.bin
         run: |
           python3 tests/puredarwin/test-template-layout.py
+          python3 tests/puredarwin/test-segment-copies.py
           bash scripts/vm-xnu-build.sh
           bash scripts/free-kc/build.sh
           cp "$HOME/w/dvm/out/k27/kernel-k27.macho" "$RUNNER_TEMP/puredarwin-e2e-inputs/kernel.macho"

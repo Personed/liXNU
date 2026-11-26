@@ -97,11 +97,12 @@ Working on two arm64 Linux setups:
 | Intel x86_64 with VT-x/KVM and required CPU features | macOS Tahoe 26 x86_64 | Experimental QEMU/KVM launcher; physical Intel desktop boot and host-integrity acceptance remain. |
 | AMD x86_64 with AMD-V/KVM and required CPU features | macOS Tahoe 26 x86_64 | Experimental QEMU/KVM launcher; requires AMD OpenCore kernel patches and physical AMD acceptance. |
 
-The ARM64 VM setup and current PureDarwin acceptance profile are documented in [`docs/qemu.md`](docs/qemu.md) and
-[`docs/portability-validation.md`](docs/portability-validation.md). A passing TCG console run will validate that profile
-on its recorded runner; it will not establish a macOS desktop, graphics, networking, or practical performance on every
-PC. The separate x86_64 QEMU/KVM launcher remains experimental and needs Tahoe desktop boot and Linux host-integrity
-checks on physical Intel and AMD systems. See [`tests/x86_64/README.md`](tests/x86_64/README.md) for that path.
+Host setup for the ARM64 VM is documented in [QEMU launcher PR #3](https://github.com/Personed/xnulinux/pull/3), and
+the current acceptance profile is in [`docs/portability-validation.md`](docs/portability-validation.md). A passing TCG
+console run validates that profile on its recorded runner; it does not establish a macOS desktop, graphics, networking,
+or practical performance on every PC. The separate x86_64 QEMU/KVM launcher remains experimental and needs Tahoe desktop
+boot and Linux host-integrity checks on physical Intel and AMD systems. See [`tests/x86_64/README.md`](tests/x86_64/README.md)
+for that path.
 
 Shipping it as a hosted service (what is distributed, what a user installs to run Apple's macOS) is in
 [`docs/hosted-service.md`](docs/hosted-service.md).

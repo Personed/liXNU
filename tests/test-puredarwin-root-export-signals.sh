@@ -8,7 +8,9 @@ tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
 bin=$tmp/bin
 state=$tmp/state
-mkdir -- "$bin" "$state"
+shared_output=$tmp/shared-output
+mkdir -- "$bin" "$state" "$shared_output"
+chmod 2777 -- "$shared_output"
 export TEST_STATE=$state
 export FAKE_LOOP=/dev/loop-codex-test
 export REAL_MKTEMP=$real_mktemp
@@ -93,7 +95,7 @@ chmod +x "$bin"/*
 
 image=$tmp/fake.img
 truncate -s 4194304 "$image"
-output=$tmp/must-not-exist.tar.gz
+output=$shared_output/must-not-exist.tar.gz
 set +e
 "$script" "$image" "$output" >/dev/null 2>&1
 status=$?
@@ -109,7 +111,7 @@ detach_line=$(grep -n '^detached$' "$state/events" | cut -d: -f1)
 [ "$unmount_line" -lt "$detach_line" ]
 mount_dir=$(cat "$state/mount-dir")
 [ ! -e "$mount_dir" ]
-[ -z "$(find "$tmp" -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
+[ -z "$(find "$shared_output" -mindepth 1 -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
 first_check_log=$(cat "$state/check-log")
 [ -n "$first_check_log" ]
 [ ! -e "$first_check_log" ]
@@ -137,7 +139,7 @@ if grep -q '^unmounted$' "$state/events"; then
 fi
 mount_dir=$(cat "$state/mount-dir")
 [ ! -e "$mount_dir" ]
-[ -z "$(find "$tmp" -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
+[ -z "$(find "$shared_output" -mindepth 1 -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
 second_check_log=$(cat "$state/check-log")
 [ -n "$second_check_log" ]
 [ "$second_check_log" != "$first_check_log" ]

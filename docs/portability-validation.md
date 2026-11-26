@@ -54,9 +54,13 @@ Report the profile alongside the stage:
   or repository snapshot is still needed for identical reruns. The first run (#69) built the
   pinned image and HFS+ disk but failed at `kclink` on a `__TEXT_EXEC`/`__PRELINK_INFO`
   overlap. At head `5312b29`, [run #72](https://github.com/Personed/xnulinux/actions/runs/45845795576)
-  completed the source build, guest preparation, and full QEMU TCG boot on Ubuntu 24.04 x86-64. It passed the
-  Darwin command marker, guest-issued halt, `xnu.ko` unload, Linux serial marker `reboot: Power down`, and QEMU exit
-  status 0. A later Mach-O inspection found `__TEXT_EXEC` and `__KLD` ranges overlap in the built image. Current #36
+  completed the source build, guest preparation, and full QEMU TCG boot on Ubuntu 24.04 x86-64 with QEMU 8.2.2. The
+  runner reported an Intel Xeon 6975P-C, 4 CPUs, and `MemTotal: 16078396 kB`; the guest used Linux
+  `7.0.0-44-generic`, 4 KiB pages, PAC at EL1, and the 16 GiB allocation. It passed the Darwin command marker,
+  guest-issued halt, `xnu.ko` unload, Linux serial marker `reboot: Power down`, and QEMU exit status 0. Because the
+  runner's reported physical RAM was below the guest allocation, this proves the boot under that runner's memory
+  management; it does not prove all guest RAM stayed resident or that the host avoided swap/overcommit. A later
+  Mach-O inspection found `__TEXT_EXEC` and `__KLD` ranges overlap in the built image. Current #36
   head `97727ac` adds a file-backed range check; run #74 is rebuilding it, so run #72 does not yet validate that
   changed head. The Ubuntu kernel package is still selected at runtime rather than pinned. Cross-host Windows and
   Intel-macOS checks are proposed in [#46](https://github.com/Personed/xnulinux/pull/46); its run #75 is building

@@ -37,7 +37,7 @@ print(offset, length)
 ' "$image" <<< "$partition_table")
 read -r offset length <<< "$partition"
 
-mount_dir= archive= loop= mounted=
+mount_dir='' archive='' loop='' mounted=''
 cleanup() {
   if [ -n "$mounted" ]; then "${as_root[@]}" umount -- "$mount_dir" || return; fi
   if [ -n "$loop" ]; then "${as_root[@]}" losetup --detach "$loop" || return; fi

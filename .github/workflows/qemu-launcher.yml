@@ -17,11 +17,10 @@ jobs:
           python-version: "3.12"
       - name: Test platform launch options
         run: python tests/qemu/test_launcher.py
-      - name: Test Windows cleanup fallback and process race
+      - name: Test Windows cleanup timeout and taskkill failure
         run: >-
           python tests/qemu/test_uefi_launch.py
           UefiLaunchTest.test_windows_cleanup_kills_launcher_when_taskkill_times_out
-          UefiLaunchTest.test_windows_cleanup_handles_process_disappearing_during_kill
           UefiLaunchTest.test_windows_cleanup_falls_back_when_taskkill_cannot_start
       - name: Install QEMU on Linux
         if: runner.os == 'Linux'

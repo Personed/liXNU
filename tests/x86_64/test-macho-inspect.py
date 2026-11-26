@@ -4,6 +4,7 @@
 
 import hashlib
 import json
+import os
 import pathlib
 import struct
 import subprocess
@@ -107,9 +108,12 @@ def append_command(data, command, command_size):
     put_u32(data, 20, COMMAND_BYTES + command_size)
 
 
-def run_case(binary, name, data, expected_status, check_report=None):
+def run_case(
+    binary, name, data, expected_status, check_report=None, relative_name="kernel.development"
+):
     with tempfile.TemporaryDirectory(prefix="xnu-macho-inspect-") as tmp:
-        path = pathlib.Path(tmp) / "kernel.development"
+        path = pathlib.Path(tmp) / relative_name
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         before = hashlib.sha256(path.read_bytes()).digest()
         result = subprocess.run(
@@ -129,11 +133,16 @@ def run_case(binary, name, data, expected_status, check_report=None):
                 raise AssertionError(f"{name}: rejected input had no diagnostic")
             return
         report = json.loads(result.stdout)
+        if report.get("file") != str(path):
+            raise AssertionError(f"{name}: report path does not round-trip: {report.get('file')!r}")
+        if report.get("file_path_encoding") != "UTF-8":
+            raise AssertionError(f"{name}: valid UTF-8 path was mislabeled")
         check_report(report)
 
 
 def expect_valid_all(report):
     assert report["architecture"] == "x86_64", report
+    assert report["file_path_encoding"] == "UTF-8", report
     assert report["cpu_subtype"] == "X86_64_ALL", report
     assert report["format"] == "Mach-O 64-bit little-endian MH_EXECUTE", report
     assert report["entry"] == {
@@ -186,6 +195,68 @@ def expect_unknown_optional_is_reported(report):
     assert report["execution_attempted"] is False, report
 
 
+def expected_path_for_byte_filename(path_bytes):
+    decoded = path_bytes.decode("utf-8", errors="surrogateescape")
+    return "".join(
+        chr(ord(character) - 0xDC00)
+        if 0xDC80 <= ord(character) <= 0xDCFF
+        else character
+        for character in decoded
+    )
+
+
+def expect_invalid_path_bytes_are_escaped(binary):
+    if not sys.platform.startswith("linux"):
+        return
+    with tempfile.TemporaryDirectory(prefix="xnu-macho-inspect-") as tmp:
+        parent = os.fsencode(tmp) + b"/bad-\xff"
+        os.mkdir(parent)
+        path = parent + b"/kernel.development"
+        data = make_valid_image()
+        with open(path, "wb") as image_file:
+            image_file.write(data)
+        result = subprocess.run(
+            [os.fsencode(binary), path], check=False, capture_output=True
+        )
+        if result.returncode != 0:
+            raise AssertionError(f"invalid UTF-8 filename failed: {result.stderr!r}")
+        report = json.loads(result.stdout)
+        if report["file"] != expected_path_for_byte_filename(path):
+            raise AssertionError("invalid filename bytes were not represented reversibly")
+        if report["file_path_encoding"] != "invalid bytes escaped as U+00XX":
+            raise AssertionError("invalid filename encoding was not identified")
+        if open(path, "rb").read() != data:
+            raise AssertionError("invalid-path input file was modified")
+
+
+def expect_nonregular_input_does_not_block(binary):
+    with tempfile.TemporaryDirectory(prefix="xnu-macho-inspect-") as tmp:
+        fifo = pathlib.Path(tmp) / "no-writer.fifo"
+        os.mkfifo(fifo)
+        try:
+            result = subprocess.run(
+                [binary, str(fifo)], check=False, capture_output=True, text=True, timeout=2
+            )
+        except subprocess.TimeoutExpired as error:
+            raise AssertionError("FIFO input blocked instead of failing closed") from error
+        if result.returncode != 2 or result.stdout or not result.stderr:
+            raise AssertionError("FIFO input was not rejected cleanly")
+
+
+def expect_output_write_error(binary):
+    if not os.path.exists("/dev/full"):
+        return
+    with tempfile.TemporaryDirectory(prefix="xnu-macho-inspect-") as tmp:
+        path = pathlib.Path(tmp) / "kernel.development"
+        path.write_bytes(make_valid_image())
+        with open("/dev/full", "wb", buffering=0) as sink:
+            result = subprocess.run(
+                [binary, str(path)], check=False, stdout=sink, stderr=subprocess.PIPE
+            )
+        if result.returncode == 0:
+            raise AssertionError("output write failure was reported as success")
+
+
 def main():
     if len(sys.argv) != 2:
         print(f"usage: {sys.argv[0]} INSPECTOR", file=sys.stderr)
@@ -193,6 +264,14 @@ def main():
     binary = sys.argv[1]
 
     run_case(binary, "valid x86_64 ALL", make_valid_image(), 0, expect_valid_all)
+    run_case(
+        binary,
+        "UTF-8 path round trip",
+        make_valid_image(),
+        0,
+        expect_valid_all,
+        relative_name="núcleo/kernel.development",
+    )
     run_case(
         binary,
         "valid x86_64 H",
@@ -248,6 +327,10 @@ def main():
     bad_entry = make_valid_image()
     put_u64(bad_entry, RIP_OFF, 0x3100)
     run_case(binary, "entry outside executable file range", bad_entry, 3)
+
+    expect_invalid_path_bytes_are_escaped(binary)
+    expect_nonregular_input_does_not_block(binary)
+    expect_output_write_error(binary)
 
     print("x86_64 Mach-O inspector fixtures passed")
     return 0

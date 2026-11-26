@@ -83,12 +83,22 @@ static int segment_is_pagezero(const unsigned char name[16])
 
 static int read_image(const char *path, unsigned char **data_out, size_t *size_out)
 {
+	struct stat path_st;
 	struct stat st;
 	unsigned char *data;
 	size_t size, done = 0;
 	int fd;
 
-	fd = open(path, O_RDONLY | O_CLOEXEC);
+	if (stat(path, &path_st)) {
+		fprintf(stderr, "xnu-macho-inspect: cannot stat '%s': %s\n", path,
+			strerror(errno));
+		return -1;
+	}
+	if (!S_ISREG(path_st.st_mode)) {
+		fprintf(stderr, "xnu-macho-inspect: input must be a regular file\n");
+		return -1;
+	}
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
 	if (fd < 0) {
 		fprintf(stderr, "xnu-macho-inspect: cannot open '%s': %s\n", path,
 			strerror(errno));
@@ -164,7 +174,7 @@ static int collect_segments(const unsigned char *file, size_t file_size,
 	off = MACH_HEADER_64_SIZE;
 	end = off + sizeofcmds;
 	if (inspection->parsed.segment_count > MAX_SEGMENTS)
-		return -1;
+		return -E2BIG;
 	inspection->segments = calloc(inspection->parsed.segment_count,
 				      sizeof(*inspection->segments));
 	if (!inspection->segments)
@@ -226,31 +236,84 @@ static int collect_segments(const unsigned char *file, size_t file_size,
 	return 0;
 }
 
-static void json_string(const char *value)
+static int utf8_sequence_length(const unsigned char *p, size_t remaining)
 {
-	const unsigned char *p = (const unsigned char *)value;
+	unsigned char second;
+
+	if (!remaining)
+		return 0;
+	if (p[0] < 0x80)
+		return 1;
+	if (remaining >= 2 && p[0] >= 0xc2 && p[0] <= 0xdf &&
+	    (p[1] & 0xc0) == 0x80)
+		return 2;
+	if (remaining < 3)
+		return 0;
+	second = p[1];
+	if (p[2] < 0x80 || p[2] > 0xbf)
+		return 0;
+	if (p[0] == 0xe0)
+		return second >= 0xa0 && second <= 0xbf ? 3 : 0;
+	if ((p[0] >= 0xe1 && p[0] <= 0xec) ||
+	    (p[0] >= 0xee && p[0] <= 0xef))
+		return second >= 0x80 && second <= 0xbf ? 3 : 0;
+	if (p[0] == 0xed)
+		return second >= 0x80 && second <= 0x9f ? 3 : 0;
+	if (remaining < 4 || p[3] < 0x80 || p[3] > 0xbf)
+		return 0;
+	if (p[0] == 0xf0)
+		return second >= 0x90 && second <= 0xbf ? 4 : 0;
+	if (p[0] >= 0xf1 && p[0] <= 0xf3)
+		return second >= 0x80 && second <= 0xbf ? 4 : 0;
+	if (p[0] == 0xf4)
+		return second >= 0x80 && second <= 0x8f ? 4 : 0;
+	return 0;
+}
+
+/* Invalid path/name bytes are represented as their U+00XX code points. */
+static int json_bytes_string(const unsigned char *value, size_t length)
+{
+	size_t offset = 0;
+	int valid_utf8 = 1;
+
 	putchar('"');
-	while (*p) {
-		if (*p == '"' || *p == '\\') {
+	while (offset < length) {
+		unsigned char byte = value[offset];
+		int sequence_length;
+
+		if (byte == '"' || byte == '\\') {
 			putchar('\\');
-			putchar(*p);
-		} else if (*p < 0x20 || *p >= 0x7f) {
-			printf("\\u%04x", (unsigned int)*p);
+			putchar(byte);
+			offset++;
+		} else if (byte < 0x20) {
+			printf("\\u%04x", (unsigned int)byte);
+			offset++;
+		} else if (byte < 0x80) {
+			putchar(byte);
+			offset++;
 		} else {
-			putchar(*p);
+			sequence_length = utf8_sequence_length(value + offset, length - offset);
+			if (sequence_length) {
+				fwrite(value + offset, 1, (size_t)sequence_length, stdout);
+				offset += (size_t)sequence_length;
+			} else {
+				printf("\\u%04x", (unsigned int)byte);
+				valid_utf8 = 0;
+				offset++;
+			}
 		}
-		p++;
 	}
 	putchar('"');
+	return valid_utf8;
 }
 
 static void json_segment_name(const unsigned char name[16])
 {
-	char bounded[17];
+	size_t length = 0;
 
-	memcpy(bounded, name, 16);
-	bounded[16] = '\0';
-	json_string(bounded);
+	while (length < 16 && name[length])
+		length++;
+	json_bytes_string(name, length);
 }
 
 static const char *subtype_name(uint32_t subtype)
@@ -262,11 +325,14 @@ static void print_report(const char *path, size_t file_size,
 			const struct inspection *inspection)
 {
 	uint32_t i;
+	int path_utf8;
 
 	puts("{");
 	printf("  \"file\": ");
-	json_string(path);
-	printf(",\n  \"file_size_bytes\": %zu,\n", file_size);
+	path_utf8 = json_bytes_string((const unsigned char *)path, strlen(path));
+	printf(",\n  \"file_path_encoding\": \"%s\",\n",
+	       path_utf8 ? "UTF-8" : "invalid bytes escaped as U+00XX");
+	printf("  \"file_size_bytes\": %zu,\n", file_size);
 	printf("  \"format\": \"Mach-O 64-bit little-endian MH_EXECUTE\",\n");
 	printf("  \"architecture\": \"x86_64\",\n");
 	printf("  \"cpu_subtype\": \"%s\",\n", subtype_name(inspection->cpusubtype));
@@ -340,12 +406,23 @@ static int inspect_file(const char *path)
 		}
 		goto out;
 	}
-	if (collect_segments(file, file_size, &inspection)) {
-		fprintf(stderr, "xnu-macho-inspect: parser/metadata walk disagreement; refusing report\n");
+	err = collect_segments(file, file_size, &inspection);
+	if (err) {
+		if (err == -E2BIG)
+			fprintf(stderr, "xnu-macho-inspect: segment count exceeds the limit of %u\n",
+				MAX_SEGMENTS);
+		else
+			fprintf(stderr, "xnu-macho-inspect: parser/metadata walk disagreement; refusing report\n");
 		status = 5;
 		goto out;
 	}
 	print_report(path, file_size, &inspection);
+	if (fflush(stdout) == EOF || ferror(stdout)) {
+		fprintf(stderr, "xnu-macho-inspect: failed to write JSON report: %s\n",
+			errno ? strerror(errno) : "I/O error");
+		status = 6;
+		goto out;
+	}
 	status = 0;
 out:
 	free(inspection.segments);

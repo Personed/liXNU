@@ -311,10 +311,12 @@ verify_trustcache_header() {
       sdk_header_scan_status='failed'
     fi
     if [[ "$sdk_header_scan_status" != complete ]]; then
-      printf 'trustcache_header_scan_status=failed\ntrustcache_header_scan_candidates=%s\ntrustcache_header_scan_errors=%s\n' \
-        "$sdk_header_candidates_file" "$sdk_header_scan_errors" >> "$KDK_DIAGNOSTIC_TARGET"
-      [[ ! -s "$sdk_header_scan_errors" ]] || cat "$sdk_header_scan_errors" >&2
+      xnu_trustcache_scan_workspace_report_failure \
+        "$sdk_header_scan_mode" "$sdk_header_candidates_file" "$sdk_header_scan_errors" "$KDK_DIAGNOSTIC_TARGET"
       xnu_trustcache_scan_workspace_cleanup "$sdk_header_scan_mode" "$sdk_header_scan_root"
+      if (( CHECK_ONLY )); then
+        fail 'full Xcode SDK TrustCache header scan failed; candidate and error contents are printed above before temporary files are removed, so no absence claim is made'
+      fi
       fail "full Xcode SDK TrustCache header scan failed; no absence claim is made (candidate list: $sdk_header_candidates_file; errors: $sdk_header_scan_errors)"
     fi
     mv "$sdk_header_sorted_candidates_file" "$sdk_header_candidates_file"

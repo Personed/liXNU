@@ -26,8 +26,28 @@ xnu_trustcache_scan_workspace_cleanup() {
   fi
 }
 
+xnu_trustcache_scan_workspace_report_failure() {
+  local mode="$1"
+  local candidates_file="$2"
+  local errors_file="$3"
+  local diagnostic_target="$4"
+  if [[ "$mode" == check ]]; then
+    {
+      printf 'trustcache_header_scan_status=failed\ntrustcache_header_scan_candidates_begin\n'
+      cat "$candidates_file" || printf '[candidate list could not be read]\n'
+      printf 'trustcache_header_scan_errors_begin\n'
+      cat "$errors_file" || printf '[scan error log could not be read]\n'
+      printf 'trustcache_header_scan_diagnostics_end\n'
+    } >> "$diagnostic_target"
+  else
+    printf 'trustcache_header_scan_status=failed\ntrustcache_header_scan_candidates=%s\ntrustcache_header_scan_errors=%s\n' \
+      "$candidates_file" "$errors_file" >> "$diagnostic_target"
+    [[ ! -s "$errors_file" ]] || cat "$errors_file" >&2
+  fi
+}
+
 xnu_trustcache_scan_workspace_self_test() {
-  local scratch_root build_root temp_root scan_root
+  local scratch_root build_root temp_root scan_root candidates_file errors_file diagnostics_file
   scratch_root="$(mktemp -d "${TMPDIR:-/tmp}/xnulinux-readonly-check-test.XXXXXX")" \
     || { printf 'could not create self-test scratch directory\n' >&2; return 1; }
   trap 'chmod u+w "$build_root" 2>/dev/null || true; rm -rf -- "$scratch_root"' RETURN
@@ -41,8 +61,13 @@ xnu_trustcache_scan_workspace_self_test() {
   TMPDIR="$temp_root"
   export TMPDIR
   scan_root="$(xnu_trustcache_scan_workspace "$build_root" check)"
+  candidates_file="$scan_root/trustcache-sdk-header-candidates.txt"
+  errors_file="$scan_root/trustcache-sdk-header-scan-errors.log"
+  diagnostics_file="$scratch_root/check-diagnostics.log"
   [[ "$scan_root" == "$temp_root/"* ]] \
     || { printf 'check workspace was not placed under TMPDIR: %s\n' "$scan_root" >&2; return 1; }
+  printf '%s\n' '/fake/sdk/System/Library/Frameworks/Kernel.framework/PrivateHeaders/TrustCache/API.h' > "$candidates_file"
+  printf '%s\n' 'simulated find permission failure' > "$errors_file"
   python3 - "$build_root" <<'PY'
 import os
 import stat
@@ -54,6 +79,13 @@ PY
   [[ -w "$temp_root" ]] \
     || { printf 'TMPDIR is not writable: %s\n' "$temp_root" >&2; return 1; }
   : > "$temp_root/writable-probe"
+  xnu_trustcache_scan_workspace_report_failure check "$candidates_file" "$errors_file" "$diagnostics_file"
+  grep -Fq '/fake/sdk/System/Library/Frameworks/Kernel.framework/PrivateHeaders/TrustCache/API.h' "$diagnostics_file" \
+    || { printf 'check diagnostics omitted the candidate list before cleanup\n' >&2; return 1; }
+  grep -Fq 'simulated find permission failure' "$diagnostics_file" \
+    || { printf 'check diagnostics omitted the scan error before cleanup\n' >&2; return 1; }
+  ! grep -Fq "$scan_root" "$diagnostics_file" \
+    || { printf 'check diagnostics point at temporary files that will be removed\n' >&2; return 1; }
   [[ -z "$(find "$build_root" -mindepth 1 -maxdepth 1 -print -quit)" ]] \
     || { printf 'read-only BUILD_ROOT was modified\n' >&2; return 1; }
 
@@ -63,7 +95,7 @@ PY
   [[ "$(xnu_trustcache_scan_workspace "$build_root" build)" == "$build_root" ]] \
     || { printf 'build-mode diagnostics no longer use BUILD_ROOT\n' >&2; return 1; }
 
-  printf 'read-only --check workspace self-test passed: BUILD_ROOT unchanged; TMPDIR writable; temporary scan directory cleaned\n'
+  printf 'read-only --check workspace self-test passed: BUILD_ROOT unchanged; TMPDIR writable; scan failures are printed before temporary files are removed\n'
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

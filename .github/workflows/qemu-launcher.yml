@@ -42,7 +42,7 @@ jobs:
         env:
           QEMU_TEST_REQUIRED: "1"
         run: python tests/qemu/test_uefi_launch.py UefiLaunchTest.test_launcher_starts_headless_uefi_guest
-  uefi-launch:
+  uefi-graphical:
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -63,3 +63,12 @@ jobs:
           QEMU_TEST_GRAPHICAL: "1"
           QEMU_TEST_DISPLAY_BACKEND: ${{ matrix.display_backend }}
         run: xvfb-run -a python tests/qemu/test_uefi_launch.py UefiLaunchTest.test_launcher_starts_graphical_uefi_guest
+  uefi-launch:
+    if: always()
+    needs: uefi-graphical
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require both graphical backends to pass
+        env:
+          GRAPHICAL_RESULT: ${{ needs.uefi-graphical.result }}
+        run: test "$GRAPHICAL_RESULT" = success

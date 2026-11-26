@@ -21,6 +21,10 @@ This slice deliberately rejects kernel collections (`MH_FILESET`), `LC_MAIN`, ad
 
 ## Default and validation artifacts
 
+The boundary probe and the prerequisites for the next synthetic one-CPU entry/return test are specified in
+[`docs/x86_64-entry-return-contract.md`](x86_64-entry-return-contract.md). That contract is test planning only: it does
+not enable XNU execution or change the FKI ABI.
+
 - The normal x86_64 build keeps `fki.ko` at zero execution capabilities and `xnu.ko` fail-closed with `-EOPNOTSUPP`.
 - After the context, memory, and fault prerequisites pass, a separate opt-in build target may emit `fki-x86-test.ko` and
   `xnu-x86-test.ko`, compiled with a test-only flag such as `XNULINUX_X86_TEST=1`. These artifacts are not installed or

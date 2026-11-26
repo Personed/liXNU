@@ -86,12 +86,31 @@ AVAILABILITY_LOG="$OUT_DIR/availability-build.log"
 XNU_HEADERS_BUILD_DIR="$OUT_DIR/xnu-headers"
 XNU_HEADERS_OBJROOT="$XNU_HEADERS_BUILD_DIR/obj"
 XNU_HEADERS_DSTROOT="$XNU_HEADERS_BUILD_DIR/dst"
+XNU_EXPORTED_OSFMK_HEADERS_DIR="$XNU_HEADERS_OBJROOT/EXPORT_HDRS/osfmk"
+XNU_EXPORT_HEADERS_LOG="$OUT_DIR/xnu-export-headers.log"
 XNU_HEADERS_LOG="$OUT_DIR/xnu-header-install.log"
 LIBDISPATCH_BUILD_DIR="$OUT_DIR/libdispatch"
 LIBDISPATCH_LOG="$OUT_DIR/libdispatch-build.log"
 LIBDISPATCH_DSTROOT="$LIBDISPATCH_BUILD_DIR/dst"
 LIBDISPATCH_ARCHIVE="$LIBDISPATCH_DSTROOT/usr/local/lib/kernel/libfirehose_kernel.a"
 RESULT="$OUT_DIR/build-result.json"
+SDK_PUBLIC_AVAILABILITY_SHA256_FILE="$OUT_DIR/sdk-public-availability.sha256"
+SDK_PUBLIC_AVAILABILITY_SHA256=''
+
+sdk_availability_headers_sha256() {
+  local sdk_root="$1" header material=''
+  for header in \
+    Availability.h \
+    AvailabilityInternal.h \
+    AvailabilityInternalLegacy.h \
+    AvailabilityMacros.h \
+    AvailabilityVersions.h \
+    os/availability.h; do
+    [[ -s "$sdk_root/usr/include/$header" ]] || return 1
+    material+="$header:$(shasum -a 256 "$sdk_root/usr/include/$header" | awk '{print $1}')"
+  done
+  printf '%s\n' "$material" | shasum -a 256 | awk '{print $1}'
+}
 
 verify_source() {
   [[ -d "$SOURCE_DIR/.git" || -f "$SOURCE_DIR/.git" ]] || fail "missing pinned XNU source at $SOURCE_DIR"
@@ -117,8 +136,55 @@ verify_sdk() {
     || fail 'SDK overlay is missing XNU private header os/atomic_private.h'
   [[ -s "$SDK_DIR/usr/local/include/firehose/tracepoint_private.h" ]] \
     || fail 'SDK overlay is missing XNU private firehose headers'
+  [[ -s "$SDK_DIR/usr/local/include/machine/cpu_number.h" ]] \
+    || fail 'SDK overlay is missing exported XNU machine/cpu_number.h'
+  [[ -s "$SDK_DIR/usr/local/include/i386/cpu_number.h" ]] \
+    || fail 'SDK overlay is missing exported x86_64 i386/cpu_number.h'
   [[ -s "$SDK_DIR/usr/local/lib/kernel/libfirehose_kernel.a" ]] \
     || fail 'SDK overlay is missing the staged libfirehose_kernel archive'
+  verify_machine_header_exports
+  verify_public_availability_header
+}
+
+verify_machine_header_exports() {
+  local generic_header="$XNU_EXPORTED_OSFMK_HEADERS_DIR/machine/cpu_number.h"
+  local x86_header="$XNU_EXPORTED_OSFMK_HEADERS_DIR/i386/cpu_number.h"
+  local staged_generic_header="$SDK_DIR/usr/local/include/machine/cpu_number.h"
+  local staged_x86_header="$SDK_DIR/usr/local/include/i386/cpu_number.h"
+  [[ -s "$generic_header" ]] || fail "XNU exporthdrs did not produce $generic_header"
+  [[ -s "$x86_header" ]] || fail "XNU exporthdrs did not produce $x86_header"
+  grep -Fq '#include "i386/cpu_number.h"' "$generic_header" \
+    || fail 'exported machine/cpu_number.h no longer includes i386/cpu_number.h'
+  [[ -s "$staged_generic_header" ]] || fail "SDK overlay is missing $staged_generic_header"
+  [[ -s "$staged_x86_header" ]] || fail "SDK overlay is missing $staged_x86_header"
+  cmp -s "$generic_header" "$staged_generic_header" \
+    || fail 'SDK machine/cpu_number.h does not match the pinned XNU export'
+  cmp -s "$x86_header" "$staged_x86_header" \
+    || fail 'SDK i386/cpu_number.h does not match the pinned XNU export'
+}
+
+verify_public_availability_header() {
+  local current_sha256 base_sha256
+  [[ -n "$SDK_PUBLIC_AVAILABILITY_SHA256" ]] \
+    || fail 'missing baseline SHA-256 for the Xcode SDK public availability headers'
+  current_sha256="$(sdk_availability_headers_sha256 "$SDK_DIR")" \
+    || fail 'SDK overlay is missing one or more public availability headers'
+  [[ "$current_sha256" == "$SDK_PUBLIC_AVAILABILITY_SHA256" ]] \
+    || fail 'AvailabilityVersions staging modified the Xcode SDK public availability headers'
+  if [[ -n "$BASE_SDK_DIR" ]]; then
+    base_sha256="$(sdk_availability_headers_sha256 "$BASE_SDK_DIR")" \
+      || fail 'Xcode SDK is missing one or more public availability headers'
+    [[ "$base_sha256" == "$SDK_PUBLIC_AVAILABILITY_SHA256" ]] \
+      || fail 'Xcode SDK public availability headers no longer match the recorded build baseline'
+  fi
+}
+
+verify_firehose_header_closure() {
+  if ! printf '#define KERNEL_PRIVATE 1\n#include <machine/cpu_number.h>\n' |
+    xcrun clang -target x86_64-apple-macosx26.0 -isysroot "$SDK_DIR" \
+      -I "$SDK_DIR/usr/local/include" -fsyntax-only -x c -; then
+    fail 'Firehose XNU machine-header include closure does not compile for x86_64'
+  fi
 }
 
 verify_sdk_version() {
@@ -177,6 +243,11 @@ if (( CHECK_ONLY )); then
   verify_libdispatch_source
   verify_availability_source
   verify_xcode_and_sdk
+  [[ -s "$SDK_PUBLIC_AVAILABILITY_SHA256_FILE" ]] \
+    || fail "missing recorded SDK public availability header baseline at $SDK_PUBLIC_AVAILABILITY_SHA256_FILE"
+  IFS= read -r SDK_PUBLIC_AVAILABILITY_SHA256 < "$SDK_PUBLIC_AVAILABILITY_SHA256_FILE"
+  [[ "$SDK_PUBLIC_AVAILABILITY_SHA256" =~ ^[[:xdigit:]]{64}$ ]] \
+    || fail 'recorded SDK public availability header SHA-256 is malformed'
   verify_sdk
   xcodebuild -version
   xcrun --find clang >/dev/null
@@ -185,6 +256,7 @@ if (( CHECK_ONLY )); then
   xcrun --find cmake >/dev/null
   xcrun --find ninja >/dev/null
   verify_firehose_archive "$SDK_DIR/usr/local/lib/kernel/libfirehose_kernel.a"
+  verify_firehose_header_closure
   printf 'int xnu_x86_64_target_probe;\n' |
     xcrun clang -target x86_64-apple-macosx26.0 -mkernel -ffreestanding -fsyntax-only -x c -
   printf 'XNU source, macOS SDK %s, and Xcode tools are ready for X86_64/NONE.\n' "$SDK_VERSION"
@@ -239,6 +311,10 @@ rm -rf -- "$SDK_DIR"
 mkdir -p "$(dirname "$SDK_DIR")"
 ditto "$BASE_SDK_DIR" "$SDK_DIR"
 verify_sdk_version "$SDK_DIR"
+SDK_PUBLIC_AVAILABILITY_SHA256="$(sdk_availability_headers_sha256 "$BASE_SDK_DIR")" \
+  || fail 'Xcode SDK is missing one or more public availability headers'
+printf '%s\n' "$SDK_PUBLIC_AVAILABILITY_SHA256" > "$SDK_PUBLIC_AVAILABILITY_SHA256_FILE"
+verify_public_availability_header
 
 mkdir -p "$AVAILABILITY_BUILD_DIR/obj" "$AVAILABILITY_BUILD_DIR/sym" "$AVAILABILITY_DSTROOT"
 printf 'Building AvailabilityVersions %s for the pinned macOS SDK\n' "$AVAILABILITY_TAG"
@@ -253,9 +329,26 @@ else
 fi
 [[ -x "$AVAILABILITY_DSTROOT/usr/local/libexec/availability.pl" ]] \
   || fail 'AvailabilityVersions install did not produce availability.pl'
-ditto "$AVAILABILITY_DSTROOT" "$SDK_DIR"
+mkdir -p "$SDK_DIR/usr/local/libexec"
+ditto "$AVAILABILITY_DSTROOT/usr/local/libexec/availability.pl" \
+  "$SDK_DIR/usr/local/libexec/availability.pl"
+chmod 755 "$SDK_DIR/usr/local/libexec/availability.pl"
+verify_public_availability_header
 
 mkdir -p "$XNU_HEADERS_OBJROOT" "$XNU_HEADERS_DSTROOT"
+printf 'Exporting XNU kernel headers from %s before private header installation\n' "$XNU_TAG"
+if make -C "$SOURCE_DIR" exporthdrs \
+  SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$SDK_DIR" \
+  SDKVERSION="$SDK_VERSION" PLATFORM=MacOSX \
+  ARCH_CONFIGS=X86_64 MACHINE_CONFIGS=NONE KERNEL_CONFIGS=DEVELOPMENT \
+  RC_DARWIN_KERNEL_VERSION="$KERNEL_VERSION" RC_ProjectSourceVersion="$SOURCE_VERSION" \
+  OBJROOT="$XNU_HEADERS_OBJROOT" SYMROOT="$XNU_HEADERS_BUILD_DIR/sym" DSTROOT="$XNU_HEADERS_DSTROOT" \
+  MAKEJOBS="-j$JOBS" >"$XNU_EXPORT_HEADERS_LOG" 2>&1; then
+  tail -n 20 "$XNU_EXPORT_HEADERS_LOG"
+else
+  tail -n 100 "$XNU_EXPORT_HEADERS_LOG" >&2
+  fail "XNU exporthdrs failed; full log: $XNU_EXPORT_HEADERS_LOG"
+fi
 printf 'Installing private headers from XNU %s before Firehose build\n' "$XNU_TAG"
 if make -C "$SOURCE_DIR" installhdrs \
   SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$SDK_DIR" \
@@ -270,12 +363,19 @@ else
   fail "XNU installhdrs failed; full log: $XNU_HEADERS_LOG"
 fi
 ditto "$XNU_HEADERS_DSTROOT" "$SDK_DIR"
+verify_machine_header_exports
 [[ -s "$SDK_DIR/usr/local/include/os/atomic_private.h" ]] \
   || fail 'XNU installhdrs did not stage usr/local/include/os/atomic_private.h'
 [[ -s "$SDK_DIR/usr/local/include/firehose/tracepoint_private.h" ]] \
   || fail 'XNU installhdrs did not stage usr/local/include/firehose/tracepoint_private.h'
 [[ -x "$SDK_DIR/usr/local/libexec/availability.pl" ]] \
   || fail 'XNU header installation removed AvailabilityVersions availability.pl'
+mkdir -p "$SDK_DIR/usr/local/include/machine" "$SDK_DIR/usr/local/include/i386"
+cp "$XNU_EXPORTED_OSFMK_HEADERS_DIR/machine/cpu_number.h" "$SDK_DIR/usr/local/include/machine/cpu_number.h"
+cp "$XNU_EXPORTED_OSFMK_HEADERS_DIR/i386/cpu_number.h" "$SDK_DIR/usr/local/include/i386/cpu_number.h"
+verify_machine_header_exports
+verify_firehose_header_closure
+verify_public_availability_header
 
 mkdir -p "$LIBDISPATCH_BUILD_DIR/obj" "$LIBDISPATCH_BUILD_DIR/sym" "$LIBDISPATCH_DSTROOT"
 printf 'Building libfirehose_kernel from %s for x86_64\n' "$LIBDISPATCH_TAG"
@@ -283,6 +383,7 @@ if xcodebuild \
   -project "$LIBDISPATCH_SOURCE_DIR/libdispatch.xcodeproj" \
   -target libfirehose_kernel -configuration Release -sdk macosx \
   ARCHS=x86_64 VALID_ARCHS=x86_64 PRODUCT_NAME=firehose_kernel \
+  HEADER_SEARCH_PATHS='$(inherited) $(SDKROOT)/usr/local/include' \
   SDKROOT="$SDK_DIR" \
   OBJROOT="$LIBDISPATCH_BUILD_DIR/obj" SYMROOT="$LIBDISPATCH_BUILD_DIR/sym" \
   DSTROOT="$LIBDISPATCH_DSTROOT" \
@@ -297,6 +398,10 @@ FIREHOSE_ARCHIVE_SHA256="$(shasum -a 256 "$LIBDISPATCH_ARCHIVE" | awk '{print $1
 ditto "$LIBDISPATCH_DSTROOT/usr/local" "$SDK_DIR/usr/local"
 verify_sdk
 verify_firehose_archive "$SDK_DIR/usr/local/lib/kernel/libfirehose_kernel.a"
+verify_public_availability_header
+AVAILABILITY_TOOL_SHA256="$(shasum -a 256 "$SDK_DIR/usr/local/libexec/availability.pl" | awk '{print $1}')"
+MACHINE_CPU_NUMBER_SHA256="$(shasum -a 256 "$SDK_DIR/usr/local/include/machine/cpu_number.h" | awk '{print $1}')"
+I386_CPU_NUMBER_SHA256="$(shasum -a 256 "$SDK_DIR/usr/local/include/i386/cpu_number.h" | awk '{print $1}')"
 
 cat >"$OUT_DIR/x86_64-build.env" <<EOF
 source=$XNU_URL@$XNU_COMMIT
@@ -307,6 +412,10 @@ libdispatch_source=$LIBDISPATCH_URL@$LIBDISPATCH_COMMIT
 libdispatch_tag=$LIBDISPATCH_TAG
 firehose_archive=$LIBDISPATCH_ARCHIVE
 firehose_archive_sha256=$FIREHOSE_ARCHIVE_SHA256
+availability_tool_sha256=$AVAILABILITY_TOOL_SHA256
+sdk_public_availability_headers_sha256=$SDK_PUBLIC_AVAILABILITY_SHA256
+machine_cpu_number_header_sha256=$MACHINE_CPU_NUMBER_SHA256
+i386_cpu_number_header_sha256=$I386_CPU_NUMBER_SHA256
 sdk=$SDK_DIR
 sdk_base=$BASE_SDK_DIR
 sdk_version=$SDK_VERSION
@@ -346,7 +455,8 @@ cp -L "$KERNEL" "$PACKAGE_KERNEL"
 python3 - "$PACKAGE_KERNEL" "$RESULT" "$XNU_COMMIT" "$XNU_TAG" "$SOURCE_VERSION" \
   "$KERNEL_VERSION" "$SDK_VERSION" "$XCODE_VERSION" "$ARCHS" \
   "$LIBDISPATCH_COMMIT" "$LIBDISPATCH_TAG" "$FIREHOSE_ARCHIVE_SHA256" \
-  "$AVAILABILITY_COMMIT" "$AVAILABILITY_TAG" <<'PY'
+  "$AVAILABILITY_COMMIT" "$AVAILABILITY_TAG" "$AVAILABILITY_TOOL_SHA256" \
+  "$SDK_PUBLIC_AVAILABILITY_SHA256" "$MACHINE_CPU_NUMBER_SHA256" "$I386_CPU_NUMBER_SHA256" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -370,6 +480,10 @@ result = {
     "libfirehose_kernel_sha256": sys.argv[12],
     "availabilityversions_commit": sys.argv[13],
     "availabilityversions_tag": sys.argv[14],
+    "availability_tool_sha256": sys.argv[15],
+    "sdk_public_availability_headers_sha256": sys.argv[16],
+    "machine_cpu_number_header_sha256": sys.argv[17],
+    "i386_cpu_number_header_sha256": sys.argv[18],
     "platform": "MacOSX",
     "machine_config": "NONE",
     "kernel_collection_built": False,

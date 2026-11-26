@@ -90,8 +90,8 @@ implemented.
   OVMF, AppleSMC, AHCI, E1000, USB and VGA arguments. This checked command/device setup only.
 - The x86_64 FKI module now builds against Debian 6.12.118 x86_64 headers. It reports zero execution capabilities,
   and the current XNU startup requires `FKI_CAP_PAC`. `xnu_main.c` and `world.S` still contain AArch64-only code;
-  native macOS execution is not implemented. PR #47 tracks a separate x86_64 fail-closed stub; it does not validate
-  native execution.
+  native macOS execution is not implemented. The fail-closed x86_64 XNU stub merged in PR #47 does not validate native
+  execution.
 - ARM64 `fki.ko` and `xnu.ko` cross-compiled against Debian 6.12.118 ARM64 headers. This is a build check, not an ARM64
   runtime smoke test.
 - This environment has no `/dev/kvm`, no Tahoe disk and no physical Intel/AMD/ARM hardware. No macOS boot, native KVM

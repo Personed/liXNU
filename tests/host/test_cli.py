@@ -15,6 +15,18 @@ INSTALLER = ROOT / "scripts" / "install.sh"
 
 
 class TestCliAndInstaller(unittest.TestCase):
+    def simulated_user_env(self, tmp, *, without_python=False):
+        shim = pathlib.Path(tmp) / "shim"
+        shim.mkdir(exist_ok=True)
+        fake_id = shim / "id"
+        fake_id.write_text("#!/bin/sh\nprintf '1000\\n'\n", encoding="utf-8")
+        fake_id.chmod(0o755)
+        if without_python:
+            fake_python = shim / "python3"
+            fake_python.write_text("#!/bin/sh\nexit 127\n", encoding="utf-8")
+            fake_python.chmod(0o755)
+        return {**os.environ, "PATH": f"{shim}{os.pathsep}{os.environ.get('PATH', '')}"}
+
     def test_help_doctor_status(self):
         for cmd in ("help", "doctor", "status"):
             res = subprocess.run([str(CLI), cmd], capture_output=True, text=True, check=True)
@@ -68,15 +80,64 @@ class TestCliAndInstaller(unittest.TestCase):
     def test_install_relative_prefix_and_uninstall(self):
         with tempfile.TemporaryDirectory() as tmp:
             # Install using a relative --prefix, then run from another working directory
-            subprocess.run([str(INSTALLER), "--prefix", "relprefix"], cwd=tmp, check=True, capture_output=True, text=True)
+            env = self.simulated_user_env(tmp)
+            subprocess.run(
+                [str(INSTALLER), "--prefix", "relprefix"], cwd=tmp, env=env, check=True, capture_output=True, text=True
+            )
             installed = pathlib.Path(tmp) / "relprefix" / "bin" / "xnulinux"
             self.assertTrue(installed.is_file())
             res = subprocess.run([str(installed), "doctor"], cwd="/", check=True, capture_output=True, text=True)
             self.assertIn("=== xnulinux PC check ===", res.stdout)
             subprocess.run(
-                [str(INSTALLER), "--prefix", "relprefix", "--uninstall"], cwd=tmp, check=True, capture_output=True, text=True
+                [str(INSTALLER), "--prefix", "relprefix", "--uninstall"],
+                cwd=tmp,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
             )
             self.assertFalse(installed.exists())
+
+    def test_install_and_uninstall_absolute_prefix_without_python(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self.simulated_user_env(tmp, without_python=True)
+            prefix = pathlib.Path(tmp) / "absolute-prefix"
+            installed = prefix / "bin" / "xnulinux"
+            subprocess.run(
+                [str(INSTALLER), "--prefix", str(prefix)], env=env, check=True, capture_output=True, text=True
+            )
+            self.assertTrue(installed.is_file())
+            subprocess.run(
+                [str(INSTALLER), "--prefix", str(prefix), "--uninstall"],
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertFalse(installed.exists())
+
+    def test_system_install_rejects_private_checkout_parent(self):
+        if not hasattr(os, "geteuid") or os.geteuid() != 0:
+            self.skipTest("requires root to exercise system-wide install checks")
+        with tempfile.TemporaryDirectory() as tmp:
+            private = pathlib.Path(tmp) / "private"
+            private.mkdir(mode=0o700)
+            checkout = private / "xnulinux"
+            scripts = checkout / "scripts"
+            scripts.mkdir(parents=True)
+            fixture_installer = scripts / "install.sh"
+            shutil.copy2(INSTALLER, fixture_installer)
+            fixture_cli = scripts / "xnulinux"
+            fixture_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fixture_cli.chmod(0o755)
+
+            prefix = pathlib.Path(tmp) / "system-prefix"
+            result = subprocess.run(
+                [str(fixture_installer), "--prefix", str(prefix)], capture_output=True, text=True
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("refusing system-wide install", result.stderr)
+            self.assertFalse((prefix / "bin" / "xnulinux").exists())
 
 
 if __name__ == "__main__":

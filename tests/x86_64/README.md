@@ -68,10 +68,12 @@ tests/x86_64/tcg-smoke.sh /path/to/x86_64/vmlinuz /path/to/initrd.cpio.gz
 The smoke initramfs must print `XNU_LINUX_TCG_BOOTED` on its serial console and shut down before the timeout. TCG boots
 only a disposable Linux guest; it does not demonstrate macOS boot, KVM, Intel/AMD compatibility or useful performance.
 
-`build-fki.sh KDIR` now builds the x86_64 FKI host backend. `build-xnu-main.sh KDIR` remains a diagnostic probe and
-currently exposes AArch64-specific assumptions in `xnu_main.c`; it is not yet an x86_64 pass condition. The native
-port must keep XNU execution capability disabled until its context switch, memory isolation and exception paths are
-implemented.
+`build-fki.sh KDIR` now builds the x86_64 FKI host backend. `build-xnu-objects.sh KDIR` compiles `macho.o` and `adt.o`
+as validation objects without linking them into `xnu.ko`; on x86_64 `macho_rebase()` returns `-EOPNOTSUPP` rather than
+simulating PAC signing. `build-xnu-main.sh KDIR` remains a diagnostic probe and currently exposes AArch64-specific
+assumptions in `xnu_main.c`; it is not yet an x86_64 pass condition. The x86_64 fail-closed XNU target rejects CPUs
+that lack the documented feature floor before reaching its world-switch refusal. The native port must keep XNU execution
+capability disabled until its context switch, memory isolation and exception paths are implemented.
 
 ## Evidence and limits
 
@@ -90,12 +92,13 @@ implemented.
   OVMF, AppleSMC, AHCI, E1000, USB and VGA arguments. This checked command/device setup only.
 - The x86_64 FKI module now builds against Debian 6.12.118 x86_64 headers. It reports zero execution capabilities,
   and the current XNU startup requires `FKI_CAP_PAC`. `xnu_main.c` and `world.S` still contain AArch64-only code;
-  native macOS execution is not implemented. The fail-closed x86_64 XNU stub merged in PR #47 does not validate native
-  execution.
+  native macOS execution is not implemented. The fail-closed x86_64 XNU stub introduced in PR #47 is extended here
+  with CPU-feature gating and is exercised in disposable VMs on both feature-complete and feature-limited CPUs; neither
+  run validates native execution.
 - ARM64 `fki.ko` and `xnu.ko` cross-compiled against Debian 6.12.118 ARM64 headers. This is a build check, not an ARM64
   runtime smoke test.
-- This environment has no `/dev/kvm`, no Tahoe disk and no physical Intel/AMD/ARM hardware. No macOS boot, native KVM
-  run or hardware-integrity acceptance has been recorded.
+- The disposable feature-complete XNU-stub VM can use `/dev/kvm` where available, but there is still no Tahoe disk and
+  no physical Intel/AMD/ARM hardware acceptance. No macOS boot or hardware-integrity acceptance has been recorded.
 
 ## Acceptance evidence still required
 

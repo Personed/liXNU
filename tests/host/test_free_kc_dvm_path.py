@@ -5,6 +5,7 @@
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -348,7 +349,11 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 dvm = root / "Droid VM workspace"
+                poc = root / "xnulinux checkout"
                 fake_bin = root / "bin"
+                shutil.copytree(ROOT / "xnu-patches", poc / "xnu-patches")
+                for name in ("XnuCPU", "XnuDisk", "XnuDrm"):
+                    shutil.copytree(ROOT / "kexts" / name, poc / "kexts" / name)
                 (dvm / "out/k27/xnu").mkdir(parents=True)
                 (dvm / "k27").mkdir()
                 (dvm / "toolchains/sdks").mkdir(parents=True)
@@ -395,13 +400,14 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                 sudo.chmod(0o755)
 
                 capture = root / "kext-builds.txt"
+                capture.touch()
                 env = os.environ.copy()
                 env.update(
                     {
                         "DVM": str(dvm),
                         "KEXT_CAPTURE": str(capture),
                         "PATH": str(fake_bin) + os.pathsep + env["PATH"],
-                        "POC": str(ROOT),
+                        "POC": str(poc),
                     }
                 )
                 if fail_kext is None:

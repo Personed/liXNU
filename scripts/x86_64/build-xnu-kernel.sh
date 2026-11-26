@@ -213,6 +213,7 @@ import os
 import pathlib
 import shlex
 import sys
+import tempfile
 
 log_path = pathlib.Path(sys.argv[1])
 objroot = pathlib.Path(sys.argv[2]).resolve()
@@ -237,20 +238,41 @@ for line in log_lines:
         clang_index = clang_indexes[0]
         compile_commands.append((line, tokens, clang_index))
 
-# Keep an escaped-space fixture here because normal CI Xcode paths do not
-# contain spaces, while developer installations sometimes do.
-fixture = (
-    r"/Applications/Xcode\ 26.1.1.app/Contents/Developer/Toolchains/"
-    r"XcodeDefault.xctoolchain/usr/bin/clang -isysroot /tmp/sdk\ path "
-    r"-I/tmp/include\ path"
-)
-fixture_tokens = shlex.split(fixture)
-if (
-    pathlib.PurePath(fixture_tokens[0]).name != "clang"
-    or fixture_tokens[1:]
-    != ["-isysroot", "/tmp/sdk path", "-I/tmp/include path"]
-):
-    raise SystemExit("could not parse a clang command with escaped Xcode and SDK paths")
+def resolve_response_file(args, objroot):
+    paths = [
+        token[1:] for token in args
+        if token.startswith("@") and pathlib.PurePath(token[1:]).name.endswith("common-args.resp")
+    ]
+    if len(paths) != 1:
+        raise SystemExit(f"expected one Firehose compiler response file, found {paths}")
+    path = pathlib.Path(paths[0]).resolve()
+    if os.path.commonpath((str(objroot), str(path))) != str(objroot):
+        raise SystemExit(f"Firehose compiler response file is outside libdispatch OBJROOT: {path}")
+    if not path.is_file():
+        raise SystemExit(f"missing Firehose compiler response file: {path}")
+    return path
+
+
+# Exercise tokenization and the full response-file path check with the escaped
+# Xcode path and hash-prefixed response-file names produced by Xcode builds.
+with tempfile.TemporaryDirectory() as fixture_dir:
+    fixture_objroot = pathlib.Path(fixture_dir).resolve()
+    fixture_response = fixture_objroot / "b52759a1-common-args.resp"
+    fixture_response.write_text(r"-isysroot /tmp/sdk\ path with spaces" + "\n")
+    fixture = (
+        r"/Applications/Xcode\ 26.1.1.app/Contents/Developer/Toolchains/"
+        r"XcodeDefault.xctoolchain/usr/bin/clang @"
+        + shlex.quote(str(fixture_response))
+        + r" -isysroot /tmp/sdk\ path -I/tmp/include\ path"
+    )
+    fixture_tokens = shlex.split(fixture)
+    if pathlib.PurePath(fixture_tokens[0]).name != "clang":
+        raise SystemExit("could not parse a clang command with an escaped Xcode path")
+    fixture_path = resolve_response_file(fixture_tokens[1:], fixture_objroot)
+    if fixture_path != fixture_response.resolve():
+        raise SystemExit("could not parse an Xcode response file with a hash-prefixed name")
+    if shlex.split(fixture_path.read_text()) != ["-isysroot", "/tmp/sdk path with spaces"]:
+        raise SystemExit("could not parse arguments from the hash-prefixed response file")
 
 if len(compile_commands) != 1:
     raise SystemExit(
@@ -258,18 +280,7 @@ if len(compile_commands) != 1:
     )
 _, compile_tokens, clang_index = compile_commands[0]
 command_args = compile_tokens[clang_index + 1:]
-
-response_paths = [
-    token[1:] for token in command_args
-    if token.startswith("@") and pathlib.PurePath(token[1:]).name == "common-args.resp"
-]
-if len(response_paths) != 1:
-    raise SystemExit("firehose_buffer.c clang command does not identify one response file")
-response_path = pathlib.Path(response_paths[0]).resolve()
-if os.path.commonpath((str(objroot), str(response_path))) != str(objroot):
-    raise SystemExit(f"Firehose compiler response file is outside libdispatch OBJROOT: {response_path}")
-if not response_path.is_file():
-    raise SystemExit(f"missing Firehose compiler response file: {response_path}")
+response_path = resolve_response_file(command_args, objroot)
 
 response_args = shlex.split(response_path.read_text(errors="replace"))
 argument_sets = (command_args, response_args)

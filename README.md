@@ -1,14 +1,17 @@
 # xnulinux
 
-Run macOS userspace on Linux with two architecture-specific paths: a direct hosted-kernel path on ARM64, and a QEMU/KVM guest path on x86_64 PCs.
+Run Darwin userspace on Linux. The active portability target is an x86-64 PC using QEMU TCG to boot an ARM64 Linux guest, then xnulinux's FKI/XNU path to reach the PureDarwin console.
 
 On ARM64, xnulinux builds XNU, the open-source kernel of macOS, from Apple's published sources and runs it as a loadable kernel
 module (`xnu.ko`) inside an unmodified arm64 Linux kernel. The hosted XNU drives the CPU and MMU directly, so macOS
 processes run natively next to Linux processes on the same CPUs. Linux lends XNU its memory, timers, files, network and
 GPU through a small interface module (`fki.ko`).
 
-On x86_64 Intel and AMD PCs, the experimental path runs a user-prepared Tahoe 26 guest with QEMU/KVM. It does not load
-the ARM64-only project modules on x86_64. The ARM64 path remains unchanged.
+On x86_64 PCs, QEMU TCG runs the ARM64 Linux guest; `fki.ko` and `xnu.ko` run inside that guest. Firmware, Linux userspace,
+the XNU module probe, and a PureDarwin console are separate validation stages.
+
+A separate experimental path runs a user-prepared Tahoe 26 guest with QEMU/KVM. It does not load the ARM64-only project
+modules on x86_64 and does not count as validation of the x86-64 → ARM64 Linux → PureDarwin target.
 
 On a supported ARM64 host with a stock Ubuntu kernel, `insmod xnu.ko` boots a macOS 27 system disk made by Apple's own installer to the
 desktop: loginwindow, WindowServer, Dock, Finder, Safari and Chrome.

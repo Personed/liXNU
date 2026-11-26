@@ -19,5 +19,6 @@
 - [ ] ARM64 behavior remains covered when shared module code changes.
 - [ ] No Apple system images, firmware, or local SMC OSK values are included.
 - [ ] TCG evidence is labeled as development-only.
+- [ ] The active x86_64 → QEMU → ARM64 Linux → PureDarwin path is distinct from separate experiments.
 - [ ] Every related agent has visible scope, interface, and result updates in PR comments.
-- [ ] Merge when automated checks are green without waiting for human review; use GitHub auto-merge when repository settings permit it.
+- [ ] No merge or auto-merge is performed without explicit user authorization; green CI alone is not permission.

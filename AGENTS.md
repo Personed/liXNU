@@ -2,15 +2,16 @@
 
 ## Project goal
 
-Support Linux PCs without removing the working ARM64 path:
+The active portability target is an ordinary x86-64 PC running QEMU TCG, an ARM64 Linux guest, xnulinux's FKI/XNU modules, and PureDarwin to its console.
 
-- **ARM64:** keep the existing direct XNU-in-Linux runtime using `fki.ko` and `xnu.ko`. Preserve its build and runtime behavior unless a task specifically changes it.
-- **x86_64 Intel and AMD:** use QEMU/KVM to run a user-prepared macOS Tahoe 26 x86_64 guest. The current project modules and world-switch code are ARM64-only; do not present them as an x86_64 runtime or add unsafe no-op x86 hooks.
-- Keep Intel and AMD acceptance separate. The launcher and TCG checks do not establish support. Claim support for a vendor only after a physical host boots Tahoe to the desktop and passes host-integrity and shutdown checks.
+- **x86_64 Intel and AMD host:** QEMU TCG runs the ARM64 Linux guest; preserve the launcher and document the exact guest profile that was validated.
+- **ARM64 Linux guest:** keep the direct XNU-in-Linux runtime using `fki.ko` and `xnu.ko`; preserve its build and runtime behavior unless a task specifically changes it.
+- **Native ARM64 Linux:** remains an existing profile and useful compatibility reference, but it does not replace validating the x86_64-hosted guest.
+- The separate x86_64 QEMU/KVM macOS prototype is experimental and is not the accepted PureDarwin path or a user-selected goal. Do not present its TCG/Linux smoke tests as PureDarwin or macOS support.
 
-## Runtime decisions and boundaries
+## Separate x86_64 macOS/KVM experiment
 
-- KVM is the default accelerator. QEMU 10 or newer, `qemu-img`, and `flock` (util-linux) are required. QEMU `host` is the default guest CPU model under KVM so the guest sees the host's actual CPU model/features. TCG is an explicit development/test path only and defaults to QEMU `max`.
+- For this experiment, KVM is the default accelerator. QEMU 10 or newer, `qemu-img`, and `flock` (util-linux) are required. QEMU `host` is the default guest CPU model under KVM so the guest sees the host's actual CPU model/features. TCG is an explicit development/test path only and defaults to QEMU `max`.
 - The x86 host feature floor is SSE4.2, AVX, FMA, MOVBE, POPCNT, LZCNT, BMI1, AVX2 and BMI2. AMD guests need matching OpenCore AMD kernel patches and physical AMD validation.
 - The x86 launcher accepts a user-prepared raw or qcow2 boot disk with EFI/OpenCore. It writes guest changes to a persistent qcow2 overlay and keeps OVMF variables in the per-VM state directory. `STATE_DIR` must be readable, writable, and searchable so the launcher can check existing disk state. A state directory is for one VM and one running QEMU process. The `.base` sidecar identifies launcher-owned overlays; a user source image with the reserved overlay filename pattern is accepted when it has no matching sidecar. Existing overlays may be stored elsewhere and symlinked into `STATE_DIR` if the link resolves to a regular file. Do not use that VM's managed overlay as `DISK` with the same state directory; choose its original base or a separate directory to fork the overlay. Do not write to the source disk or firmware template.
 - Do not add Apple macOS images, Apple firmware, or the local `APPLE_SMC_OSK` value to Git or logs. Never put the SMC value in QEMU's argv or environment; pass it through a mode-0600 temporary QEMU config that is removed after exit. Do not claim that a TCG Linux boot is a macOS or KVM test.
@@ -28,7 +29,7 @@ Project work is coordinated continuously through pull request comments. For **ev
 
 ## Merge policy
 
-The project owner has authorized automatic integration: **do not wait for human review**. When branch protection requires the relevant CI checks, enable GitHub auto-merge on each ready PR. If checks are not enforced by branch protection or auto-merge is unavailable, monitor the PR and merge only after all of its automated checks report green. Never merge with a failed or pending check. If repository rules require a human approval, remove that review gate when repository permissions allow; otherwise report the exact GitHub restriction and continue other work without treating a human review as an engineering dependency.
+There is no standing authorization to merge or auto-merge. Do not merge, enable auto-merge, or remove/alter required review gates unless the user explicitly authorizes that action. Green CI means a PR is ready for review; it is not permission to integrate.
 
 Do not leave parallel agents to infer ownership from the code. Use the PR comments to divide overlapping work and confirm interface changes. Continue independent work while waiting on a reply; record unresolved dependencies in the PR.
 

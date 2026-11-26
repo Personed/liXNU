@@ -32,14 +32,16 @@ Native x86_64 hosting of Tahoe 26 remains a separate workstream; direct ARM64 ho
 | Ubuntu 24.04 x86-64 hosted CI VM, QEMU TCG | PR #52 run [#148](https://github.com/Personed/xnulinux/actions/runs/45902417451) passed all four jobs on head `24e4a9c`: image, disk/collection, guest preparation, and 6 GiB boot. The Azure/Microsoft VM had 4 vCPUs, virtual AMD EPYC 7763, QEMU 8.2.2, `MemTotal: 16367500 kB`, `MemAvailable: 15418148 kB` before artifacts and `14965924 kB` at boot; peak QEMU RSS was 3,833,380 KiB (3.66 GiB). It reached the Darwin console, guest halt, XNU/FKI unload, Linux power-off, and successful QEMU exit. PR #89 run [#151](https://github.com/Personed/xnulinux/actions/runs/45904189412) also passed the same 6 GiB route on Ubuntu/QEMU 8.2.2, with 4 vCPUs, `MemTotal: 16760320 kB`, `MemAvailable: 15204761 kB` before QEMU, and 3,820,440 KiB (3.64 GiB) peak QEMU RSS. Its Windows/macOS matrix jobs used the same artifacts. These virtual-runner results are not a physical memory floor. Earlier runs #138, #140 and #143 remain historical virtual-runner evidence; #143 added fixed package-digest checks on an earlier tree. Older 16 GiB runs #67/#106, #36/#118 (tested head `c55a700`), and #69/#115 (tested head `3eb5e0e`) also remain historical evidence. |
 | Physical Intel x86-64 Linux PC, QEMU TCG | Not tested; no physical Intel PC is attached to the available executor. |
 | Physical AMD x86-64 Linux PC, QEMU TCG | Not tested; some CI runs used AMD EPYC virtual CPUs, which do not establish bare-metal AMD support. |
-| Windows Server 2025 x86-64 host, QEMU TCG | PR #89 run [#151](https://github.com/Personed/xnulinux/actions/runs/45904189412), head `3fbfa6a` on #83 `07d08c5` / #52 `24e4a9c`: image, disk/collection, guest preparation, and the Ubuntu boot passed. Windows/QEMU 11.1.0 started the same 6 GiB guest inputs but XNU loading hit an ARM64 level-2 write-permission fault at `fffffff007004000`; Darwin, userland, halt, and unload markers were absent. QEMU exited 0, but the route harness failed for missing guest evidence. Windows host memory before downloads was 17,174,360,064 bytes total and 14,339,944,448 available; before QEMU it reported 17,174,360,064 total and 13,703,258,112 available. Process RSS was not measured. Devin's diagnosis points to the bootstrap window lacking a write permission when ARM64 PIE permission indirection is active; #98 pins `cortex-a710` as a test to avoid QEMU 11's `-cpu max` S1PIE. This does not count as a Windows boot pass. |
-| Intel macOS 15 host, QEMU TCG | PR #89 run [#151](https://github.com/Personed/xnulinux/actions/runs/45904189412) used the same guest artifacts as the Windows and Ubuntu jobs. macOS/QEMU 11.1.0 started the 6 GiB guest but hit the same ARM64 level-2 XNU write-permission fault at `fffffff007004000`; Darwin, userland, halt, and unload markers were absent. QEMU exited 0, while the route harness failed for missing guest evidence. The runner reported 15,032,385,536 bytes total and 10,459,959,296 available before QEMU; peak QEMU RSS was 3,476,652 KiB (3.32 GiB). Devin's diagnosis points to ARM64 PIE permission indirection and QEMU 11's `-cpu max` S1PIE exposure; #98 pins `cortex-a710` as a cross-host experiment. The cause and support status remain unverified until a corrected matrix rerun passes. |
+| Windows Server 2025 x86-64 host, QEMU TCG | PR #89 run [#151](https://github.com/Personed/xnulinux/actions/runs/45904189412), head `3fbfa6a` on #83 `07d08c5` / #52 `24e4a9c`: image, disk/collection, guest preparation, and the Ubuntu boot passed. Windows/QEMU 11.1.0 started the same 6 GiB guest inputs but XNU loading hit an ARM64 level-2 write-permission fault at `fffffff007004000`; Darwin, userland, halt, and unload markers were absent. QEMU exited 0, but the route harness failed for missing guest evidence. Windows host memory before downloads was 17,174,360,064 bytes total and 14,339,944,448 available; before QEMU it reported 17,174,360,064 total and 13,703,258,112 available. Process RSS was not measured. A reviewer hypothesis is that the bootstrap window omits a write permission under ARM64 PIE permission indirection; this has not been isolated. PR #98 tests `cortex-a710`, which changes CPU features beyond S1PIE, so a pass would validate that CPU profile without establishing the cause. This does not count as a Windows boot pass. |
+| Intel macOS 15 host, QEMU TCG | PR #89 run [#151](https://github.com/Personed/xnulinux/actions/runs/45904189412) used the same guest artifacts as the Windows and Ubuntu jobs. macOS/QEMU 11.1.0 started the 6 GiB guest but hit the same ARM64 level-2 XNU write-permission fault at `fffffff007004000`; Darwin, userland, halt, and unload markers were absent. QEMU exited 0, while the route harness failed for missing guest evidence. The runner reported 15,032,385,536 bytes total and 10,459,959,296 available before QEMU; peak QEMU RSS was 3,476,652 KiB (3.32 GiB). ARM64 PIE permission indirection is a reviewer hypothesis, not an established cause; QEMU 11's `-cpu max` and PR #98's `cortex-a710` profile differ in other CPU features as well. A controlled feature comparison or runtime fix and a full matrix rerun are needed before claiming support. |
 
 PR #89 run [#151](https://github.com/Personed/xnulinux/actions/runs/45904189412) used the paired [guest/build manifest artifact](https://github.com/Personed/xnulinux/actions/runs/45904189412/artifacts/15158822689) and [disk artifact](https://github.com/Personed/xnulinux/actions/runs/45904189412/artifacts/15159442035). Both Windows and macOS boot logs recorded the same inputs: Image SHA-256 `02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6`, initramfs SHA-256 `a548f8fc4075fd535fece9648c808d97a9460ad520f67a750f221b6ba18babe8`, and disk SHA-256 `269cc4ba7a8ec973cc672d50bffeebb84b9e3a5f9051f567b152d566d8b9acb5`.
 
+PR #83 run [#149](https://github.com/Personed/xnulinux/actions/runs/45902502697), head `07d08c5`, independently passed the 6 GiB route on a hosted Ubuntu x86-64 VM with QEMU 8.2.2. Host `MemTotal` was 16,078,424 kB and `MemAvailable` was 14,784,852 kB before QEMU. The profile used Linux `mem=2G`, a 3,072 MiB FKI carve-out at `0xc0000000`, and 2,816 MiB XNU RAM; peak QEMU RSS was 3,843,952 KiB (3.67 GiB). The boot reached the PureDarwin console and completed guest halt, XNU/FKI unload, Linux power-off, and QEMU exit 0. This is a second hosted-runner measurement of the 6 GiB profile, not a physical host-RAM floor.
+
 
 PR #52 run [#148](https://github.com/Personed/xnulinux/actions/runs/45902417451) passed all four image, disk/collection, guest-preparation, and TCG-boot jobs on current head `24e4a9c`. The boot ran on Ubuntu 24.04.5 in an Azure VM under Microsoft virtualization, with 4 vCPUs and a virtual AMD EPYC 7763. QEMU 8.2.2 used 6 GiB RAM, Linux `mem=2G`, a 3,072 MiB FKI carve-out at `0xc0000000`, and 2,816 MiB XNU RAM. Host `MemTotal` was 16,367,500 kB; `MemAvailable` was 15,418,148 kB before artifacts and 14,965,924 kB at boot. Peak QEMU RSS was 3,833,380 KiB (3.66 GiB). The log reached Darwin, `XNULINUX_USERLAND_OK`, guest halt, `XNULINUX_E2E_XNU_UNLOADED`, and Linux power-off. The successful boot job means the harness's zero-QEMU-exit requirement passed, although the retained log has no separate exit-status line. This confirms the 6 GiB profile on the current virtual runner, not a physical-PC or RAM floor.
-PR #46's older cross-host branch used the historical 16 GiB profile and its earlier run #79 failed in `kclink` before guest boot; it is not evidence for the current reduced profile. PR #89 run #151 used head `3fbfa6a` on the earlier #83/#52 stack, before PR #89 was retargeted to integrated base `cc4574a`. It checks shared input hashes: Ubuntu/QEMU 8.2.2 passed the 6 GiB route with peak RSS 3,820,440 KiB, while Windows and Intel macOS/QEMU 11.1.0 both faulted at the same XNU bootstrap write-permission fault. The image, disk/collection, and guest preparation jobs passed, as did modules #945 and launcher #476. Devin's diagnosis identifies ARM64 PIE permission indirection in the bootstrap window as the likely cause; QEMU 11.1.0 `-cpu max` exposes S1PIE. PR #98 pins `cortex-a710` as an experiment, and a PIE-aware runtime fix is being prepared separately. These are diagnostic findings, not cross-host acceptance. Current #52 image run #148 passed; PR #83 image run #149 passed at 6 GiB on head `07d08c5`, with modules #922 and launcher #455 passed. PR #96 adds an informational memory-profile sweep; image run #157 was building the disk/collection at 23:31 UTC, while modules #989 and launcher #511 passed. Its five experimental profiles range from 5 GiB to 2 GiB QEMU RAM; no profile result is available yet. Earlier run #147 belongs to a superseded #89 head and is not current-head evidence. Module jobs are stage smoke tests, not a full PureDarwin route. Do not claim Windows/macOS support until the retargeted route reaches console and guest shutdown, and do not claim physical-PC support until representative Intel/AMD hardware is tested.
+PR #46's older cross-host branch used the historical 16 GiB profile and its earlier run #79 failed in `kclink` before guest boot; it is not evidence for the current reduced profile. PR #89 run #151 used head `3fbfa6a` on the earlier #83/#52 stack, before PR #89 was retargeted to integrated base `cc4574a`. It checks shared input hashes: Ubuntu/QEMU 8.2.2 passed the 6 GiB route with peak RSS 3,820,440 KiB, while Windows and Intel macOS/QEMU 11.1.0 both faulted at the same XNU bootstrap write-permission fault. The image, disk/collection, and guest preparation jobs passed, as did modules #945 and launcher #476. ARM64 PIE permission indirection remains a reviewer hypothesis; the evidence does not isolate it as the cause. PR #98 tests `cortex-a710`, but that model changes other CPU features too, so a pass would validate its tested profile rather than prove the S1PIE hypothesis. A controlled feature comparison or a PIE-aware runtime fix followed by the complete matrix is still needed. These are diagnostic findings, not cross-host acceptance. Current #52 image run #148 passed; PR #83 image run #149 passed at 6 GiB on head `07d08c5`, with modules #922 and launcher #455 passed. PR #96 run [#157](https://github.com/Personed/xnulinux/actions/runs/45907949989) completed the standard 6 GiB route and all five experimental profiles from 5 GiB to 2 GiB, each requiring the console and guest shutdown path. The single run's lowest passing guest profile was 2 GiB; it is experimental evidence, not a support claim or repeatable minimum. Earlier run #147 belongs to a superseded #89 head and is not current-head evidence. Module jobs are stage smoke tests, not a full PureDarwin route. Do not claim Windows/macOS support until the retargeted route reaches console and guest shutdown, and do not claim physical-PC support until representative Intel/AMD hardware is tested.
 
 The historical full-route TCG reference assigns 16 GiB to the ARM64 guest, with Linux
 `mem=7G`, an 8,156 MiB FKI carve-out at `0x200000000`, and 7,900 MiB XNU RAM. The
@@ -87,15 +89,27 @@ and QEMU exit 0. PR #75 merged into #52 as `24e4a9c`; current head `24e4a9c` the
 run #148 across all four image, disk/collection, guest-preparation, and boot jobs. Its host
 measurements and console/shutdown evidence are recorded above.
 
-The 6 GiB guest allocation is the lowest full-route profile demonstrated in completed
-runs. PR #96 (head `e358351`, based on #52 `24e4a9c`) adds an informational sweep at 5, 4,
-3, 2.5, and 2 GiB. It reuses the same-run image and disk artifacts, checks the full guest
-console/halt/XNU-FKI unload/Linux power-off/QEMU-exit path, and retains host-memory and QEMU
-RSS evidence per profile. At 23:05 UTC image run #157 was still in progress, while modules
-#989 and launcher #511 passed; no below-6-GiB results had been reported. Even a CI pass would identify a virtual-runner guest profile,
-not a physical PC support floor. The guest minimum and physical host-RAM minimum remain
-unmeasured; compare repeated results on representative physical Intel and AMD PCs before
-setting a published floor.
+PR #52 run #148 and PR #83 run #149 independently passed the 6 GiB guest profile. PR #96
+run [#157](https://github.com/Personed/xnulinux/actions/runs/45907949989), head `e358351`,
+then completed five experimental profiles on hosted Ubuntu 24.04 TCG runners using QEMU
+8.2.2. Each job used paired artifacts from that workflow, required the PureDarwin console
+and guest shutdown path, and retained host-memory and QEMU RSS evidence. The capacity
+snapshot was taken before artifact downloads; runner VMs varied between Microsoft-hosted
+AMD EPYC and KVM-hosted Intel Xeon profiles:
+
+| QEMU guest RAM | Linux / FKI carve-out / XNU RAM | Ubuntu hosted VM; host RAM total / available before downloads | Peak QEMU RSS | Result |
+| --- | --- | --- | --- | --- |
+| 5 GiB | `mem=2G` / 3,072 MiB at `0xc0000000` / 2,816 MiB | 4-vCPU Azure/Microsoft VM, AMD EPYC 9V74; 16,367,504 / 15,420,624 kB | 3,820,952 KiB (3.64 GiB) | Full route passed once |
+| 4 GiB | `mem=2G` / 1,792 MiB at `0xc0000000` / 1,536 MiB | 4-vCPU KVM VM, Intel Xeon 6975P-C; 16,078,420 / 15,153,160 kB | 2,513,672 KiB (2.40 GiB) | Full route passed once |
+| 3 GiB | `mem=1G` / 1,792 MiB at `0x80000000` / 1,536 MiB | 4-vCPU Azure/Microsoft VM, AMD EPYC 9V45; 16,367,496 / 15,453,292 kB | 2,493,508 KiB (2.38 GiB) | Full route passed once |
+| 2.5 GiB | `mem=512M` / 1,536 MiB at `0x60000000` / 1,280 MiB | 4-vCPU KVM VM, Intel Xeon 6975P-C; 16,078,416 / 15,147,636 kB | 2,212,348 KiB (2.11 GiB) | Full route passed once |
+| 2 GiB | `mem=512M` / 1,280 MiB at `0x60000000` / 1,024 MiB | 4-vCPU KVM VM, Intel Xeon 6975P-C; 16,078,412 / 15,168,000 kB | 1,946,084 KiB (1.86 GiB) | Full route passed once |
+
+The 2 GiB pass is the lowest guest allocation currently observed, but it is one
+experimental pass on a hosted virtual runner. It does not establish a supported guest
+minimum or a physical host-RAM floor. Repeat these profiles and validate them on
+representative bare-metal Intel and AMD PCs before publishing resource floors. The
+current 6 GiB profile remains the repeated baseline, not a measured minimum.
 
 ## Reproducing the active QEMU TCG boot
 
@@ -265,7 +279,7 @@ Report the profile alongside the stage:
   The retained log does not include a standalone QEMU exit-status line.
 
   These PR-branch runs are not integrated in `main` and do not establish physical-PC
-  acceptance. Status checked 2026-11-26 23:31 UTC: PR #52 head `24e4a9c` includes the
+  acceptance. Status checked 2026-11-26 23:43 UTC: PR #52 head `24e4a9c` includes the
   #72 TTBR1 guard and #75 package digests; image run #148 passed all four image,
   disk/collection, guest-preparation, and 6 GiB boot jobs. PR #72 run #140 passed the
   reduced profile on a tree identical to #52's earlier head `3b47444`; PR #75 run #143
@@ -284,17 +298,23 @@ Report the profile alongside the stage:
   markers were absent, so neither is a boot pass. Image, disk/collection, guest
   preparation, modules #945, and launcher #476 passed. The Devin diagnosis in
   [PR #89 thread #4714128069](https://github.com/Personed/xnulinux/pull/89#discussion_r4714128069)
-  points to the bootstrap window omitting write permission bits under ARM64 PIE permission
-  indirection; QEMU 11.1.0 exposes S1PIE through `-cpu max`, unlike QEMU 8.2.2 in the passing
-  Ubuntu job. PR [#98](https://github.com/Personed/xnulinux/pull/98) pins `cortex-a710` as
-  a controlled TCG CPU experiment. A PIE-aware runtime fix is separate and is needed to
-  preserve behavior on ARM64 CPUs that enable PIE. Neither experiment establishes Windows
-  or macOS support until the retargeted matrix passes with the full console/shutdown markers.
+  is a hypothesis that the bootstrap window omits write permission bits under ARM64 PIE
+  permission indirection; the evidence has not isolated this as the cause. QEMU 11.1.0
+  `-cpu max` exposes S1PIE, but PR [#98](https://github.com/Personed/xnulinux/pull/98) tests
+  `cortex-a710`, which changes other CPU features too. A pass on that model would validate
+  its tested CPU profile, not prove S1PIE caused the fault. A controlled feature comparison
+  or PIE-aware runtime fix and a full corrected matrix are still required for Windows/macOS
+  acceptance.
 
   PR #96 head `e358351` adds an experimental 5, 4, 3, 2.5, and 2 GiB guest sweep on the
-  #52 base. As of 23:31 UTC, image run #157 had built the pinned guest image and was
-  building the disk/collection; modules #989 and launcher #511 passed, and no lower-memory
-  boot result was available. Earlier run #147 belongs to a
+  #52 base. Run [#157](https://github.com/Personed/xnulinux/actions/runs/45907949989)
+  completed all image, disk/collection, guest-preparation, standard 6 GiB boot, and five
+  experimental-profile jobs successfully. Every experimental profile reached the console
+  and guest shutdown, with QEMU exit 0 required by the harness; the detailed measurements
+  are recorded above. This is one hosted-VM sweep and does not establish a supported guest
+  minimum. PR #98 run [#158](https://github.com/Personed/xnulinux/actions/runs/45911026412)
+  passed the pinned guest image build and was building the XNU collection at 23:51 UTC;
+  the CPU-model experiment has not yet reached boot. Earlier run #147 belongs to a
   superseded #89 head. PR #36 run #118 passed on tested head `c55a700`, not current head
   `93e3cf4`; PR #46 run #79 failed in `kclink` before host preparation or boot.
   Earlier Windows matrix job [#71](https://github.com/Personed/xnulinux/actions/runs/45845436111)

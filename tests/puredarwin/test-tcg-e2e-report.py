@@ -218,6 +218,54 @@ class HostPreflightTests(unittest.TestCase):
             "host_preflight_before_artifact_downloads",
         )
 
+    def test_macos_preflight_writes_decimal_memory_with_large_page_counts(self):
+        script = ROOT / "tests" / "puredarwin" / "init-host-report.sh"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            (fake_bin / "sw_vers").write_text(
+                "#!/bin/sh\nprintf '15.0\\n'\n", encoding="utf-8"
+            )
+            (fake_bin / "sysctl").write_text(
+                "#!/bin/sh\n"
+                "case \"$2\" in\n"
+                "  hw.memsize) printf '17179869184\\n' ;;\n"
+                "  hw.pagesize) printf '4096\\n' ;;\n"
+                "  machdep.cpu.brand_string) printf 'Intel CPU test\\n' ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "vm_stat").write_text(
+                "#!/bin/sh\n"
+                "cat <<'EOF'\n"
+                "Mach Virtual Memory Statistics: (page size of 4096 bytes)\n"
+                "Pages free: 250000.\n"
+                "Pages inactive: 3000000.\n"
+                "Pages speculative: 100000.\n"
+                "Pages purgeable: 50000.\n"
+                "EOF\n",
+                encoding="utf-8",
+            )
+            for executable in (fake_bin / "sw_vers", fake_bin / "sysctl", fake_bin / "vm_stat"):
+                executable.chmod(0o755)
+
+            env = os.environ.copy()
+            env["RUNNER_TEMP"] = temp_dir
+            env["RUNNER_OS"] = "macOS"
+            env["XNULINUX_RUNNER_LABEL"] = "macos-report-test"
+            env["PATH"] = str(fake_bin) + os.pathsep + env["PATH"]
+            subprocess.run(["bash", str(script)], check=True, env=env, capture_output=True, text=True)
+            report = json.loads(
+                (root / "puredarwin-tcg-boot-report.json").read_text(encoding="utf-8")
+            )
+
+        host = report["host"]
+        self.assertEqual(host["system"], "Darwin")
+        self.assertEqual(host["memory_total_bytes"], 17179869184)
+        self.assertEqual(host["memory_available_bytes"], (250000 + 3000000 + 100000 + 50000) * 4096)
+        self.assertIsInstance(host["memory_available_bytes"], int)
+
 
 if __name__ == "__main__":
     unittest.main()

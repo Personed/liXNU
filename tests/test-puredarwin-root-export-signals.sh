@@ -30,6 +30,9 @@ printf '%s\n' '{"partitiontable":{"label":"gpt","sectorsize":512,"partitions":[{
 WRAPPER
 cat >"$bin/sudo" <<'WRAPPER'
 #!/bin/sh
+if [ "${DROP_TMPDIR_ON_SUDO:-0}" = 1 ] && [ "${1:-}" = env ]; then
+  exec /usr/bin/env -u TMPDIR "$@"
+fi
 if [ "${NFS_ROOT_SQUASH_TEST:-0}" = 1 ] && [ "$1" = test ] && [ "$2" = -w ]; then
   case "$3" in
     "$NFS_SIM_DIR"/*) exit 1 ;;
@@ -149,6 +152,10 @@ if [ "$1" = '-d' ]; then
   case "$*" in
     *'.puredarwin-root.'*)
       printf '%s\n' "$result" >"$TEST_STATE/archive-dir"
+      if [ "${PAUSE_AFTER_ARCHIVE_MKTEMP:-0}" = 1 ]; then
+        : >"$TEST_STATE/archive-mktemp-ready"
+        while [ ! -e "$TEST_STATE/archive-mktemp-release" ]; do sleep 0.01; done
+      fi
       if [ "${REPLACE_ARCHIVE_DIR:-0}" = 1 ]; then
         mv -- "$result" "$result.original"
         ln -s -- "$ATTACKER_DIR" "$result"
@@ -195,15 +202,16 @@ for arg do last=$arg; done
 case "$last" in
   */mount)
     printf '%s\n' "${last%/mount}" >"$TEST_STATE/mount-parent"
+    printf '%s\n' "$last" >"$TEST_STATE/mount-dir"
+    stat -c '%a' -- "$last" >"$TEST_STATE/mount-dir-mode"
+    if [ "${SIGNAL_AFTER_MOUNT_DIR_MKDIR:-0}" = 1 ]; then kill -TERM "$PPID"; fi
     ;;
   *'.puredarwin-root-mount.'*)
     printf '%s\n' "$last" >"$TEST_STATE/mount-parent"
+    stat -c '%a' -- "$last" >"$TEST_STATE/mount-parent-mode"
     if [ "${SIGNAL_DURING_MOUNT_PARENT_MKDIR:-0}" = 1 ]; then kill -TERM "$PPID"; fi
     ;;
 esac
-if [ "${SIGNAL_AFTER_MOUNT_DIR_MKDIR:-0}" = 1 ] && [ "$last" = mount ]; then
-  kill -TERM "$PPID"
-fi
 WRAPPER
 chmod +x "$bin/mkdir"
 
@@ -345,6 +353,7 @@ mount_parent=$(cat "$state/mount-parent")
 [ ! -e "$mount_dir" ]
 [ ! -e "$archive_dir" ]
 [ ! -e "$mount_parent" ]
+[ "$(cat "$state/mount-dir-mode")" = 700 ]
 [ ! -e "$state/loop-attached" ]
 if [ -e "$state/check-log" ]; then
   check_log=$(cat "$state/check-log")
@@ -352,6 +361,90 @@ if [ -e "$state/check-log" ]; then
 fi
 
 echo 'PureDarwin root exporter mount-directory signal cleanup test passed.'
+
+unset SIGNAL_AFTER_MOUNT SIGNAL_BEFORE_MOUNT
+
+# A signal immediately after mktemp returns, before the exporter changes into
+# the staging directory, must still record its inode and remove it safely.
+early_output=$tmp/early-mktemp-signal.tar.gz
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/archive-mktemp-ready" "$state/archive-mktemp-release" "$state/check-log"
+PAUSE_AFTER_ARCHIVE_MKTEMP=1 "$script" "$image" "$early_output" >/dev/null 2>&1 &
+early_export_pid=$!
+for attempt in {1..500}; do
+  [ -e "$state/archive-mktemp-ready" ] && break
+  if ! kill -0 "$early_export_pid" 2>/dev/null; then break; fi
+  sleep 0.01
+done
+if [ ! -e "$state/archive-mktemp-ready" ]; then
+  kill -TERM "$early_export_pid" 2>/dev/null || true
+  : >"$state/archive-mktemp-release"
+  wait "$early_export_pid" 2>/dev/null || true
+  echo 'Exporter did not pause after creating its staging directory.' >&2
+  exit 1
+fi
+kill -TERM "$early_export_pid"
+: >"$state/archive-mktemp-release"
+set +e
+wait "$early_export_pid"
+status=$?
+set -e
+[ "$status" -eq 143 ] || { echo "Expected post-mktemp SIGTERM exit 143; got $status" >&2; exit 1; }
+early_archive_dir=$(cat "$state/archive-dir")
+[ ! -e "$early_archive_dir" ]
+[ ! -e "$early_output" ]
+[ ! -e "$state/loop-attached" ]
+echo 'PureDarwin root exporter post-mktemp signal cleanup test passed.'
+
+# The sudo re-exec deliberately drops TMPDIR. The private child must restore
+# the original value before selecting a physical mount staging path.
+sudo_tmp_target=$tmp/sudo-tmp-target
+sudo_tmp_link=$tmp/sudo-tmp-link
+mkdir -- "$sudo_tmp_target"
+ln -s -- "$sudo_tmp_target" "$sudo_tmp_link"
+sudo_tmp_physical=$(CDPATH= cd -P -- "$sudo_tmp_target" && pwd)
+sudo_tmp_output=$tmp/sudo-tmp.tar.gz
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/mount-dir" "$state/mount-parent" "$state/mount-parent-mode" "$state/check-log"
+DROP_TMPDIR_ON_SUDO=1 TMPDIR="$sudo_tmp_link" "$script" "$image" "$sudo_tmp_output" >/dev/null
+sudo_mount_parent=$(cat "$state/mount-parent")
+case "$sudo_mount_parent" in
+  "$sudo_tmp_physical"/.puredarwin-root-mount.*) ;;
+  *) echo "Private export lost TMPDIR or failed to resolve its symlink: $sudo_mount_parent" >&2; exit 1 ;;
+esac
+[ -f "$sudo_tmp_output" ]
+[ ! -e "$sudo_mount_parent" ]
+echo 'PureDarwin root exporter sudo TMPDIR and physical path test passed.'
+
+# With TMPDIR unset, resolve the /tmp fallback physically before checking its
+# permissions and creating the private mount parent.
+fallback_tmp_physical=$(CDPATH= cd -P -- /tmp && pwd)
+fallback_output=$tmp/fallback-tmp.tar.gz
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/mount-dir" "$state/mount-parent" "$state/mount-parent-mode" "$state/check-log"
+env -u TMPDIR DROP_TMPDIR_ON_SUDO=1 "$script" "$image" "$fallback_output" >/dev/null
+fallback_mount_parent=$(cat "$state/mount-parent")
+case "$fallback_mount_parent" in
+  "$fallback_tmp_physical"/.puredarwin-root-mount.*) ;;
+  *) echo "Default temporary path was not resolved physically: $fallback_mount_parent" >&2; exit 1 ;;
+esac
+[ -f "$fallback_output" ]
+[ ! -e "$fallback_mount_parent" ]
+echo 'PureDarwin root exporter physical /tmp fallback test passed.'
+
+# A child of a setgid temporary parent can still have mode 2700 when a signal
+# arrives before the exporter clears the inherited setgid bit.
+setgid_mount_tmp=$tmp/setgid-mount-tmp
+mkdir -- "$setgid_mount_tmp"
+chmod 2700 "$setgid_mount_tmp"
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/mount-dir" "$state/mount-parent" "$state/mount-parent-mode" "$state/check-log"
+set +e
+SIGNAL_DURING_MOUNT_PARENT_MKDIR=1 TMPDIR="$setgid_mount_tmp" "$script" "$image" "$output" >/dev/null 2>&1
+status=$?
+set -e
+[ "$status" -eq 143 ] || { echo "Expected setgid mount-parent SIGTERM exit 143; got $status" >&2; exit 1; }
+setgid_mount_parent=$(cat "$state/mount-parent")
+[ "$(cat "$state/mount-parent-mode")" = 2700 ]
+[ ! -e "$setgid_mount_parent" ]
+[ ! -e "$state/loop-attached" ]
+echo 'PureDarwin root exporter setgid mount-parent cleanup test passed.'
 
 # A same-owner directory replacement after the original identity was recorded
 # must not receive archive or e2fsck writes.

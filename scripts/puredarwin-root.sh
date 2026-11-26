@@ -13,6 +13,15 @@ if [ "$private_mount_namespace" -eq 1 ] && [ -n "${XNULINUX_PRIVATE_MOUNT_PATH:-
   export PATH
   unset XNULINUX_PRIVATE_MOUNT_PATH
 fi
+if [ "$private_mount_namespace" -eq 1 ] && [ "${XNULINUX_PRIVATE_MOUNT_TMPDIR+x}" = x ]; then
+  if [ -n "$XNULINUX_PRIVATE_MOUNT_TMPDIR" ]; then
+    TMPDIR=$XNULINUX_PRIVATE_MOUNT_TMPDIR
+    export TMPDIR
+  else
+    unset TMPDIR
+  fi
+  unset XNULINUX_PRIVATE_MOUNT_TMPDIR
+fi
 case "$0" in
   */*)
     case "$0" in /*) script_path=$0 ;; *) script_path=$PWD/$0 ;; esac
@@ -93,7 +102,8 @@ if [ "$private_mount_namespace" -eq 0 ]; then
   fi
   caller_uid=$EUID
   caller_gid=$(id -g)
-  exec sudo env XNULINUX_PRIVATE_MOUNT_PATH="$PATH" unshare --mount --propagation private -- setpriv \
+  exec sudo env XNULINUX_PRIVATE_MOUNT_PATH="$PATH" XNULINUX_PRIVATE_MOUNT_TMPDIR="${TMPDIR-}" \
+    unshare --mount --propagation private -- setpriv \
     --reuid "$caller_uid" --regid "$caller_gid" --init-groups -- \
     "$script_path" --private-mount-namespace "$image" "$output"
 fi
@@ -131,13 +141,15 @@ fi
 # Resolve a possibly relative TMPDIR before entering the archive staging
 # directory, matching the caller's original working directory.
 mount_tmp_candidates=()
-if [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; then
-  resolved_tmpdir=''
-  if IFS= read -r -d '' resolved_tmpdir < <(CDPATH= cd -P -- "$TMPDIR" && printf '%s\0' "$PWD"); then
-    mount_tmp_candidates+=("$resolved_tmpdir")
+add_mount_tmp_candidate() {
+  local candidate=$1 resolved=''
+  if [ -d "$candidate" ] &&
+     IFS= read -r -d '' resolved < <(CDPATH= cd -P -- "$candidate" && printf '%s\0' "$PWD"); then
+    mount_tmp_candidates+=("$resolved")
   fi
-fi
-mount_tmp_candidates+=(/tmp)
+}
+if [ -n "${TMPDIR:-}" ]; then add_mount_tmp_candidate "$TMPDIR"; fi
+add_mount_tmp_candidate /tmp
 
 partition_table=$(sfdisk --json -- "$image")
 partition=$(python3 -c '
@@ -164,6 +176,7 @@ mount_dir='' mount_identity='' mount_parent='' mount_parent_identity=''
 archive_dir='' archive_identity='' archive='' loop='' check_log=''
 cleanup() {
   local cleanup_mount_identity cleanup_mount_owner_mode cleanup_parent_identity cleanup_parent_owner_mode
+  local cleanup_archive_identity cleanup_archive_owner_mode
   trap '' INT TERM
   if [ -n "$mount_dir" ] && { [ -e "$mount_dir" ] || [ -L "$mount_dir" ]; }; then
     if mountpoint -q -- "$mount_dir"; then
@@ -187,13 +200,28 @@ cleanup() {
     fi
   fi
   if [ -n "$archive_dir" ] && [ -n "$archive_identity" ]; then
+    if [ "$(stat -c '%d:%i' -- . 2>/dev/null || true)" != "$archive_identity" ]; then
+      cleanup_archive_identity=$(stat -c '%d:%i' -- "$archive_dir" 2>/dev/null || true)
+      cleanup_archive_owner_mode=$(stat -c '%u:%a' -- "$archive_dir" 2>/dev/null || true)
+      if [ ! -L "$archive_dir" ] &&
+         [ "$cleanup_archive_identity" = "$archive_identity" ] &&
+         { [ "$cleanup_archive_owner_mode" = "$EUID:700" ] ||
+           [ "$cleanup_archive_owner_mode" = "$EUID:2700" ]; } &&
+         export_path_is_safe "$output_dir"; then
+        CDPATH= cd -P -- "$archive_dir" || return 1
+      else
+        echo "Staging path changed before cleanup; leaving it untouched: $archive_dir" >&2
+        return 1
+      fi
+    fi
     if [ "$(stat -c '%d:%i' -- . 2>/dev/null || true)" = "$archive_identity" ]; then
       if [ -n "$mount_dir" ] && { [ -e "$mount_dir" ] || [ -L "$mount_dir" ]; }; then
         cleanup_mount_identity=$(stat -c '%d:%i' -- "$mount_dir" 2>/dev/null || true)
         cleanup_mount_owner_mode=$(stat -c '%u:%a' -- "$mount_dir" 2>/dev/null || true)
         if [ ! -L "$mount_dir" ] &&
            [ -n "$cleanup_mount_identity" ] &&
-           [ "$cleanup_mount_owner_mode" = "$EUID:700" ] &&
+           { [ "$cleanup_mount_owner_mode" = "$EUID:700" ] ||
+             [ "$cleanup_mount_owner_mode" = "$EUID:2700" ]; } &&
            { [ -z "$mount_identity" ] || [ "$cleanup_mount_identity" = "$mount_identity" ]; }; then
           rmdir -- "$mount_dir" || return 1
         else
@@ -208,7 +236,8 @@ cleanup() {
         if [ ! -L "$mount_parent" ] &&
            [ -n "$cleanup_parent_identity" ] &&
            { [ -z "$mount_parent_identity" ] || [ "$cleanup_parent_identity" = "$mount_parent_identity" ]; } &&
-           [ "$cleanup_parent_owner_mode" = "$EUID:700" ]; then
+           { [ "$cleanup_parent_owner_mode" = "$EUID:700" ] ||
+             [ "$cleanup_parent_owner_mode" = "$EUID:2700" ]; }; then
           rmdir -- "$mount_parent" || return 1
         else
           echo "Mount staging parent changed during export; leaving it untouched: $mount_parent" >&2
@@ -237,15 +266,21 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+staging_signal=0
+trap 'staging_signal=130' INT
+trap 'staging_signal=143' TERM
+archive_dir=$(mktemp -d -- "$output_dir/.puredarwin-root.XXXXXXXX")
+if [ -n "$archive_dir" ]; then
+  expected_archive_identity=$(stat -c '%d:%i' -- "$archive_dir")
+  archive_identity=$expected_archive_identity
+fi
 trap 'exit 130' INT
 trap 'exit 143' TERM
-archive_dir=$(mktemp -d -- "$output_dir/.puredarwin-root.XXXXXXXX")
+if [ "$staging_signal" -ne 0 ]; then exit "$staging_signal"; fi
 if [ -L "$archive_dir" ] || ! export_path_is_safe "$archive_dir"; then
   echo "Refusing an unsafe private staging directory: $archive_dir" >&2
   exit 1
 fi
-expected_archive_identity=$(stat -c '%d:%i' -- "$archive_dir")
-archive_identity=$expected_archive_identity
 CDPATH= cd -P -- "$archive_dir"
 staging_identity=$(stat -c '%d:%i' -- .)
 staging_owner=$(stat -c '%u' .)

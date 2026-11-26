@@ -16,7 +16,7 @@ run_as_root() {
 }
 
 tmp=$(mktemp -d)
-trap 'rm -rf -- "$tmp"' EXIT
+trap 'run_as_root rm -rf -- "$tmp"' EXIT
 root_dir=$tmp/root
 mkdir -- "$root_dir"
 printf 'export smoke test\n' >"$root_dir/hello.txt"
@@ -116,11 +116,11 @@ if PATH="$replace_bin:$PATH" \
   echo 'Exporter accepted a replaced staging directory.' >&2
   exit 1
 fi
-[ "$(cat "$attacker_dir/root.tar.gz")" = 'private sentinel' ]
+[ "$(run_as_root cat "$attacker_dir/root.tar.gz")" = 'private sentinel' ]
 [ ! -e "$attack_output" ]
 replaced_dir=$(find "$output_dir" -maxdepth 1 -type d -name '.puredarwin-root.*.original' -print -quit)
 [ -n "$replaced_dir" ]
-rm -rf -- "$replaced_dir"
+run_as_root rm -rf -- "$replaced_dir"
 rm -- "$output_dir"/.puredarwin-root.*
 
 expect_refusal() {

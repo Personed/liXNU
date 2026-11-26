@@ -82,7 +82,7 @@ Report the profile alongside the stage:
    ```sh
    LOG=$(mktemp /var/tmp/xnulinux-kernel.XXXXXX.log)
    printf 'capturing this boot attempt in %s\n' "$LOG"
-   sudo journalctl -kf -n 0 -o short-iso | tee "$LOG"
+   sudo journalctl -kf -n 0 --all -o short-iso | tee "$LOG"
    ```
    The launcher may retry a failed contiguous allocation; each such attempt records
    `xnu: contiguous allocation failed, err`. Match the DRAM interval and XNU execution

@@ -31,35 +31,58 @@ jobs:
         env:
           KERNEL_RELEASE: ${{ steps.kernel.outputs.release }}
         run: |
-          mkdir -p "$RUNNER_TEMP/qemu-inputs"
-          cp fki-ko/fki.ko xnu-ko/xnu.ko "$RUNNER_TEMP/qemu-inputs/"
-          cd "$(mktemp -d)"
-          apt-get download "linux-image-unsigned-$KERNEL_RELEASE" busybox-static
-          dpkg-deb -x linux-image-unsigned-*.deb kernel
-          dpkg-deb -x busybox-static_*.deb busybox
-          cp "kernel/boot/vmlinuz-$KERNEL_RELEASE" "$RUNNER_TEMP/qemu-inputs/kernel"
-          cp "$(find busybox -type f -name busybox)" "$RUNNER_TEMP/qemu-inputs/busybox"
+          sudo apt-get install -y -qq cpio zstd
+          stage=$(mktemp -d)
+          (
+            cd "$stage"
+            apt-get download "linux-image-unsigned-$KERNEL_RELEASE" busybox-static
+            dpkg-deb -x linux-image-unsigned-*.deb kernel
+            dpkg-deb -x busybox-static_*.deb busybox
+          )
+          tests/qemu/prepare.sh "$stage/kernel/boot/vmlinuz-$KERNEL_RELEASE" \
+            "$(find "$stage/busybox" -type f -name busybox)" fki-ko/fki.ko xnu-ko/xnu.ko "$RUNNER_TEMP/qemu-guest"
       - uses: actions/upload-artifact@v4
         with:
-          name: qemu-arm64-inputs
-          path: ${{ runner.temp }}/qemu-inputs/
+          name: qemu-arm64-guest
+          path: ${{ runner.temp }}/qemu-guest/
+          if-no-files-found: error
           retention-days: 3
   qemu:
     needs: build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [ubuntu-24.04, windows-2025, macos-15]
+    runs-on: ${{ matrix.host }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: qemu-arm64-inputs
-          path: qemu-inputs
-      - name: Install QEMU
+          name: qemu-arm64-guest
+          path: qemu-guest
+      - name: Install QEMU on Linux
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends qemu-system-arm cpio zstd
-      - name: Smoke test the ARM64 modules on x86-64
-        run: tests/qemu/run.sh qemu-inputs/{kernel,busybox,fki.ko,xnu.ko}
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-arm
+      - name: Install QEMU on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install qemu --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Join-Path $env:ProgramFiles 'qemu' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install QEMU on macOS
+        if: runner.os == 'macOS'
+        run: brew install qemu
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Smoke test the ARM64 modules
+        run: |
+          qemu-system-aarch64 --version
+          python tests/qemu/boot.py qemu-guest
   spdx:
     runs-on: ubuntu-24.04
     steps:

@@ -121,18 +121,20 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 6. GPU (optional, on the Mac): `gpu/venus/build-darwin.sh` builds the hosted Vulkan driver, `gpu/xnu-cpu-metal/` the
    Metal plugin (see its README).
 
-### Testing the Linux host layer on x86-64
+### Testing the Linux host layer in QEMU
 
-The modules are built for ARM64. On an x86-64 Linux PC, GitHub Actions uses QEMU's software emulation
-(TCG) to boot ARM64 Ubuntu with pointer authentication, load `fki.ko`, and verify that `xnu.ko` reaches
-its firmware loader. Run the same check locally with QEMU, GNU cpio, Python 3 and zstd:
+GitHub Actions uses QEMU's software emulation (TCG) on x86-64 Linux, x86-64 Windows, and ARM64 macOS
+to boot ARM64 Ubuntu with pointer authentication, load `fki.ko`, and verify that `xnu.ko` reaches its
+firmware loader. On Linux, run the same check with QEMU, GNU cpio, Python 3 and zstd:
 
 ```sh
 tests/qemu/run.sh /path/to/arm64/vmlinuz /path/to/arm64/static-busybox /path/to/fki.ko /path/to/xnu.ko
 ```
 
-Use modules built against the supplied ARM64 kernel's headers. The check uses a temporary initramfs and
-stops at the firmware loader, before booting PureDarwin or macOS.
+Build the modules against the supplied ARM64 kernel's headers. To run the check on a different host, prepare
+the kernel and initramfs on Linux with `tests/qemu/prepare.sh` (pass an output directory as the fifth
+argument). Copy those files to the host and run `python3 tests/qemu/boot.py OUTPUT_DIR` with
+`qemu-system-aarch64` on its PATH. The check stops at the firmware loader before booting PureDarwin or macOS.
 
 ## Repository layout and licenses
 

@@ -4,8 +4,11 @@
 # kernelcache is there) relink the kernel collection with Apple's kexts. The kernel's segment slots inside the collection
 # (k27/segaddrs.sh) follow the kernel's size: when kc27-layout.py moves them, the kernel is linked again.
 set -e -o pipefail	# a failed kernel build stops here: never repackage the previous kernel
-POC=${POC:-$(dirname "$0")/..}	# this repository: its patches, kexts and linker
-POC=$(cd -- "$POC" >/dev/null && pwd -L)
+if [ -n "${POC:-}" ]; then
+  POC=$(cd -- "$POC" >/dev/null && pwd -L)
+else
+  POC=$(CDPATH= cd -- "$(dirname "$0")/.." >/dev/null && pwd -L)
+fi	# this repository: its patches, kexts and linker
 DVM=${DVM:-$HOME/w/dvm}
 DVM=$(cd -- "$DVM" >/dev/null && pwd -P)
 cd "$DVM"

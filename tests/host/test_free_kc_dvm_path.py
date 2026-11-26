@@ -28,11 +28,16 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             root = Path(directory)
             launch = root / "launch with spaces"
             vm = root / "vm with spaces"
+            cdpath = root / "CDPATH alternatives"
             fake_bin = root / "bin"
             poc_target = root / "repo with spaces"
             poc_link = root / "poc with spaces"
             work = launch / "relative work"
+            poc_checkout = launch / "poc"
             launch.mkdir()
+            (cdpath / "vm with spaces").mkdir(parents=True)
+            (cdpath / "relative work").mkdir(parents=True)
+            (cdpath / "poc").mkdir(parents=True)
             fake_bin.mkdir()
             for relative in (
                 "build/netinc",
@@ -58,12 +63,14 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             ):
                 (poc_target / relative).touch()
             poc_link.symlink_to(poc_target, target_is_directory=True)
+            poc_checkout.symlink_to(poc_link, target_is_directory=True)
             kernel_framework = (
                 vm
                 / "out/x12377/build/xnu/k27h-dst/System/Library/Frameworks/Kernel.framework/Versions/A"
             )
             (kernel_framework / "PrivateHeaders").mkdir(parents=True)
             (vm / "out/k27/xnu").mkdir(parents=True)
+            (launch / "vm with spaces").symlink_to(vm, target_is_directory=True)
 
             extensions = work / "src/pd/src/Kernel/Extensions"
             for relative in (
@@ -128,7 +135,8 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             env = os.environ.copy()
             env.update(
                 {
-                    "DVM": "../vm with spaces",
+                    "CDPATH": str(cdpath),
+                    "DVM": "vm with spaces",
                     "KCLINK_CWD_CAPTURE": str(root / "kclink-cwd.txt"),
                     "PYTHON_CAPTURE": str(python_capture),
                     "STRINGS_CAPTURE": str(strings_capture),
@@ -136,7 +144,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                     "FAKE_MBEDTLS_REV": mbedtls_revision,
                     "FREE_KC_WORK": "relative work",
                     "OUT": str(output),
-                    "POC": "../poc with spaces",
+                    "POC": "poc",
                     "PATH": str(fake_bin) + os.pathsep + env["PATH"],
                 }
             )
@@ -159,10 +167,10 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             self.assertGreater(len(kcc_calls), 1)
 
             corecrypto = kcc_calls[0]
-            self.assertEqual(corecrypto[0], str(poc_link.absolute() / "scripts/free-kc/kcc.py"))
+            self.assertEqual(corecrypto[0], str(poc_checkout / "scripts/free-kc/kcc.py"))
             self.assertNotIn("--macos", corecrypto)
             self.assertEqual(corecrypto[1], str(work.resolve() / "obj/corecrypto"))
-            self.assertEqual(corecrypto[2:4], ["-I", str(poc_link.absolute() / "kexts/free/corecrypto")])
+            self.assertEqual(corecrypto[2:4], ["-I", str(poc_checkout / "kexts/free/corecrypto")])
             self.assertEqual(corecrypto[4:6], ["-I", str(work.resolve() / "src/mbedtls/include")])
             source_list = re.search(
                 r"^MBEDTLS_SOURCES=(.+)$",
@@ -182,7 +190,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             self.assertEqual(kclink[1], str(work.resolve() / "kc-template.bin"))
             self.assertEqual(kclink[3], str(work.resolve() / "kc-free.bin"))
             self.assertEqual(kclink[4], "--native")
-            self.assertIn(str(poc_link.absolute() / "kexts/XnuCPU/XnuCPU.json"), kclink)
+            self.assertIn(str(poc_checkout / "kexts/XnuCPU/XnuCPU.json"), kclink)
             self.assertEqual(output.read_text(encoding="utf-8"), "fake kernel collection\n")
 
     def test_default_poc_ignores_competing_cdpath_checkout(self):
@@ -384,7 +392,8 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                 python.write_text(
                     "#!/bin/sh\n"
                     "[ \"$1\" = scripts/build-native-kext.py ] || exit 88\n"
-                    "printf '%s\\n' \"$2\" >> \"$KEXT_CAPTURE\"\n"
+                    "printf 'CALL\\0' >> \"$KEXT_CAPTURE\"\n"
+                    "printf '%s\\0' \"$@\" >> \"$KEXT_CAPTURE\"\n"
                     "[ \"${FAIL_KEXT:-}\" != \"$2\" ] || exit 42\n",
                     encoding="utf-8",
                 )
@@ -406,6 +415,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                     {
                         "DVM": str(dvm),
                         "KEXT_CAPTURE": str(capture),
+                        "KEXT_OBJ": "objects with spaces",
                         "PATH": str(fake_bin) + os.pathsep + env["PATH"],
                         "POC": str(poc),
                     }
@@ -424,16 +434,36 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                     text=True,
                     check=False,
                 )
-                calls = capture.read_text(encoding="utf-8").splitlines()
-                return result, calls
+                calls = [
+                    [value.decode() for value in call.split(b"\0") if value]
+                    for call in capture.read_bytes().split(b"CALL\0")[1:]
+                ]
+                return result, calls, poc
 
-        result, calls = run_rebuild()
+        def expected_kext_args(poc, name):
+            return [
+                "scripts/build-native-kext.py",
+                name,
+                str(poc / "kexts" / name / f"{name}.cpp"),
+                "-I",
+                str(poc / "build/netinc"),
+                "--obj",
+                "objects with spaces",
+            ]
+
+        result, calls, poc = run_rebuild()
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertEqual(calls, ["XnuCPU", "XnuDisk", "XnuDrm"])
+        self.assertEqual(
+            calls,
+            [expected_kext_args(poc, name) for name in ("XnuCPU", "XnuDisk", "XnuDrm")],
+        )
 
-        result, calls = run_rebuild(fail_kext="XnuDisk")
+        result, calls, poc = run_rebuild(fail_kext="XnuDisk")
         self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertEqual(calls, ["XnuCPU", "XnuDisk"])
+        self.assertEqual(
+            calls,
+            [expected_kext_args(poc, name) for name in ("XnuCPU", "XnuDisk")],
+        )
         self.assertIn("kext XnuDisk is required for the PureDarwin collection", result.stdout)
 
 

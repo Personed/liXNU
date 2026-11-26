@@ -160,3 +160,4 @@ artifacts. Remove machine identifiers, credentials and local paths before sharin
 [#7]: https://github.com/Personed/xnulinux/pull/7
 [#23]: https://github.com/Personed/xnulinux/pull/23
 [#16]: https://github.com/Personed/xnulinux/pull/16
+[#36]: https://github.com/Personed/xnulinux/pull/36

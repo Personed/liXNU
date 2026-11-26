@@ -99,8 +99,8 @@ Working on two arm64 Linux setups:
 | Linux host | Guest target | Status |
 |---|---|---|
 | ARM64 with PAC and 4 KiB pages | macOS 27 ARM64 (direct hosted XNU) | Existing supported path; tested on Apple Silicon Linux VMs and NVIDIA DGX Spark as described above. |
-| Intel x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | FKI host-backend module build passes; XNU execution and physical Intel acceptance are pending. |
-| AMD x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | FKI host-backend module build passes; XNU execution and physical AMD acceptance are pending. |
+| Intel x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | FKI host-backend build in [#48](https://github.com/Personed/xnulinux/pull/48) passes; the fail-closed XNU target in [#47](https://github.com/Personed/xnulinux/pull/47) does not execute XNU. Native runtime and physical Intel acceptance remain pending. |
+| AMD x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | FKI host-backend build in [#48](https://github.com/Personed/xnulinux/pull/48) passes; the fail-closed XNU target in [#47](https://github.com/Personed/xnulinux/pull/47) does not execute XNU. Native runtime and physical AMD acceptance remain pending. |
 | Intel/AMD x86_64 with QEMU/KVM | User-prepared macOS guest | Complementary launcher experiment; does not use the hosted-XNU modules or validate the native port. |
 | Intel/AMD x86_64 with QEMU TCG | ARM64 Linux (complementary test profile) | Linux/module evidence only; not a native x86_64 hosted-XNU result. |
 
@@ -134,7 +134,7 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 
 - Linux on an Intel or AMD x86_64 PC. Kernel versions, CPU features, RAM, and page-size requirements are being established by the port.
 - User-provided macOS Tahoe 26 x86_64 artifacts that match the selected XNU build. No Apple system image or binary is provided here.
-- The native FKI/XNU x86_64 port is under development; the repository's QEMU/KVM launcher is a separate optional experiment.
+- The FKI host-backend build is tracked in [#48](https://github.com/Personed/xnulinux/pull/48); [#47](https://github.com/Personed/xnulinux/pull/47) adds an x86_64 XNU module target that fails closed. Neither PR claims native XNU execution. The QEMU/KVM launcher below is a separate optional guest experiment.
 
 ## Building and running
 
@@ -159,7 +159,15 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 
 ### Experimental x86_64 macOS guest (QEMU/KVM)
 
-This optional launcher is separate from the native hosted-XNU port and does not count as x86_64 module/runtime acceptance. It requires a bootable image prepared separately by the user. QEMU writes macOS changes to a persistent qcow2
+This optional launcher is separate from the native hosted-XNU port and does not count as x86_64 module/runtime acceptance.
+Its prerequisites are an Intel or AMD x86_64 Linux PC with VT-x or AMD-V and `/dev/kvm`, SSE4.2, AVX, FMA, MOVBE,
+POPCNT, LZCNT, BMI1, AVX2 and BMI2; QEMU 10 or newer, `qemu-img`, `flock`, and OVMF 4 MiB firmware; a user-prepared
+Tahoe 26 x86_64 disk with EFI/OpenCore (including AMD kernel patches on AMD); and a locally supplied 64-byte Apple SMC
+OSK in `APPLE_SMC_OSK`. The launcher auto-detects common Debian/Ubuntu, Fedora/RHEL, Arch, and openSUSE OVMF layouts;
+override `OVMF_CODE` and `OVMF_VARS_TEMPLATE`, or add a custom directory with `OVMF_DIR`, when needed. The default
+guest allocation is 8 GiB and can be changed with `RAM_MB`; allow additional memory for Linux/QEMU.
+
+The launcher requires a bootable image prepared separately by the user. QEMU writes macOS changes to a persistent qcow2
 overlay under `$XDG_STATE_HOME/xnulinux/x86_64` when `XDG_STATE_HOME` is set, or `~/.local/state/xnulinux/x86_64`
 otherwise; OVMF variable state is stored there too. Only one QEMU process can use a state directory at a time; use a
 readable, writable, and searchable `STATE_DIR` for each VM. The source image and firmware templates stay untouched. The overlay grows as the
@@ -186,8 +194,9 @@ printf '\n'
 scripts/x86_64/xnulinux-boot.sh --check
 ```
 
-If OVMF is installed outside `/usr/share/OVMF/`, set `OVMF_CODE` and `OVMF_VARS_TEMPLATE` to the corresponding 4 MiB
-files before preflight. If preflight succeeds, run:
+If OVMF is not auto-detected, set `OVMF_CODE` and `OVMF_VARS_TEMPLATE` to the corresponding 4 MiB files before
+preflight. `OVMF_DIR` adds one custom directory to the search path. Fedora's qcow2 firmware pair is passed to QEMU as
+qcow2; raw pairs remain raw, and existing NVRAM state keeps its own format. If preflight succeeds, run:
 
 ```sh
 scripts/x86_64/xnulinux-boot.sh
@@ -200,7 +209,7 @@ result. For AMD, OpenCore must already contain AMD kernel patches. The current x
 
 ### Testing the Linux host layer in QEMU
 
-GitHub Actions uses QEMU's software emulation (TCG) on x86-64 Linux, x86-64 Windows, and ARM64 macOS
+GitHub Actions uses QEMU's software emulation (TCG) on x86-64 Linux, x86-64 Windows, and x86-64 macOS
 to boot ARM64 Ubuntu with pointer authentication, load `fki.ko`, reserve memory outside Linux's RAM map,
 allocate and free the same 16 MiB carve-out twice, and verify that `xnu.ko` reaches its firmware loader.
 On Linux, build the probe against the supplied ARM64 kernel headers and run the check with QEMU, GNU cpio,

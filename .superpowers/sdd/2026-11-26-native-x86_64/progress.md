@@ -8,7 +8,7 @@ Task 1: in progress. An x86_64 FKI host backend now builds, but advertises no XN
 
 Task 1: Baseline finding — Before the x86_64 backend was added, Debian 6.12.118 x86_64 headers compiled shared FKI objects until `fki_hostcall.c` used ARM-oriented `page_to_phys`, which does not exist on x86. Replacing it with `PFN_PHYS(page_to_pfn(pg))` advanced compilation to modpost, which reported missing architecture backend symbols (`fki_counter`, `fki_arch_linux_runs`, `fki_fpsimd_forget`, `fki_counter_frequency`, `fki_arch_init`, `fki_arch_exit`).
 
-Task 1: Finding — The current native-port implementation adds Linux-side x86_64 FKI hooks, counters and an alternate Linux stack. It builds against Debian 6.12.118 x86_64 headers. `fki_caps()` returns zero; the backend does not enter or execute XNU, and its stack helpers are not evidence of a safe Linux/XNU context boundary.
+Task 1: Finding — The FKI host-backend build in [PR #48](https://github.com/Personed/xnulinux/pull/48) adds Linux-side x86_64 hooks, counters and an alternate Linux stack. It builds against Debian 6.12.118 x86_64 headers. `fki_caps()` returns zero; the backend does not enter or execute XNU, and its stack helpers are not evidence of a safe Linux/XNU context boundary. [PR #47](https://github.com/Personed/xnulinux/pull/47) adds a fail-closed x86_64 `xnu.ko` target that returns `-EOPNOTSUPP` until a native world switch exists.
 
 Task 1: Environment — QEMU 10.0.13, Debian 6.12.118 x86_64 image and headers were extracted under `/workspace/scratch`. The host has no `/dev/kvm`, no module headers for its running kernel, and no root privileges. QEMU TCG can host a test VM. This lets us load modules in a guest but cannot validate the current host kernel directly.
 

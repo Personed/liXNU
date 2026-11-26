@@ -1,0 +1,131 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+#include <linux/linkage.h>
+#include "boundary_probe_asm.h"
+
+/*
+ * Switch to a probe-only stack, deliberately clobber callee-saved registers,
+ * take a normal or software-abort return, then restore the Linux call frame.
+ * The stub does not alter CR3/GS or call C while the sentinels are installed.
+ */
+SYM_FUNC_START(x86_boundary_probe_switch_stack)
+	pushq %rbp
+	pushq %rbx
+	pushq %r12
+	pushq %r13
+	pushq %r14
+	pushq %r15
+
+	movq %rsi, %r12
+	movl %edx, %r13d
+	leaq 48(%rsp), %rax
+	movq %rax, BP_OFF_HOST_ENTRY_RSP(%r12)
+	movq 40(%rsp), %rax
+	movq %rax, BP_OFF_GPRS_ENTRY+BP_GPR_RBP(%r12)
+	movq 32(%rsp), %rax
+	movq %rax, BP_OFF_GPRS_ENTRY+BP_GPR_RBX(%r12)
+	movq 24(%rsp), %rax
+	movq %rax, BP_OFF_GPRS_ENTRY+BP_GPR_R12(%r12)
+	movq 16(%rsp), %rax
+	movq %rax, BP_OFF_GPRS_ENTRY+BP_GPR_R13(%r12)
+	movq 8(%rsp), %rax
+	movq %rax, BP_OFF_GPRS_ENTRY+BP_GPR_R14(%r12)
+	movq 0(%rsp), %rax
+	movq %rax, BP_OFF_GPRS_ENTRY+BP_GPR_R15(%r12)
+	pushfq
+	popq %rax
+	movq %rax, BP_OFF_RFLAGS_ENTRY(%r12)
+
+	movq %rdi, %r14
+	movq %rsp, %r15
+	andq $-16, %r14
+	subq $32, %r14
+	movq %r15, 0(%r14)
+	movq %r12, 8(%r14)
+	movq %r13, 16(%r14)
+	movq %r14, BP_OFF_ALT_SWITCH_RSP(%r12)
+	movq %r14, %rsp
+	movq 8(%rsp), %rdi
+	movq 16(%rsp), %rsi
+	call x86_boundary_probe_inner
+
+	movq 8(%rsp), %r10
+	movq %rax, BP_OFF_STATUS(%r10)
+	pushfq
+	popq %rax
+	movq %rax, BP_OFF_RFLAGS_INNER_RETURN(%r10)
+	movq %rsp, BP_OFF_ALT_RETURN_RSP(%r10)
+	movq 0(%rsp), %r11
+	movq %r11, %rsp
+	leaq 48(%rsp), %rax
+	movq %rax, BP_OFF_HOST_RETURN_RSP(%r10)
+
+	popq %r15
+	popq %r14
+	popq %r13
+	popq %r12
+	popq %rbx
+	popq %rbp
+	movq BP_OFF_RFLAGS_ENTRY(%r10), %rax
+	pushq %rax
+	popfq
+	pushfq
+	popq %rax
+	movq %rax, BP_OFF_RFLAGS_RETURN(%r10)
+	movq %rbp, BP_OFF_GPRS_RETURN+BP_GPR_RBP(%r10)
+	movq %rbx, BP_OFF_GPRS_RETURN+BP_GPR_RBX(%r10)
+	movq %r12, BP_OFF_GPRS_RETURN+BP_GPR_R12(%r10)
+	movq %r13, BP_OFF_GPRS_RETURN+BP_GPR_R13(%r10)
+	movq %r14, BP_OFF_GPRS_RETURN+BP_GPR_R14(%r10)
+	movq %r15, BP_OFF_GPRS_RETURN+BP_GPR_R15(%r10)
+	movq BP_OFF_STATUS(%r10), %rax
+	RET
+SYM_FUNC_END(x86_boundary_probe_switch_stack)
+
+SYM_FUNC_START(x86_boundary_probe_inner)
+	movq %rsp, %rax
+	movq %rax, BP_OFF_ALT_INNER_RSP(%rdi)
+
+	movabsq $0x5555666677778888, %rbp
+	movabsq $0x1111222233334444, %rbx
+	movabsq $0x9999aaaabbbbcccc, %r12
+	movabsq $0xddddeeeeffff0001, %r13
+	movabsq $0x123456789abcdef0, %r14
+	movabsq $0xfedcba9876543210, %r15
+	movq %rbp, BP_OFF_GPRS_DURING+BP_GPR_RBP(%rdi)
+	movq %rbx, BP_OFF_GPRS_DURING+BP_GPR_RBX(%rdi)
+	movq %r12, BP_OFF_GPRS_DURING+BP_GPR_R12(%rdi)
+	movq %r13, BP_OFF_GPRS_DURING+BP_GPR_R13(%rdi)
+	movq %r14, BP_OFF_GPRS_DURING+BP_GPR_R14(%rdi)
+	movq %r15, BP_OFF_GPRS_DURING+BP_GPR_R15(%rdi)
+	std
+	stc
+	pushfq
+	popq %rax
+	movq %rax, BP_OFF_RFLAGS_DURING(%rdi)
+	cld
+
+	testl %esi, %esi
+	jnz .Lsoftware_abort
+	xorl %eax, %eax
+	jmp .Lreturn_with_changed_flags
+.Lsoftware_abort:
+	movq $-125, %rax /* -ECANCELED */
+
+.Lreturn_with_changed_flags:
+	/* Make both CF and DF differ from the entry state so the outer restore is tested. */
+	testq $0x400, BP_OFF_RFLAGS_ENTRY(%rdi)
+	jz .Lentry_df_clear
+	cld
+	jmp .Lentry_df_done
+.Lentry_df_clear:
+	std
+.Lentry_df_done:
+	movq BP_OFF_RFLAGS_ENTRY(%rdi), %r8
+	btq $0, %r8
+	jc .Lentry_cf_set
+	stc
+	RET
+.Lentry_cf_set:
+	clc
+	RET
+SYM_FUNC_END(x86_boundary_probe_inner)

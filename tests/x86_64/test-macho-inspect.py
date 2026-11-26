@@ -143,6 +143,7 @@ def run_case(
 def expect_valid_all(report):
     assert report["architecture"] == "x86_64", report
     assert report["file_path_encoding"] == "UTF-8", report
+    assert report["file_path_bytes_hex"] == report["file"].encode("utf-8").hex(), report
     assert report["cpu_subtype"] == "X86_64_ALL", report
     assert report["format"] == "Mach-O 64-bit little-endian MH_EXECUTE", report
     assert report["entry"] == {
@@ -160,8 +161,10 @@ def expect_valid_all(report):
         "__TEXT",
     ], report
     assert report["segments"][0]["mapped"] is False, report
+    assert report["segments"][0]["name_bytes_hex"] == b"__PAGEZERO\0".ljust(16, b"\0").hex(), report
     assert report["segments"][1] == {
         "name": "__TEXT",
+        "name_bytes_hex": b"__TEXT\0".ljust(16, b"\0").hex(),
         "vmaddr": "0x0000000000001000",
         "vmsize": "0x0000000000002000",
         "fileoff": "0x0000000000000000",
@@ -223,10 +226,61 @@ def expect_invalid_path_bytes_are_escaped(binary):
         report = json.loads(result.stdout)
         if report["file"] != expected_path_for_byte_filename(path):
             raise AssertionError("invalid filename bytes were not represented reversibly")
+        if report["file_path_bytes_hex"] != path.hex():
+            raise AssertionError("invalid filename bytes were not preserved in hexadecimal")
         if report["file_path_encoding"] != "invalid bytes escaped as U+00XX":
             raise AssertionError("invalid filename encoding was not identified")
         if open(path, "rb").read() != data:
             raise AssertionError("invalid-path input file was modified")
+
+
+def expect_ambiguous_display_bytes_preserve_originals(binary):
+    if not sys.platform.startswith("linux"):
+        return
+    with tempfile.TemporaryDirectory(prefix="xnu-macho-inspect-") as tmp:
+        root = os.fsencode(tmp)
+        image = make_valid_image()
+        paths = [
+            root + b"/bad-\xff-\xe9/kernel.development",
+            root + b"/bad-\xff-\xc3\xa9/kernel.development",
+        ]
+        reports = []
+        for path in paths:
+            os.makedirs(os.path.dirname(path))
+            with open(path, "wb") as image_file:
+                image_file.write(image)
+            result = subprocess.run(
+                [os.fsencode(binary), path], check=False, capture_output=True
+            )
+            if result.returncode != 0:
+                raise AssertionError(f"ambiguous path failed: {result.stderr!r}")
+            reports.append(json.loads(result.stdout))
+        if reports[0]["file"] != reports[1]["file"]:
+            raise AssertionError("fixture no longer reproduces the display collision")
+        if [report["file_path_bytes_hex"] for report in reports] != [p.hex() for p in paths]:
+            raise AssertionError("colliding display paths lost their original bytes")
+
+        images = [make_valid_image(), make_valid_image()]
+        names = [b"\xff-\xe9", b"\xff-\xc3\xa9"]
+        segment_reports = []
+        for data, name in zip(images, names):
+            padded_name = name.ljust(16, b"\0")
+            data[TEXT_OFF + 8 : TEXT_OFF + 24] = padded_name
+            data[SECTION_OFF + 16 : SECTION_OFF + 32] = padded_name
+            path = pathlib.Path(tmp) / ("segment-" + str(len(segment_reports)))
+            path.write_bytes(data)
+            result = subprocess.run(
+                [binary, str(path)], check=False, capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                raise AssertionError(f"ambiguous segment name failed: {result.stderr!r}")
+            segment_reports.append(json.loads(result.stdout)["segments"][1])
+        if segment_reports[0]["name"] != segment_reports[1]["name"]:
+            raise AssertionError("fixture no longer reproduces the segment-name collision")
+        if [report["name_bytes_hex"] for report in segment_reports] != [
+            name.ljust(16, b"\0").hex() for name in names
+        ]:
+            raise AssertionError("colliding segment names lost their original bytes")
 
 
 def expect_nonregular_input_does_not_block(binary):
@@ -253,8 +307,8 @@ def expect_output_write_error(binary):
             result = subprocess.run(
                 [binary, str(path)], check=False, stdout=sink, stderr=subprocess.PIPE
             )
-        if result.returncode == 0:
-            raise AssertionError("output write failure was reported as success")
+        if result.returncode != 6 or b"failed to write JSON report" not in result.stderr:
+            raise AssertionError("output write failure did not produce the I/O error status")
 
 
 def main():
@@ -329,6 +383,7 @@ def main():
     run_case(binary, "entry outside executable file range", bad_entry, 3)
 
     expect_invalid_path_bytes_are_escaped(binary)
+    expect_ambiguous_display_bytes_preserve_originals(binary)
     expect_nonregular_input_does_not_block(binary)
     expect_output_write_error(binary)
 

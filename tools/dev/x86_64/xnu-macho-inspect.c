@@ -307,6 +307,16 @@ static int json_bytes_string(const unsigned char *value, size_t length)
 	return valid_utf8;
 }
 
+static void json_hex_string(const unsigned char *value, size_t length)
+{
+	size_t i;
+
+	putchar('"');
+	for (i = 0; i < length; i++)
+		printf("%02x", value[i]);
+	putchar('"');
+}
+
 static void json_segment_name(const unsigned char name[16])
 {
 	size_t length = 0;
@@ -330,8 +340,10 @@ static void print_report(const char *path, size_t file_size,
 	puts("{");
 	printf("  \"file\": ");
 	path_utf8 = json_bytes_string((const unsigned char *)path, strlen(path));
-	printf(",\n  \"file_path_encoding\": \"%s\",\n",
+	printf(",\n  \"file_path_encoding\": \"%s\",\n  \"file_path_bytes_hex\": ",
 	       path_utf8 ? "UTF-8" : "invalid bytes escaped as U+00XX");
+	json_hex_string((const unsigned char *)path, strlen(path));
+	printf(",\n");
 	printf("  \"file_size_bytes\": %zu,\n", file_size);
 	printf("  \"format\": \"Mach-O 64-bit little-endian MH_EXECUTE\",\n");
 	printf("  \"architecture\": \"x86_64\",\n");
@@ -349,6 +361,8 @@ static void print_report(const char *path, size_t file_size,
 
 		printf("    {\"name\": ");
 		json_segment_name(segment->name);
+		printf(", \"name_bytes_hex\": ");
+		json_hex_string(segment->name, sizeof(segment->name));
 		printf(", \"vmaddr\": \"0x%016" PRIx64 "\", \"vmsize\": \"0x%016" PRIx64 "\", ",
 		       segment->vmaddr, segment->vmsize);
 		printf("\"fileoff\": \"0x%016" PRIx64 "\", \"filesize\": \"0x%016" PRIx64 "\", ",

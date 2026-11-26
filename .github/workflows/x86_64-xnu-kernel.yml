@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/x86_64-xnu-kernel.yml"
       - "scripts/x86_64/build-xnu-kernel.sh"
+      - "scripts/x86_64/xnu-trustcache-scan-workspace.sh"
       - "scripts/x86_64/verify-xnu-kdk.py"
       - "scripts/x86_64/verify-xnu-target-build.py"
   push:
@@ -14,6 +15,7 @@ on:
     paths:
       - ".github/workflows/x86_64-xnu-kernel.yml"
       - "scripts/x86_64/build-xnu-kernel.sh"
+      - "scripts/x86_64/xnu-trustcache-scan-workspace.sh"
       - "scripts/x86_64/verify-xnu-kdk.py"
       - "scripts/x86_64/verify-xnu-target-build.py"
 permissions:
@@ -38,6 +40,8 @@ jobs:
           xcodebuild -version
           xcrun --find clang
           xcrun --find ld
+      - name: Test read-only --check diagnostic workspace
+        run: bash scripts/x86_64/xnu-trustcache-scan-workspace.sh --self-test
       - name: Build pinned XNU for x86_64
         env:
           XNU_X86_BUILD_DIR: ${{ runner.temp }}/xnulinux-x86_64-xnu
@@ -163,6 +167,8 @@ jobs:
           xcodebuild -version
           xcrun --find clang
           xcrun --find ld
+      - name: Test read-only --check diagnostic workspace
+        run: bash scripts/x86_64/xnu-trustcache-scan-workspace.sh --self-test
       - name: Check matching KDK availability
         id: kdk
         shell: bash

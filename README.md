@@ -1,17 +1,15 @@
 # xnulinux
 
-Port xnulinux's hosted-XNU runtime to native x86_64 Linux PCs while preserving its working direct ARM64 path. The x86_64 target is macOS Tahoe 26, the latest macOS release compatible with Intel. The x86_64 hosted runtime is under development; QEMU/KVM guest launching and ARM64 TCG tests are complementary experiments, not proof of the native port.
+Make xnulinux run on common x86-64 PCs using QEMU TCG to boot Linux ARM64, load FKI/XNU, and reach the PureDarwin shell, while preserving the existing direct ARM64 hosted-XNU path. This is the active portability goal for the documented profiles, not a claim of universal PC compatibility. Native x86_64/Tahoe hosting and QEMU/KVM remain separate work.
 
 On ARM64, xnulinux builds XNU, the open-source kernel of macOS, from Apple's published sources and runs it as a loadable kernel
 module (`xnu.ko`) inside an unmodified arm64 Linux kernel. The hosted XNU drives the CPU and MMU directly, so macOS
 processes run natively next to Linux processes on the same CPUs. Linux lends XNU its memory, timers, files, network and
 GPU through a small interface module (`fki.ko`).
 
-On x86_64 Linux PCs, the target is to build and run architecture-matched `fki.ko` and `xnu.ko` directly in Linux,
-hosting macOS Tahoe 26 x86_64. The port is not complete: no native x86_64 hosted-XNU desktop boot has been validated.
+On x86-64 PCs, the active route uses QEMU TCG to run an ARM64 Linux guest, load `fki.ko` and `xnu.ko`, and reach the PureDarwin console. VT-x/AMD-V is not required. The current full-route evidence is on a virtualized Ubuntu x86-64 runner; Windows and Intel macOS full boots remain unvalidated.
 
-The repository also contains a QEMU/KVM macOS guest launcher and QEMU TCG ARM64 tests. These are complementary
-experiments and do not satisfy the native x86_64 hosted-XNU target. Firmware, Linux userspace, module builds, the XNU
+The repository also contains a separate QEMU/KVM macOS guest launcher and an experimental native x86_64 hosted-XNU port. Those workstreams do not replace the active QEMU TCG/PureDarwin route. Firmware, Linux userspace, module builds, the XNU
 module probe, the PureDarwin console, and a macOS desktop are separate validation stages; see
 [`docs/portability-validation.md`](docs/portability-validation.md).
 
@@ -99,45 +97,31 @@ Working on two arm64 Linux setups:
 | Linux host | Guest target | Status |
 |---|---|---|
 | ARM64 with PAC and 4 KiB pages | macOS 27 ARM64 (direct hosted XNU) | Existing supported path; tested on Apple Silicon Linux VMs and NVIDIA DGX Spark as described above. |
-| Intel x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | The FKI host backend merged in [#48](https://github.com/Personed/xnulinux/pull/48) builds and preserves ARM64, but advertises no XNU execution capability; the fail-closed XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Native runtime and physical Intel acceptance remain pending. |
-| AMD x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | The FKI host backend merged in [#48](https://github.com/Personed/xnulinux/pull/48) builds and preserves ARM64, but advertises no XNU execution capability; the fail-closed XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Native runtime and physical AMD acceptance remain pending. |
-| Intel/AMD x86_64 with QEMU/KVM | User-prepared macOS guest | Complementary launcher experiment; does not use the hosted-XNU modules or validate the native port. |
-| Intel/AMD x86_64 with QEMU TCG | ARM64 Linux → PureDarwin console | Complementary TCG evidence: PR #52 run [#138](https://github.com/Personed/xnulinux/actions/runs/45891610133) and PR #72 run [#140](https://github.com/Personed/xnulinux/actions/runs/45891917494) passed the 6 GiB route. Run #140 validated the guard tree now in #52 commit `3b47444`. Virtualized CI only; no physical-PC support or memory floor. |
+| x86-64 Linux under QEMU TCG (hosted CI VM) | ARM64 Linux → PureDarwin console | Current #52 head `24e4a9c` passed the full route in run [#148](https://github.com/Personed/xnulinux/actions/runs/45902417451): Darwin console, guest halt, XNU/FKI unload, Linux power-off, and QEMU exit 0. PR #89 run [#151](https://github.com/Personed/xnulinux/actions/runs/45904189412) also passed the full route on Ubuntu with the same inputs used by its Windows/macOS jobs. That VM had 4 vCPUs, `MemTotal: 16760320 kB`, `MemAvailable: 15204761 kB` before QEMU, QEMU 8.2.2, and peak QEMU RSS 3,820,440 KiB (3.64 GiB). These are virtual-runner results, not physical-PC support or a host-memory floor. |
+| Physical Intel x86-64 Linux under QEMU TCG | ARM64 Linux → PureDarwin console | Not validated; no bare-metal Intel PC is attached to the available executor. |
+| Physical AMD x86-64 Linux under QEMU TCG | ARM64 Linux → PureDarwin console | Not validated; AMD EPYC virtual CPUs in CI do not establish bare-metal AMD support. |
+| Windows Server 2025 x86-64 under QEMU TCG | ARM64 Linux → PureDarwin console | PR #89 run [#151](https://github.com/Personed/xnulinux/actions/runs/45904189412) started QEMU 11.1.0 with the shared 6 GiB guest, but XNU loading hit an ARM64 write-permission fault at `fffffff007004000`; no Darwin console or guest-shutdown markers appeared. The same inputs passed on Ubuntu/QEMU 8.2.2 in that run; whether this is a QEMU 11.1.0 or host-platform issue is unresolved. |
+| Intel macOS 15 under QEMU TCG | ARM64 Linux → PureDarwin console | PR #89 run [#151](https://github.com/Personed/xnulinux/actions/runs/45904189412) used the same guest inputs and QEMU 11.1.0, and hit the same ARM64 XNU write-permission fault at `fffffff007004000`; no Darwin console or guest-shutdown markers appeared. Ubuntu/QEMU 8.2.2 passed with these inputs; isolate the QEMU-version and host-platform difference before assigning the failure. |
+| Intel/AMD x86-64 with QEMU/KVM | User-prepared macOS guest | Separate launcher experiment; it does not use the hosted-XNU modules or validate the TCG route. |
+| Intel/AMD x86-64 Linux | Tahoe 26 through native hosted XNU | Separate experiment: FKI backend #48 builds, XNU stub #47 remains fail-closed, and #78 adds read-only Mach-O parsing; no native XNU execution is supported. |
 
-The x86_64 native target is not a support claim yet: the FKI host backend exposes no XNU execution capabilities, and
-the architecture-specific XNU execution path plus physical Intel and AMD desktop boots with Linux host-integrity checks
-remain to be completed. QEMU/KVM guest launch, x86_64 Linux TCG smoke,
-and ARM64 module-probe results are separate checks and do not establish native x86_64 hosted-XNU support. See
+The separate native x86_64 experiment remains incomplete: the FKI host backend exposes no XNU execution capabilities, and
+its architecture-specific XNU execution path plus physical Intel and AMD desktop boots remain pending. The active TCG route
+validates ARM64 guest integration; it does not establish native x86_64 hosted-XNU support. See
 [`tests/x86_64/README.md`](tests/x86_64/README.md) and [`docs/portability-validation.md`](docs/portability-validation.md)
 for complementary launcher/tests and stage-specific evidence.
 
-### Complementary QEMU TCG and PureDarwin evidence
+### Active QEMU TCG and PureDarwin path
 
-The full TCG route in [#36](https://github.com/Personed/xnulinux/pull/36) uses a 16 GiB ARM64 guest; its separate
-reference host-capacity screen is 20 GiB total RAM and 4 GiB available before artifact preparation. These values
-describe one measured profile, not a universal minimum. Run #72 on older #36 head `5312b29` emitted Darwin-console,
-guest-halt, module-unload, Linux power-off, and clean-QEMU-exit markers, but later byte inspection found overlapping
-file-backed `__TEXT_EXEC` and `__KLD` data, so that run is not an acceptance pass. At the time of run #74,
-#36 head `97727ac` failed before boot on the same overlap.
+The historical full TCG reference in [#36](https://github.com/Personed/xnulinux/pull/36) assigns 16 GiB to the ARM64 guest and records a 20 GiB total / 4 GiB available host-capacity screen before artifact preparation. These are profile-specific measurements and planning guidance, not a universal or physical minimum.
 
-PR #50 run #89 subsequently passed its Linux x86-64 TCG workflow through the Darwin console, guest `halt`, module
-unload, Linux power-off, and QEMU success on Ubuntu 24.04.5 x86-64 with QEMU 8.2.2. The nested KVM-backed Intel runner
-runner OS reported `MemTotal` of 15.3 GiB, below the #36 20 GiB reference screen; outer physical RAM and available RAM
-before artifact preparation were not reported. The functional run does not establish that all guest memory stayed
-resident or that the host avoided overcommit/swap. Stacked PR #52 run #91 passed the same route with pinned guest
-package `7.0.0-44.44~24.04.1`; its Microsoft-hypervisor Ubuntu runner exposed an AMD EPYC 9V45 virtual CPU and
-runner-OS `MemTotal` of 16,367,524 kB, also below the reference screen, while outer physical and pre-artifact
-available RAM were not reported. This is virtualized AMD-model CI evidence, not bare-metal AMD acceptance. Fixed
-expected package hashes and the current-main #62/#64/#58 synchronization are still pending. Merged
-[#62](https://github.com/Personed/xnulinux/pull/62) and follow-up [#64](https://github.com/Personed/xnulinux/pull/64)
-also report local runs with the pinned Ubuntu ARM64 kernel package, Darwin console, guest `halt`, module unload, and
-Linux power-off using the locally relocated collection. Those runs are not the synchronized #50/#52 CI manifest or
-cross-host matrix. PR #58's artifact-hash follow-up is not part of #52 run #138; #46 still has no full-route
-Windows or Intel-macOS result. None of this TCG evidence establishes native x86_64 hosting, Tahoe/KVM, a macOS desktop, or practical speed
-on every PC. The detailed profiles and remaining evidence are in
-[`docs/portability-validation.md`](docs/portability-validation.md).
+The reduced profile passed the console and guest-initiated shutdown checks on hosted Ubuntu x86-64 VMs. PR #52 runs [#138](https://github.com/Personed/xnulinux/actions/runs/45891610133) and [#148](https://github.com/Personed/xnulinux/actions/runs/45902417451) passed the route; #148 is the current-head pass on #52 head `24e4a9c`. PR #72 run [#140](https://github.com/Personed/xnulinux/actions/runs/45891917494) exercised the TTBR1 guard on a tree identical to the earlier #52 head `3b47444`. PR #75 run [#143](https://github.com/Personed/xnulinux/actions/runs/45897387799) passed on an earlier tree and added fixed package-digest checks. The tested init emits `XNULINUX_E2E_XNU_UNLOADED` only after both `rmmod xnu` and `rmmod fki` succeed. Six GiB is the smallest guest allocation with a full-route pass in the records; it is not a guest or host minimum. PR #96 adds an experimental sweep at 5, 4, 3, 2.5, and 2 GiB; image run #157 was in progress, while modules #989 and launcher #511 passed. No below-6-GiB profile result had been reported.
 
-Run #138 used the paired `puredarwin-e2e-guest` and `puredarwin-e2e-disk` artifacts from that same PR #52 workflow run. Later, #72 added the TTBR1 geometry guard; its tested tree is now in #52 commit `3b47444`, and run #140 completed the same reduced boot on that exact tree. The still-separate #75 follow-up is not included. Neither CI run establishes a full boot on physical PCs, Windows, or Intel macOS. For Linux disk preparation, [`scripts/mk-puredarwin-disk.sh`](scripts/mk-puredarwin-disk.sh) creates the HFS+ disk from the exported PureDarwin root on Linux or macOS; see [`docs/free-kc.md`](docs/free-kc.md).
+Current-head run [#148](https://github.com/Personed/xnulinux/actions/runs/45902417451) passed all four image, disk/collection, guest-preparation, and TCG-boot jobs. The Ubuntu 24.04.5 Azure/Microsoft-hosted VM reported 4 vCPUs, virtual AMD EPYC 7763, `MemTotal: 16367500 kB`, `MemAvailable: 15418148 kB` before artifacts and `14965924 kB` at boot. The 6 GiB QEMU profile peaked at 3,833,380 KiB RSS (3.66 GiB) and reached the Darwin console, guest halt, XNU/FKI unload, Linux power-off, and successful QEMU completion. This is current-tree virtual-runner evidence, not a physical RAM floor.
+
+PR #89 is the Ubuntu / Windows Server 2025 / Intel macOS 15 hosted-runner matrix: head `3fbfa6a`, based on #83 head `07d08c5` and #52 head `24e4a9c`. In run [#151](https://github.com/Personed/xnulinux/actions/runs/45904189412), image, disk/collection, and guest preparation passed. Ubuntu/QEMU 8.2.2 passed the full 6 GiB route: Darwin console, guest halt, XNU/FKI unload, Linux power-off, QEMU exit 0; peak RSS was 3,820,440 KiB (3.64 GiB). Windows and Intel macOS/QEMU 11.1.0 both hit an ARM64 XNU write-permission fault at `fffffff007004000` with the same guest inputs; neither reached Darwin or guest shutdown. QEMU exited 0 on those hosts, but the harness failed for missing guest markers. Windows process RSS was unavailable; macOS QEMU peak RSS was 3,476,652 KiB (3.32 GiB). The runners reported 16 GiB Windows and 14 GiB macOS total RAM; available memory before QEMU was about 12.76 GiB and 9.74 GiB respectively. These values do not indicate a 6 GiB allocation shortage. The difference between QEMU 8.2.2 on Linux and 11.1.0 on Windows/macOS remains to be isolated. PR #83 image run #149 was in progress at 23:16 UTC, while modules #922 and launcher #455 passed. PR #96 (head `e358351`, based on #52) explores below-6-GiB guest profiles separately; image run [#157](https://github.com/Personed/xnulinux/actions/runs/45907949989) was in progress, modules #989 and launcher #511 passed. These sweep runs are experimental and cannot establish a physical memory floor. No physical Intel/AMD PC has been validated, and neither the guest minimum nor host RAM floor has been established. Remaining validation requires representative bare-metal Intel and AMD PCs, successful full-route Windows and Intel macOS runs, and repeatable memory-profile measurements. These results also do not establish native x86_64 hosting, Tahoe/KVM, a macOS desktop, or practical speed on every PC. See [`docs/portability-validation.md`](docs/portability-validation.md) for the exact matrix and remaining stage evidence.
+
+To reproduce the active TCG boot on an x86-64 Linux PC, download the paired `puredarwin-e2e-guest` and `puredarwin-e2e-disk` artifacts from run #140 and follow [the QEMU TCG procedure](docs/portability-validation.md#reproducing-the-active-qemu-tcg-boot), which gives the exact command and reduced profile. The input SHA-256 values and artifact expiry are recorded in that guide. For local Linux disk preparation, [`scripts/mk-puredarwin-disk.sh`](scripts/mk-puredarwin-disk.sh) creates the HFS+ disk from the exported PureDarwin root; see [`docs/free-kc.md`](docs/free-kc.md). Run #140 validates the #52 tree containing the TTBR1 guard, but it is still virtual-runner evidence and does not validate bare-metal PCs or the Windows/macOS matrix.
 
 Shipping it as a hosted service (what is distributed, what a user installs to run Apple's macOS) is in
 [`docs/hosted-service.md`](docs/hosted-service.md).
@@ -163,7 +147,7 @@ for FKI carve-out setup; booting XNU also depends on the FKI backend and its mem
 - A macOS 27 installation (an Apple Virtualization VM disk) of your own. **No Apple binaries are in this repository or
   distributed by it**: the kexts Apple ships, the macOS system disk and its trust cache come from your own installation.
 
-### x86_64 native hosted-XNU target
+### Separate experimental x86_64 native hosted-XNU port
 
 - Linux on an Intel or AMD x86_64 PC. Kernel versions, CPU features, RAM, and page-size requirements are being established by the port.
 - User-provided macOS Tahoe 26 x86_64 artifacts that match the selected XNU build. No Apple system image or binary is provided here.

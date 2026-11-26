@@ -1,16 +1,16 @@
 # Native x86_64 support
 
-**Status:** Active design for the native x86_64 port. No x86_64 hosted-XNU runtime has passed end-to-end validation yet.
+**Status:** Separate exploratory design for a native x86_64 port. The active user-selected acceptance route is x86-64 PC → QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin console; no native x86_64 runtime is implied by that goal.
 
 ## Target platforms
 
 | Linux host | Hosted system | Execution path | Current evidence | Evidence required for this port |
 | --- | --- | --- | --- | --- |
 | ARM64 with PAC and 4 KiB Linux pages | Existing macOS 27 ARM64 setup | Existing direct FKI/XNU modules | The README reports desktop boots on Apple Silicon and DGX Spark. CI builds the ARM64 Linux modules. | Keep CI green and repeat a documented desktop smoke run on a supported ARM64 setup. |
-| Intel x86_64 | macOS Tahoe 26 x86_64 | Native FKI/XNU port on Linux | The FKI host-backend build merged in [#48](https://github.com/Personed/xnulinux/pull/48) passes; it advertises no XNU execution capability, and [#47](https://github.com/Personed/xnulinux/pull/47) is fail-closed. | Build, boot, and pass host-integrity checks to the desktop on a documented Intel configuration. |
-| AMD x86_64 | macOS Tahoe 26 x86_64 | Native FKI/XNU port on Linux | The FKI host-backend build merged in [#48](https://github.com/Personed/xnulinux/pull/48) passes; it advertises no XNU execution capability, and [#47](https://github.com/Personed/xnulinux/pull/47) is fail-closed. | Build, boot, and pass host-integrity checks to the desktop on a documented AMD configuration. |
+| Intel x86_64 | macOS Tahoe 26 x86_64 | Native FKI/XNU port on Linux | FKI host-backend build in [#48](https://github.com/Personed/xnulinux/pull/48) passes; the fail-closed XNU target in [#47](https://github.com/Personed/xnulinux/pull/47) does not execute XNU. | Build, boot, and pass host-integrity checks to the desktop on a documented Intel configuration. |
+| AMD x86_64 | macOS Tahoe 26 x86_64 | Native FKI/XNU port on Linux | FKI host-backend build in [#48](https://github.com/Personed/xnulinux/pull/48) passes; the fail-closed XNU target in [#47](https://github.com/Personed/xnulinux/pull/47) does not execute XNU. | Build, boot, and pass host-integrity checks to the desktop on a documented AMD configuration. |
 
-The user selected native x86_64 execution and the most recent macOS release with Intel binaries. Apple identifies Tahoe 26 as the final release supporting Intel Macs. The repository currently builds XNU `xnu-12377.121.6`; Apple’s public tag contains the `osfmk/i386` machine sources and `config/MASTER.x86_64`, so it is a concrete candidate for the Intel port. Its match to a supplied Tahoe system build, kernel collection and kext set still needs verification. Apple artifacts are supplied by the user. [Apple's macOS 26.4 release notes](https://developer.apple.com/documentation/macos-release-notes/macos-26_4-release-notes?changes=l_9)
+This experiment considers native x86_64 execution and the most recent macOS release with Intel binaries. Apple identifies Tahoe 26 as the final release supporting Intel Macs. The repository currently builds XNU `xnu-12377.121.6`; Apple’s public tag contains the `osfmk/i386` machine sources and `config/MASTER.x86_64`, so it is a concrete candidate for the Intel port. Its match to a supplied Tahoe system build, kernel collection and kext set still needs verification. Apple artifacts are supplied by the user. [Apple's macOS 26.4 release notes](https://developer.apple.com/documentation/macos-release-notes/macos-26_4-release-notes?changes=l_9)
 
 The first x86_64 milestone targets Linux hosts and a usable desktop with software rendering. Hardware GPU acceleration can follow once the desktop works. Each validated host configuration defines a concrete support claim. The CPU feature floor and additional configurations remain open until measured.
 
@@ -18,7 +18,7 @@ The first x86_64 milestone targets Linux hosts and a usable desktop with softwar
 
 Run x86_64 XNU and its userspace directly on Intel/AMD x86_64 Linux through architecture-matched project modules, following the existing ARM64 hosting model. A disposable Linux VM may contain early bring-up experiments; target acceptance runs on physical Intel and AMD systems.
 
-The user selected a native x86_64 port. A QEMU/KVM macOS guest, a compile-only workflow, or a QEMU TCG ARM64 guest can provide complementary evidence but cannot substitute for the requested runtime. Keep those tools available as separate experiments.
+This native-port experiment is separate from the active TCG/PureDarwin acceptance goal. A QEMU/KVM macOS guest or a compile-only workflow cannot substitute for native runtime evidence, and neither replaces the active QEMU TCG/ARM64 guest route.
 
 ## What needs to change
 
@@ -43,4 +43,4 @@ Public CI builds the ARM64 Linux modules. The existing `tests/host/run.sh` check
 
 The Apple upstream XNU tag used by this repository, `xnu-12377.121.6`, includes an x86_64 machine configuration and i386 machine source tree. The project’s custom execution layer is still ARM-only: the x86_64 FKI build reaches modpost and fails because no x86 backend implements six architecture hooks; compiling `xnu_main.c` reaches the assembler and fails on ARM-specific register, atomic, PAC, cache, and barrier instructions; the world switch has only an AArch64 implementation. No x86_64 module or XNU code has run.
 
-These results do not yet demonstrate that a same-kernel x86_64 port can safely preserve Linux exception, syscall, and address-space state. The execution boundary is the first implementation milestone: continue refining and testing it before running XNU. A QEMU/KVM guest is an available complementary experiment, but it does not satisfy the selected native x86_64 target. Physical Intel, AMD and ARM64 acceptance runs and matching system images are still required.
+These results do not yet demonstrate that a same-kernel x86_64 port can safely preserve Linux exception, syscall, and address-space state. The execution boundary is the first milestone of this separate experiment: continue refining and testing it before running XNU. A QEMU/KVM guest does not satisfy native-port evidence; the active project acceptance remains the TCG/ARM64/PureDarwin route. Physical Intel, AMD and ARM64 runs are not required to complete that active route.

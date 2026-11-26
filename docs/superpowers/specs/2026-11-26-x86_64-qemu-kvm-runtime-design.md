@@ -1,22 +1,21 @@
 # Supplemental x86_64 QEMU/KVM guest launcher
 
-**Status:** Optional guest experiment. The active x86_64 target is the native FKI/XNU port defined in
-[`2026-11-26-native-x86_64-port-design.md`](2026-11-26-native-x86_64-port-design.md). ARM64 remains on its existing direct XNU-in-Linux path.
+**Status:** Optional guest experiment. The active portability goal is x86-64 PC → QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin console. This QEMU/KVM macOS guest is separate from that route and from exploratory native x86_64 work.
 
 ## Intent
 
-Retain a user-provided macOS Tahoe 26 x86_64 guest launcher as an optional tool on Intel and AMD Linux PCs. QEMU/KVM supplies the machine boundary for this separate guest path. The active portability goal is a native x86_64 FKI/XNU port, while ARM64 `fki.ko` and `xnu.ko` continue to run directly in Linux.
+Retain a user-provided macOS Tahoe 26 x86_64 guest launcher as an optional tool on Intel and AMD Linux PCs. QEMU/KVM supplies the machine boundary for this separate guest path. The active TCG/PureDarwin route uses ARM64 `fki.ko` and `xnu.ko` inside an ARM64 Linux guest.
 
 ## Decisions made to close design questions
 
-- The QEMU/KVM launcher is a separate guest experiment. The native x86_64 target must build and run architecture-matched `xnu.ko` and `fki.ko` on the Linux host.
+- The QEMU/KVM launcher is a separate guest experiment. It does not establish the active TCG/PureDarwin route or the separate exploratory native x86_64 port.
 - The launcher requires a user-prepared, bootable Tahoe 26 x86_64 disk whose EFI partition contains a working OpenCore/EFI boot setup. The project will not install Apple software or mutate a source disk in its first x86 milestone. It accepts raw or qcow2 images, creates a persistent qcow2 overlay backed by the source disk, and keeps writable OVMF variables in a separate per-VM state file.
 - Support for Intel and AMD remains a separate acceptance claim for each vendor. KVM uses QEMU's `host` CPU passthrough by default so the guest sees the actual Intel or AMD model and supported features; AMD disks must already include the appropriate OpenCore AMD kernel patches. Actual compatibility is not claimed until it boots and passes host-integrity checks on physical hardware from that vendor.
 
 ## Approaches considered
 
-1. **Native x86_64 FKI/XNU port.** This is the active goal. The current x86 FKI has no world backend, `xnu_main.c` and `world.S` are AArch64-specific, and a safe host exception/syscall/address-space boundary remains to be demonstrated. Keep this work in the native-port plan.
-2. **QEMU with KVM acceleration on x86_64 — supplemental.** This isolates guest page tables, exceptions, and syscalls while running x86 instructions on Intel VT-x or AMD-V. It can be useful independently, but it boots a VM rather than loading `xnu.ko` into Linux and does not meet the native-port goal.
+1. **QEMU TCG → ARM64 Linux → PureDarwin.** This is the active goal and is tracked in #36/#46. It validates the ARM64 project modules inside the emulated Linux guest and is independent of a native x86_64 host backend.
+2. **QEMU with KVM acceleration on x86_64 — supplemental.** This isolates guest page tables, exceptions, and syscalls while running x86 instructions on Intel VT-x or AMD-V. It can be useful independently, but it boots a VM rather than loading `xnu.ko` into Linux and does not meet the active TCG/PureDarwin acceptance goal.
 3. **QEMU TCG on x86_64.** This needs no hardware virtualization and is useful for automated smoke tests, but it translates guest instructions and is too slow to claim PC runtime support. Keep it as an explicit development mode only.
 
 ## Targets and boundaries
@@ -33,7 +32,7 @@ The optional KVM guest CPU profile is QEMU `host` passthrough; TCG defaults to `
 
 Initial display support is software framebuffer output through QEMU's display backend. Hardware GPU acceleration, passthrough, and reuse of the ARM host-call kexts are outside the first x86 milestone. Guest disk, network, USB input, and display use QEMU virtual devices and macOS guest drivers.
 
-The optional x86_64 guest launcher does not build or load the x86_64 modules required by the native port. Keep its disk safety and state-locking behavior, but describe it as a separate experiment. The ARM module path and its CI remain intact, and a separate x86_64 module build is required for the native goal.
+The optional x86_64 guest launcher does not build or load the ARM64 modules used by the active TCG/PureDarwin route, and it does not establish native x86_64 module execution. Keep its disk safety and state-locking behavior, but describe it as a separate experiment. The ARM module path and its CI remain intact.
 
 ## Implementation outline
 

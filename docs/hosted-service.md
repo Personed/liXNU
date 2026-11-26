@@ -83,8 +83,8 @@ We ship these. The user's disk script installs them into their own macOS disk:
    krunkit (krunkit, libkrun, virglrenderer, MoltenVK and gvproxy under `$KRUN`; `scripts/krun-vm.sh`,
    `scripts/install-krun-agent.sh`), which gives it the host GPU through virtio-gpu Venus.
 2. **Memory.** `scripts/vm-install-fki-service.sh` with `LINUX_MEM`, `CARVE_BASE` and `CARVE_MB` for that host's
-   physical memory map. The carve-out is RAM Linux never manages. The hosted kernel's `RAM_MB` has to fit inside it
-   (8 GB → `RAM_MB=7900`). Reboot once.
+   physical memory map. The carve-out is RAM Linux never manages. `RAM_MB=auto` sizes XNU within that carve-out.
+   Reboot once.
 3. **Kit.** Unpack it to `/opt/xnulinux/kit`, and install `kc-free.bin` as `/lib/firmware/xnu/kc-free.bin`.
 4. **Default system.** Put the PureDarwin disk at `/var/lib/xnulinux/pd.img` with its `pd.conf`. Configure
    `/etc/xnulinux.conf` as follows, then run `scripts/install-service.sh`:
@@ -95,7 +95,7 @@ We ship these. The user's disk script installs them into their own macOS disk:
    DISK=/var/lib/xnulinux/pd.img
    GPU=off
    CPUS=2
-   RAM_MB=7900
+   RAM_MB=auto
    ```
 5. **Isolation.** The hosted kernel runs at EL1 inside the Linux kernel, so a hosted system that is compromised owns
    that Linux. **The tenant boundary is the VM (or the machine), never the Linux.** Run one Linux VM per tenant, with one

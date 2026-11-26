@@ -36,12 +36,23 @@ WAIT=0; [ "${1:-}" = --wait ] && WAIT=1
 [ -f /etc/xnulinux.conf ] && . /etc/xnulinux.conf
 MAC_CONF=${MAC_CONF:-/var/tmp/mac.conf}	# the disk's UUIDs: mk-macvm-disk.sh's, or mk-puredarwin-disk.sh's output
 [ -f "$MAC_CONF" ] && . "$MAC_CONF"
-DISK=${DISK:-/var/tmp/mac.img}; RAM_MB=${RAM_MB:-7900}; GPU=${GPU:-auto}; CPUS=${CPUS:-1}
+DISK=${DISK:-/var/tmp/mac.img}; RAM_MB=${RAM_MB:-auto}; GPU=${GPU:-auto}; CPUS=${CPUS:-1}
 CONSOLE_IN=${CONSOLE_IN:-/var/tmp/console-in}; INPUT_IN=${INPUT_IN:-/var/tmp/xnu-input}; FB_DUMP=${FB_DUMP:-/var/tmp/xnu-fb.raw}
 KEYSTORE=${KEYSTORE:-/var/tmp/xnu-keystore.bin}; TRUSTCACHE=${TRUSTCACHE-xnu/trustcache-mac.bin}; IMAGE=${IMAGE:-xnu/kc.bin}
 BOOTARGS=${BOOTARGS:-amfi_get_out_of_my_way=1 lp-sip0=2050 bt-transport-override=10}
 : "${ROOT_UUID:?no ROOT_UUID (/var/tmp/mac.conf from mk-macvm-disk.sh)}" "${BOOT_UUID:?no BOOT_UUID}"
 [ -d /sys/module/xnu ] && { echo "xnu.ko is loaded: a hosted system is running (sudo rmmod xnu first)" >&2; exit 1; }
+
+if [ "$RAM_MB" = auto ]; then
+  FKI_CARVE_MB=$(cat /sys/module/fki/parameters/carve_mb 2>/dev/null || echo 0)
+  if [[ "$FKI_CARVE_MB" =~ ^[0-9]+$ ]] && [ "$FKI_CARVE_MB" -ge 1024 ]; then
+    RAM_OVERHEAD_MB=128
+    [ "$FKI_CARVE_MB" -ge 4096 ] && RAM_OVERHEAD_MB=256
+    RAM_MB=$((FKI_CARVE_MB - RAM_OVERHEAD_MB))
+  else
+    RAM_MB=7900
+  fi
+fi
 
 K=/lib/modules/$(uname -r)/build
 build() {	# a module; its compiler errors on failure

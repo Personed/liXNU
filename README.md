@@ -149,10 +149,9 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 
 ### ARM64 direct path
 
-Run `scripts/xnulinux-boot.sh --check` on the Linux host (inside the Linux VM if you use one). It checks the
-architecture, page size, headers for the running kernel, and the compiler selected by Kbuild before you prepare a disk. It also
-reports when Linux does not advertise address pointer authentication. Booting XNU also depends on the FKI
-backend and its memory setup.
+Follow the [host-preparation guide](docs/hosted-service.md#3-operator-preparing-a-host) to check the Linux kernel,
+matching headers, page size, pointer-authentication support, and FKI memory setup before preparing a disk. The ARM64
+boot script has no preflight-only `--check` mode; running it starts the actual module build and hosted-system boot.
 
 - An arm64 Linux host with PAC (`FEAT_PAuth`), 4K pages, and at least 16 GB of RAM (8 GB reserved for the hosted
   kernel). Tested on:
@@ -196,8 +195,8 @@ This optional launcher is separate from the native hosted-XNU port and does not 
 Its prerequisites are an Intel or AMD x86_64 Linux PC with VT-x or AMD-V and `/dev/kvm`, SSE4.2, AVX, FMA, MOVBE,
 POPCNT, LZCNT, BMI1, AVX2 and BMI2; QEMU 10 or newer, `qemu-img`, `flock`, and OVMF 4 MiB firmware; a user-prepared
 Tahoe 26 x86_64 disk with EFI/OpenCore (including AMD kernel patches on AMD); and a locally supplied 64-byte Apple SMC
-OSK in `APPLE_SMC_OSK`. The launcher auto-detects common Debian/Ubuntu, Fedora/RHEL, Arch, and openSUSE OVMF layouts;
-override `OVMF_CODE` and `OVMF_VARS_TEMPLATE`, or add a custom directory with `OVMF_DIR`, when needed. The default
+OSK in `APPLE_SMC_OSK`. The launcher uses its configured OVMF paths and does not scan distribution firmware directories;
+set `OVMF_CODE` and `OVMF_VARS_TEMPLATE` explicitly when the defaults do not match your installation. The default
 guest allocation is 8 GiB and can be changed with `RAM_MB`; allow additional memory for Linux/QEMU.
 
 The launcher requires a bootable image prepared separately by the user. QEMU writes macOS changes to a persistent qcow2
@@ -227,9 +226,9 @@ printf '\n'
 scripts/x86_64/xnulinux-boot.sh --check
 ```
 
-If OVMF is not auto-detected, set `OVMF_CODE` and `OVMF_VARS_TEMPLATE` to the corresponding 4 MiB files before
-preflight. `OVMF_DIR` adds one custom directory to the search path. Fedora's qcow2 firmware pair is passed to QEMU as
-qcow2; raw pairs remain raw, and existing NVRAM state keeps its own format. If preflight succeeds, run:
+Set `OVMF_CODE` and `OVMF_VARS_TEMPLATE` to the matching 4 MiB files for your distribution before preflight when the
+default paths do not exist. Fedora's qcow2 firmware pair is passed to QEMU as qcow2; raw pairs remain raw, and existing
+NVRAM state keeps its own format. If preflight succeeds, run:
 
 ```sh
 scripts/x86_64/xnulinux-boot.sh

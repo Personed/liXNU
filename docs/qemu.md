@@ -50,9 +50,9 @@ address. Omit `--ssh-port` when you do not need it.
 
 `--graphical` checks the installed QEMU display backends, then prefers Cocoa on macOS, GTK on Linux,
 or SDL on Windows. Linux and macOS can fall back to SDL when their preferred backend is not present.
-Use `--display-backend sdl` to force SDL when testing a backend or when the host needs it. The
-launcher reports an unavailable requested backend before starting the VM. Run from a desktop
-session. For a terminal-only
+With `--graphical`, use `--display-backend sdl` to force SDL when testing a backend or when the host
+needs it. The launcher reports an unavailable requested backend before starting the VM and rejects
+`--display-backend` without `--graphical`. Run from a desktop session. For a terminal-only
 guest, omit `--graphical` and configure Linux or its installer to use `console=ttyAMA0`. The QEMU
 terminal can switch between guest serial and the QEMU monitor with `Ctrl+A`, then `C`.
 

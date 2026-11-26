@@ -29,13 +29,13 @@ Native x86_64 hosting of Tahoe 26 remains a separate workstream; direct ARM64 ho
 
 | Host profile | Current status |
 | --- | --- |
-| Ubuntu 24.04 x86-64 hosted CI VM, QEMU TCG | PR #75 run [#143](https://github.com/Personed/xnulinux/actions/runs/45897387799) passed all jobs on head `5fa6947`, based on #52 tree `3b47444`, with fixed package-digest checks and the reduced 6 GiB boot. It reached the Darwin console, guest halt, XNU/FKI unload, Linux power-off and QEMU exit 0. The AWS/KVM Ubuntu 24.04.5 VM had 4 vCPUs, Intel Xeon 6975P-C virtual CPU, QEMU 8.2.2, `MemTotal: 16078412 kB`, `MemAvailable: 15085424 kB` before artifacts and `14695776 kB` at boot; peak QEMU RSS was 3,841,412 KiB (3.66 GiB). PR #75 has since merged into #52 as `24e4a9c`, which also contains the #72 TTBR1 guard; at 22:41 UTC image run #148 was queued, while modules #920 and launcher #454 passed. The repeated #143 boot is evidence for its tested tree, not yet the current #52 head. These are virtual-runner results, not a physical memory floor. Older 16 GiB runs #67/#106, #36/#118 (tested head `c55a700`), and #69/#115 (tested head `3eb5e0e`) remain historical virtual-runner evidence. |
+| Ubuntu 24.04 x86-64 hosted CI VM, QEMU TCG | PR #75 run [#143](https://github.com/Personed/xnulinux/actions/runs/45897387799) passed all jobs on head `5fa6947`, based on #52 tree `3b47444`, with fixed package-digest checks and the reduced 6 GiB boot. It reached the Darwin console, guest halt, XNU/FKI unload, Linux power-off and QEMU exit 0. The AWS/KVM Ubuntu 24.04.5 VM had 4 vCPUs, Intel Xeon 6975P-C virtual CPU, QEMU 8.2.2, `MemTotal: 16078412 kB`, `MemAvailable: 15085424 kB` before artifacts and `14695776 kB` at boot; peak QEMU RSS was 3,841,412 KiB (3.66 GiB). PR #75 has since merged into #52 as `24e4a9c`, which also contains the #72 TTBR1 guard; at 22:52 UTC image run #148 was queued, while modules #920 and launcher #454 passed. The repeated #143 boot is evidence for its tested tree, not yet the current #52 head. These are virtual-runner results, not a physical memory floor. Older 16 GiB runs #67/#106, #36/#118 (tested head `c55a700`), and #69/#115 (tested head `3eb5e0e`) remain historical virtual-runner evidence. |
 | Physical Intel x86-64 Linux PC, QEMU TCG | Not tested; no physical Intel PC is attached to the available executor. |
 | Physical AMD x86-64 Linux PC, QEMU TCG | Not tested; some CI runs used AMD EPYC virtual CPUs, which do not establish bare-metal AMD support. |
-| Windows Server 2025 x86-64 host, QEMU TCG | PR #3 run #78 passed the UEFI launcher smoke only. PR #89 is synchronized to #83 head `07d08c5` / #52 head `24e4a9c`, on head `3fbfa6a`; at 22:41 UTC its image run #151 was in progress, while modules #945 and launcher #476 passed. No Windows PureDarwin boot result has been reported. |
-| Intel macOS 15 host, QEMU TCG | PR #3 run #78 passed the UEFI launcher smoke only. PR #89 is synchronized to #83 head `07d08c5` / #52 head `24e4a9c`, on head `3fbfa6a`; at 22:41 UTC its image run #151 was in progress, while modules #945 and launcher #476 passed. No Intel macOS PureDarwin boot result has been reported. |
+| Windows Server 2025 x86-64 host, QEMU TCG | PR #3 run #78 passed the UEFI launcher smoke only. PR #89 is synchronized to #83 head `07d08c5` / #52 head `24e4a9c`, on head `3fbfa6a`; at 22:52 UTC its image run #151 was in progress, while modules #945 and launcher #476 passed. No Windows PureDarwin boot result has been reported. |
+| Intel macOS 15 host, QEMU TCG | PR #3 run #78 passed the UEFI launcher smoke only. PR #89 is synchronized to #83 head `07d08c5` / #52 head `24e4a9c`, on head `3fbfa6a`; at 22:52 UTC its image run #151 was in progress, while modules #945 and launcher #476 passed. No Intel macOS PureDarwin boot result has been reported. |
 
-PR #46's older cross-host branch used the historical 16 GiB profile and its earlier run #79 failed in `kclink` before guest boot; it is not evidence for the current reduced profile. PR #89 is synchronized at head `3fbfa6a` on #83 head `07d08c5` / #52 head `24e4a9c`; it checks shared input hashes before boot. Status checked 2026-11-26 22:41 UTC: image run #151 was in progress, while modules #945 and launcher #476 passed. Current #52 image run #148 was queued; #83 image run #149 was in progress; their modules (#920 / #922) and launchers (#454 / #455) passed. PR #96 adds a separate informational memory-profile sweep, with image run #154 in progress and modules #965 / launcher #492 queued. Its five experimental profiles range from 5 GiB to 2 GiB QEMU RAM; no profile result is available yet. Earlier run #147 belongs to a superseded #89 head and is not current-head evidence. Module jobs are stage smoke tests, not a full PureDarwin route. Do not claim cross-host acceptance until the synchronized #89 full-route results report console and guest shutdown on each supported host.
+PR #46's older cross-host branch used the historical 16 GiB profile and its earlier run #79 failed in `kclink` before guest boot; it is not evidence for the current reduced profile. PR #89 is synchronized at head `3fbfa6a` on #83 head `07d08c5` / #52 head `24e4a9c`; it checks shared input hashes before boot. Status checked 2026-11-26 22:52 UTC: image run #151 was in progress, while modules #945 and launcher #476 passed. Current #52 image run #148 was queued; #83 image run #149 was in progress; their modules (#920 / #922) and launchers (#454 / #455) passed. PR #96 adds a separate informational memory-profile sweep, with image run #154 in progress, modules #965 queued and launcher #492 passed. Its five experimental profiles range from 5 GiB to 2 GiB QEMU RAM; no profile result is available yet. Earlier run #147 belongs to a superseded #89 head and is not current-head evidence. Module jobs are stage smoke tests, not a full PureDarwin route. Do not claim cross-host acceptance until the synchronized #89 full-route results report console and guest shutdown on each supported host.
 
 The historical full-route TCG reference assigns 16 GiB to the ARM64 guest, with Linux
 `mem=7G`, an 8,156 MiB FKI carve-out at `0x200000000`, and 7,900 MiB XNU RAM. The
@@ -77,7 +77,7 @@ the complete 6 GiB route after adding fixed package digests. Its Ubuntu 24.04.5 
 runner reported `MemTotal: 16078412 kB`, `MemAvailable: 15085424 kB` before artifact
 preparation and `14695776 kB` at boot; QEMU 8.2.2 peaked at 3,841,412 KiB (3.66 GiB).
 The run reached the Darwin console command, guest halt, XNU/FKI unload, Linux power-off,
-and QEMU exit 0. PR #75 merged into #52 as `24e4a9c`; at 22:41 UTC image run #148 was
+and QEMU exit 0. PR #75 merged into #52 as `24e4a9c`; at 22:52 UTC image run #148 was
 queued, while modules run #920 and launcher #454 passed. The current #52 head therefore
 awaits a full boot rerun.
 
@@ -85,7 +85,7 @@ The 6 GiB guest allocation is the lowest full-route profile demonstrated in comp
 runs. PR #96 (head `192161f`, based on #52 `24e4a9c`) adds an informational sweep at 5, 4,
 3, 2.5, and 2 GiB. It reuses the same-run image and disk artifacts, checks the full guest
 console/halt/XNU-FKI unload/Linux power-off/QEMU-exit path, and retains host-memory and QEMU
-RSS evidence per profile. At 22:41 UTC image run #154 was still in progress; no below-6-GiB
+RSS evidence per profile. At 22:52 UTC image run #154 was still in progress, modules #965 were queued and launcher #492 passed; no below-6-GiB
 results had been reported. Even a CI pass would identify a virtual-runner guest profile,
 not a physical PC support floor. The guest minimum and physical host-RAM minimum remain
 unmeasured; compare repeated results on representative physical Intel and AMD PCs before
@@ -256,7 +256,7 @@ Report the profile alongside the stage:
   The retained log does not include a standalone QEMU exit-status line.
 
   These PR-branch runs are not integrated in `main` and do not establish physical-PC
-  acceptance. Status checked 2026-11-26 22:41 UTC: PR #52 head `24e4a9c` includes the
+  acceptance. Status checked 2026-11-26 22:52 UTC: PR #52 head `24e4a9c` includes the
   #72 TTBR1 guard and #75 package digests; image run #148 was queued, while modules #920
   and launcher #454 passed. PR #72 run #140 passed the full reduced profile on
   commit `e61f578`, whose Git tree matches #52's earlier head `3b47444`; PR #75 run #143
@@ -268,7 +268,7 @@ Report the profile alongside the stage:
   passed. PR #89 head `3fbfa6a`, based on current #83 / #52, is the synchronized active
   cross-host matrix; image run #151 was in progress, while modules #945 and launcher #476
   passed. PR #96 head `192161f` adds the experimental below-6-GiB sweep on the #52 base;
-  image run #154 was in progress, while modules #965 and launcher #492 were queued. The
+  image run #154 was in progress, modules #965 were queued and launcher #492 passed. The
   Windows and macOS full-route results, and all memory-sweep profile outcomes, remain
   pending. PR #36 run #118 passed on
   tested head `c55a700`, not current head `93e3cf4`. PR #46 run #79 failed in `kclink`

@@ -251,7 +251,7 @@ static void fileset_type(unsigned char *f) { put_u32(f + 12, 12); }
 static void nonzero_reserved(unsigned char *f) { put_u32(f + 28, 1); }
 static void command_area_overflow(unsigned char *f) { put_u32(f + 20, 0xffffffffU); }
 static void command_area_unaligned(unsigned char *f) { put_u32(f + 20, COMMAND_BYTES + 1); }
-static void command_area_has_unclaimed_bytes(unsigned char *f) { put_u32(f + 20, COMMAND_BYTES + 4); }
+static void command_area_has_unclaimed_bytes(unsigned char *f) { put_u32(f + 20, COMMAND_BYTES + 8); }
 static void command_count_too_high(unsigned char *f) { put_u32(f + 16, 4); }
 static void pagezero_command_too_small(unsigned char *f) { put_u32(f + PAGEZERO_OFF + 4, 68); }
 static void pagezero_command_too_large(unsigned char *f) { put_u32(f + PAGEZERO_OFF + 4, 0xffffffffU); }

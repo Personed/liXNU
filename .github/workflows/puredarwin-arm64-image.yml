@@ -251,12 +251,19 @@ jobs:
           retention-days: 3
 
   puredarwin-tcg-boot:
-    name: Boot PureDarwin under x86-64 QEMU TCG
+    name: Boot PureDarwin under x86-64 QEMU TCG (${{ matrix.host }})
     needs: [puredarwin-build, arm64-guest]
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [ubuntu-24.04, windows-2025, macos-15-intel]
+    runs-on: ${{ matrix.host }}
     timeout-minutes: 360
+    env:
+      XNULINUX_RUNNER_LABEL: ${{ matrix.host }}
     steps:
       - uses: actions/checkout@v4
+      # All hosts boot the exact same guest kernel/initramfs and PureDarwin disk artifacts.
       - name: Download the ARM64 Linux guest inputs
         uses: actions/download-artifact@v4
         with:
@@ -267,37 +274,45 @@ jobs:
         with:
           name: puredarwin-e2e-disk
           path: ${{ runner.temp }}/puredarwin-e2e-disk
-      - name: Install QEMU ARM system emulation
+      - name: Install QEMU ARM system emulation on Linux
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq qemu-system-arm
-      - name: Boot PureDarwin and require guest userspace plus clean halt
+      - name: Install QEMU ARM system emulation on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install qemu --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Join-Path $env:ProgramFiles 'qemu' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install QEMU ARM system emulation on macOS
+        if: runner.os == 'macOS'
+        run: brew install qemu
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Boot PureDarwin and require the console command plus clean halt (POSIX)
+        if: runner.os != 'Windows'
         run: |
           python3 tests/puredarwin/run-tcg-e2e.py \
             "$RUNNER_TEMP/puredarwin-e2e-guest/Image" \
             "$RUNNER_TEMP/puredarwin-e2e-guest/initramfs.cpio.gz" \
             "$RUNNER_TEMP/puredarwin-e2e-disk/pd.img" \
             "$RUNNER_TEMP/puredarwin-tcg-serial.log"
-          {
-            echo '## x86-64 host to PureDarwin ARM64 console boot'
-            echo
-            echo "- Host: $(uname -a)"
-            echo "- Host OS: $(. /etc/os-release && echo "$PRETTY_NAME")"
-            echo "- Host CPU: $(lscpu | awk -F: '/Model name/ {gsub(/^[[:space:]]+/, "", $2); print $2; exit}')"
-            echo "- Host CPUs / RAM: $(getconf _NPROCESSORS_ONLN) CPUs / $(awk '/^MemTotal:/ {print $2 " " $3}' /proc/meminfo)"
-            echo "- QEMU: $(qemu-system-aarch64 --version | head -1)"
-            cat "$RUNNER_TEMP/puredarwin-e2e-guest/guest-manifest.txt"
-            cat "$RUNNER_TEMP/puredarwin-e2e-guest/build-manifest.txt"
-            echo '- Accelerator: QEMU TCG; hardware virtualization is not required.'
-            echo '- Guest profile: ARM64 Linux, 4 KiB pages, PAC, EL1, 16 GiB RAM; `mem=7G`; FKI carve-out at `0x200000000` (8156 MiB); XNU RAM 7900 MiB.'
-            echo '- Required evidence: real PureDarwin console command output, guest-requested `halt`, XNU module unload, and Linux guest power-off.'
-            echo '- This does not validate macOS, graphics, networking, performance, or PCs without enough memory for this profile.'
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: Retain the serial boot log
+      - name: Boot PureDarwin and require the console command plus clean halt (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python tests/puredarwin/run-tcg-e2e.py "$env:RUNNER_TEMP\puredarwin-e2e-guest\Image" "$env:RUNNER_TEMP\puredarwin-e2e-guest\initramfs.cpio.gz" "$env:RUNNER_TEMP\puredarwin-e2e-disk\pd.img" "$env:RUNNER_TEMP\puredarwin-tcg-serial.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain the host-specific boot report and serial log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: puredarwin-tcg-boot-log
-          path: ${{ runner.temp }}/puredarwin-tcg-serial.log
+          name: puredarwin-tcg-boot-${{ matrix.host }}
+          path: |
+            ${{ runner.temp }}/puredarwin-tcg-serial.log
+            ${{ runner.temp }}/puredarwin-tcg-boot-report.json
           if-no-files-found: ignore
           retention-days: 30

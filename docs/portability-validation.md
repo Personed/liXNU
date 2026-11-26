@@ -152,7 +152,7 @@ free_collection_sha256=a75c376745786254a827db587a96bd359ccc274db8685f9ed276c734d
 xnu_kernel_sha256=a708781c01b971a7837e70ae1118e70ccf5d513db64948c92b92f744c6e34f94
 ```
 
-Both boot logs contain `XNULINUX_E2E_XNU_UNLOADED`; neither log or harness records a separate FKI-unload marker. These runs therefore verify the XNU unload marker but do not establish FKI unload.
+Both boot logs contain `XNULINUX_E2E_XNU_UNLOADED`. In the exact guest-init scripts from #138 head `8d41fa9` and #140 commit `e61f578`, init runs `rmmod xnu`, confirms `/sys/module/xnu` is absent, runs `rmmod fki`, confirms `/dev/xnu-hostcall` is absent, and emits the common success marker only after both unload checks pass. These runs therefore validate both unload commands; the serial log has no standalone FKI-unload marker.
 
 - **Native x86-64 hosted XNU on Intel/AMD Linux:** this is the project target for Tahoe 26.
   The x86_64 FKI host-backend build merged in [#48](https://github.com/Personed/xnulinux/pull/48) and passed compilation while preserving ARM64; it advertises no XNU execution capability.

@@ -10,9 +10,9 @@ Darwin userspace ran. A PureDarwin shell does not establish macOS compatibility.
 | Firmware | The intended architecture reaches the firmware console (e.g. UEFI shell for the QEMU profile). |
 | Linux host or guest | ARM64 Linux reaches the intended userspace; record whether this is a distro boot or a minimal test initramfs, plus the kernel, page size, and PAC availability. |
 | FKI configuration | FKI loads with the requested `carve_base` and `carve_mb`; reading those parameters confirms configuration only, not that the reserved pages can be allocated. |
-| FKI carve-out allocation | A probe allocates 16 MiB from the reserved region at physical `0x70000000`, frees it, and allocates it again at the same address without reloading FKI. This validates allocation and reuse for the recorded QEMU profile only. |
+| FKI carve-out allocation | A probe requests a known size and verifies the returned physical interval `[pa, pa + size)` is fully inside the configured carve-out `[carve_base, carve_base + (carve_mb << 20))`. It then frees and repeats the allocation without reloading FKI, verifying the interval is reused. Record the request, returned interval, and configured bounds. This validates allocation and reuse for the tested profile only. |
 | XNU module probe | `xnu.ko` resolves its FKI dependencies and reaches the expected missing-image error. This checks the module and loader path without a real collection; it does not show that XNU allocated from the carve-out. |
-| XNU uses the carve-out | XNU loads a compatible kernel collection and runs using its reserved memory. The FKI probe above does not establish this stage. |
+| XNU uses the carve-out | With a compatible collection loaded, capture `xnu: contiguous DRAM at phys` and `xnu: contiguous DRAM size` from the host log. Mark this stage only when that complete returned interval lies inside the configured carve-out. The separate FKI probe above does not establish this stage. |
 | PureDarwin userspace | The real, paired PureDarwin disk and free kernel collection boot; execute a command on the Darwin console and observe the result. Record a clean halt separately. |
 | macOS desktop | A user-provided compatible macOS disk and collection reach an interactive desktop; record input, rendering backend, and networking separately. |
 
@@ -60,6 +60,8 @@ Report the profile alongside the stage:
    systemctl is-active xnulinux-fki.service
    cat /sys/module/fki/parameters/carve_base /sys/module/fki/parameters/carve_mb
    ```
+   These values confirm the FKI configuration only. Continue to the allocation probe
+   before marking the carve-out usable.
    Inside that ARM64 Linux instance, collect
    `uname -rm`, `getconf PAGE_SIZE`, `lscpu` (including PAC features) and the FKI
    carve-out values. Record the outer host, hypervisor and accelerator separately
@@ -110,6 +112,7 @@ Linux userspace type (installed distro or test initramfs):
 Memory / FKI carve-out / hosted CPUs:
 FKI configuration / carve-out allocation and reuse result:
 XNU stage (not loaded, missing-image probe, or loaded with collection):
+XNU contiguous DRAM physical interval / configured carve-out comparison:
 Guest OS + version / collection and pristine disk digests:
 Stages reached / guest halt result:
 Rendering / input / networking (tested, failed, or not tested):

@@ -305,10 +305,11 @@ enum xnu_void_enum_probe xnu_convert_void_pointer(void *value) {
 int main(void) {
   int xnu_set_but_unused;
   xnu_set_but_unused = 1;
-  return (int)xnu_convert_void_pointer((void *)0) + __xnu_reserved_warning_probe;
+  enum xnu_void_enum_probe converted = xnu_convert_void_pointer((void *)0);
+  return converted + __xnu_reserved_warning_probe;
 }
 PROBES
-    fail "selective reserved-identifier warning probe failed; see $XNU_WARNING_DIAGNOSTIC_LOG"
+    fail "selective XNU warning-policy probe failed; see $XNU_WARNING_DIAGNOSTIC_LOG"
   fi
   grep -Fq 'reserved-identifier' "$XNU_WARNING_DIAGNOSTIC_LOG" \
     || fail "reserved-identifier probe did not exercise the expected warning; see $XNU_WARNING_DIAGNOSTIC_LOG"

@@ -56,11 +56,14 @@ jobs:
           assert manifest["host_sys_unistd_headers_match"] is True, manifest
           assert manifest["host_sys_unistd_base_sha256"] == manifest["host_sys_unistd_overlay_sha256"], manifest
           assert manifest["host_tool_base_unistd_probe"] == "passed", manifest
-          assert manifest["xnu_required_header_trees_verified"] is True, manifest
+          assert manifest["xnu_sdk_header_tree_diagnostics_recorded"] is True, manifest
           assert manifest["xnu_target_include_paths_verified"] is True, manifest
-          assert manifest["xnu_iboot_include_removed_for_x86_64"] is True, manifest
-          assert manifest["xnu_iboot_header_dependency_files"] == 0, manifest
-          assert manifest["xnu_kernel_header_dependency_files"] >= 0, manifest
+          assert manifest["xnu_generic_sdk_header_paths_removed_for_x86_64"] is True, manifest
+          assert manifest["xnu_generic_sdk_header_dependencies"] == 0, manifest
+          assert manifest["xnu_target_dependency_files"] > 0, manifest
+          assert manifest["xnu_dependency_file_entries"] > 0, manifest
+          assert manifest["xnu_header_dependencies"] > 0, manifest
+          assert manifest["xnu_missing_dependency_files"] == 0, manifest
           PY
       - uses: actions/upload-artifact@v4
         with:
@@ -131,11 +134,14 @@ jobs:
           assert manifest["host_sys_unistd_headers_match"] is True, manifest
           assert manifest["host_sys_unistd_base_sha256"] == manifest["host_sys_unistd_overlay_sha256"], manifest
           assert manifest["host_tool_base_unistd_probe"] == "passed", manifest
-          assert manifest["xnu_required_header_trees_verified"] is True, manifest
+          assert manifest["xnu_sdk_header_tree_diagnostics_recorded"] is True, manifest
           assert manifest["xnu_target_include_paths_verified"] is True, manifest
-          assert manifest["xnu_iboot_include_removed_for_x86_64"] is True, manifest
-          assert manifest["xnu_iboot_header_dependency_files"] == 0, manifest
-          assert manifest["xnu_kernel_header_dependency_files"] >= 0, manifest
+          assert manifest["xnu_generic_sdk_header_paths_removed_for_x86_64"] is True, manifest
+          assert manifest["xnu_generic_sdk_header_dependencies"] == 0, manifest
+          assert manifest["xnu_target_dependency_files"] > 0, manifest
+          assert manifest["xnu_dependency_file_entries"] > 0, manifest
+          assert manifest["xnu_header_dependencies"] > 0, manifest
+          assert manifest["xnu_missing_dependency_files"] == 0, manifest
           PY
       - uses: actions/upload-artifact@v4
         with:

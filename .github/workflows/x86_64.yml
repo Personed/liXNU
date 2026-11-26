@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: x86_64 launcher
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  launcher-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Shell syntax
+        run: bash -n scripts/x86_64/xnulinux-boot.sh tests/x86_64/test-launcher.sh tests/x86_64/tcg-smoke.sh tests/x86_64/test-tcg-smoke.sh
+      - name: Launcher contract tests
+        run: bash tests/x86_64/test-launcher.sh
+      - name: TCG smoke harness tests
+        run: bash tests/x86_64/test-tcg-smoke.sh
+      - name: Whitespace check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git diff --check "$BASE_SHA...$HEAD_SHA"

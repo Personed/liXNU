@@ -167,7 +167,7 @@ class UefiLaunchTest(unittest.TestCase):
                 "--memory", "1024",
                 "--cpus", "1",
             ]
-            guest_name = "xnulinux-uefi-window-test"
+            guest_name = "xnulinux-uefi,window=Test"
             window_titles = {f"QEMU ({guest_name})", f"QEMU ({guest_name}) (0)"}
             if graphical:
                 command += ["--graphical", "--window-title", guest_name]

@@ -122,12 +122,13 @@ run #74 before boot on the same overlap.
 
 PR #50 run #89 subsequently passed its Linux x86-64 TCG workflow through the Darwin console, guest `halt`, module
 unload, Linux power-off, and QEMU success on Ubuntu 24.04.5 x86-64 with QEMU 8.2.2. The nested KVM-backed Intel runner
-reported 15.3 GiB total RAM, below the #36 20 GiB reference screen; the functional run does not establish that all
-guest memory stayed resident or that the host avoided overcommit/swap. Stacked PR #52 run #91 passed the same route
-with pinned guest package `7.0.0-44.44~24.04.1`; its Microsoft-hypervisor Ubuntu runner exposed an AMD EPYC 9V45
-virtual CPU and 16,367,524 kB total RAM, also below the reference screen. This is virtualized AMD-model CI evidence,
-not bare-metal AMD acceptance. Fixed expected package hashes and the current-main #62/#64/#58 synchronization are
-still pending. Merged
+runner OS reported `MemTotal` of 15.3 GiB, below the #36 20 GiB reference screen; outer physical RAM and available RAM
+before artifact preparation were not reported. The functional run does not establish that all guest memory stayed
+resident or that the host avoided overcommit/swap. Stacked PR #52 run #91 passed the same route with pinned guest
+package `7.0.0-44.44~24.04.1`; its Microsoft-hypervisor Ubuntu runner exposed an AMD EPYC 9V45 virtual CPU and
+runner-OS `MemTotal` of 16,367,524 kB, also below the reference screen, while outer physical and pre-artifact
+available RAM were not reported. This is virtualized AMD-model CI evidence, not bare-metal AMD acceptance. Fixed
+expected package hashes and the current-main #62/#64/#58 synchronization are still pending. Merged
 [#62](https://github.com/Personed/xnulinux/pull/62) and follow-up [#64](https://github.com/Personed/xnulinux/pull/64)
 also report local runs with the pinned Ubuntu ARM64 kernel package, Darwin console, guest `halt`, module unload, and
 Linux power-off using the locally relocated collection. Those runs are not the synchronized #50/#52 CI manifest or

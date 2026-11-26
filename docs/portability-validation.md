@@ -66,25 +66,27 @@ Report the profile alongside the stage:
   the #50 relocation: source build, guest preparation, Darwin console
   `XNULINUX_USERLAND_OK`, guest halt, XNU unload, Linux power-off, and QEMU exit all passed
   on Ubuntu 24.04.5 x86-64 with QEMU 8.2.2. Its nested KVM-backed Intel runner reported
-  15.3 GiB total host RAM, below the #36 20 GiB reference screen; functional success does
-  not show that all guest RAM stayed resident or rule out host overcommit/swap. This is
+  runner-OS `MemTotal` of 15.3 GiB, below the #36 20 GiB reference screen; outer physical
+  RAM and available RAM before artifact preparation were not reported. Functional success
+  does not show that all guest RAM stayed resident or rule out host overcommit/swap. This is
   TCG evidence for that workflow, not native-hosted-XNU evidence or the synchronized
   #52/#62/#64/#58 cross-host acceptance. PR #50 is not yet integrated into #36.
   PR #52 run #91 passed the pinned-package build, guest-preparation, and TCG console/halt
   workflow using package `7.0.0-44.44~24.04.1`; modules run #600 remains queued, while
   fixed expected package digests remain pending. Its Microsoft-hypervisor Ubuntu runner
-  exposed an AMD EPYC 9V45 virtual CPU, 4 vCPU, and 16,367,524 kB total RAM (about 15.6
-  GiB), also below the 20 GiB reference screen; this is virtualized AMD-model evidence,
-  not physical AMD acceptance. PR #57 run #92 remains in
+  exposed an AMD EPYC 9V45 virtual CPU, 4 vCPU, and runner-OS `MemTotal` of 16,367,524 kB
+  (about 15.6 GiB), also below the 20 GiB reference screen; outer physical and pre-artifact
+  available RAM were not reported. This is virtualized AMD-model evidence, not physical
+  AMD acceptance. PR #57 run #92 remains in
   progress, with modules run #602 queued; PR #58 run #90 failed, with modules run #597
-  queued; and follow-up PR #64 run #95 is in progress, with modules run #644 queued.
+  queued; and follow-up PR #64 run #95 is in progress, with modules run #644 passed.
   Their launcher checks passed, but these stacked results do not replace an integrated
   #36/#46 console/halt run with the same manifest. PR #46 run #79 built the guest image but failed at the same
   overlap before the host matrix, so it provides no Windows or Intel-macOS boot result.
   The earlier Windows run #71 faulted while loading XNU with an older kernel layout and is
   not a Windows compatibility result. The proposed Windows (16 GB) and Intel-macOS (14 GB)
   runners are below the 16 GiB guest allocation plus host overhead; a larger runner or
-  separately validated profile remains necessary. Status checked 2026-11-26 17:35 UTC.
+  separately validated profile remains necessary. Status checked 2026-11-26 17:38 UTC.
 
   Merged PR #62 and follow-up PR #64 record separate local evidence using the exact #52
   kernel package `7.0.0-44.44~24.04.1`: both ARM64 modules built against its headers, the
@@ -181,10 +183,15 @@ Runtime + version / accelerator:
 TCG Linux stage and result (if applicable; do not label as a macOS result):
 
 TCG full-route host capacity (only when applicable; separate from guest RAM):
-Host physical RAM total / RAM available before artifact preparation / sample time:
-20 GiB total / 4 GiB available reference-screen result / capacity or overcommit caveat:
+Outer physical host RAM total (if known; otherwise state unavailable):
+RAM visible to the OS that runs QEMU (`MemTotal`) / available before artifact preparation / sample time:
+20 GiB total / 4 GiB available reference-screen result using runner-visible RAM / capacity or overcommit caveat:
+Virtualization or nested-hypervisor details / cgroup or VM memory limit:
 QEMU version / host CPU model and core count:
-Pinned guest kernel package / kernel release / .config or manifest SHA-256:
+Pinned guest kernel package/version / APT snapshot / each package `.deb` SHA-256:
+Guest kernel release / `.config` SHA-256 (configuration identity only):
+Guest manifest SHA-256 (artifact-set identity):
+Image, initramfs, modules and collection SHA-256 values from the manifest:
 ARM64 guest assigned RAM / mem= / FKI carve-out / XNU RAM:
 Darwin console command and output / guest-issued halt:
 XNU unload / FKI unload / Linux guest power-off / QEMU exit status:

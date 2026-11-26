@@ -103,7 +103,7 @@ QEMU TCG does not require VT-x/AMD-V. The end-to-end workflow in #36 builds a re
 boots ARM64 Linux on x86-64, and requires a Darwin console command, guest-issued halt, module unload, and Linux power-off.
 Its current head is still awaiting CI; the profile does not establish compatibility or performance on every PC, a GUI,
 networking, or Tahoe/KVM support. The separate Tahoe/KVM path still needs physical desktop and host-integrity checks. See
-[`tests/x86_64/README.md`](tests/x86_64/README.md) and [`docs/portability-validation.md`](docs/portability-validation.md)
+[PR #3](https://github.com/Personed/xnulinux/pull/3) for the Windows, macOS, and Linux QEMU host setup, and [`docs/portability-validation.md`](docs/portability-validation.md) for stage-specific evidence
 for setup and stage-specific evidence.
 
 Shipping it as a hosted service (what is distributed, what a user installs to run Apple's macOS) is in

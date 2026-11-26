@@ -1,0 +1,23 @@
+# SDD ledger — plan: docs/superpowers/plans/2026-11-26-x86_64-qemu-kvm-runtime.md
+
+Ruling: Use a persistent qcow2 overlay backed by the user disk, and default KVM to QEMU `host` CPU passthrough — QEMU documents backing files as preserving the backing image and recommends host passthrough when migration is unnecessary; an Intel-named Haswell profile is not a sound AMD default — cost if wrong: image writes grow in the state directory and host CPU identity/features become visible to macOS, so disk-space and OpenCore CPU patches must be documented.
+
+Task 1: Ruling: Publish OVMF variables and qcow2 overlays through a temporary file while holding a per-state `flock` lock — this prevents partially initialized state and concurrent QEMU writers from corrupting the VM — cost if wrong: stale or interleaved state can make a prepared guest unbootable.
+
+Task 1: Ruling: Select the ARM64 `kernel_neon_begin/end` signature at Linux 6.19, where upstream changed the API to accept `struct user_fpsimd_state *` — the repository's Debian 6.12 cross-build and Ubuntu 7.0 module CI cover opposite sides of the change — cost if wrong: ARM64 module builds fail on one supported kernel-header generation.
+
+Task 1: Ruling: Bind a persistent overlay to a source-image SHA-256 recorded in a private sidecar and refuse unassociated legacy overlays — same-content restores reuse the overlay after an inode/metadata change, changed base contents fail closed, and legacy states cannot silently become empty VMs — cost if wrong: safe source-image replacement requires selecting a new state directory, and hashing may read the full disk.
+
+Task 1: Ruling: Pass the local Apple SMC OSK through a mode-0600 temporary QEMU config instead of process arguments or environment — this reduces exposure through process listings and environment inspection — cost if wrong: QEMU must support `-readconfig` for the Apple SMC device configuration.
+
+Project workflow ruling: The owner explicitly authorized merging PRs once all required automated checks are green, without waiting for human review. Pending or failed required checks still block a merge. This QEMU/KVM path is supplemental and does not replace the active native x86_64 FKI/XNU port.
+
+Pre-flight: Task 1 produces launcher flags and disk/state paths consumed by Task 3 documentation; Task 2 produces the TCG smoke invocation and evidence consumed by Task 3. No direct code interfaces are shared by Tasks 1 and 2. Task 4 consumes Task 3's evidence matrix and real hardware requirements.
+
+Task 1: complete — fake-QEMU tests cover preflight errors, CPU/KVM gating, TCG and KVM arguments, paths with spaces and commas, protected SMC config creation/cleanup, effective state-directory permission checks, a hash-named source image alongside a symlinked state directory, managed-overlay-as-base refusal, source image preservation, same-content restore, changed-base rejection, unassociated legacy overlay refusal, persistent state, and concurrent locking.
+
+Task 2: complete — fake harness tests pass; the disposable Debian 6.12.118 guest booted with QEMU 10.0.13 TCG. This is Linux-only development evidence.
+
+Task 3: in progress — documentation identifies the native x86_64 FKI/XNU port as the target, preserves ARM64 direct hosting, labels QEMU/KVM and TCG as complementary, records PR-comment coordination, and applies the owner's green-check merge authorization. Supplemental TCG status: #36 head `5312b29` passed run #72's Darwin console marker, guest halt, XNU unload, Linux power-off, and QEMU exit checks, but later inspection found overlapping file-backed `__TEXT_EXEC`/`__KLD` ranges. Current head `97727ac` adds a range check and run #74 is rebuilding it; #50 proposes relocating `__KLD`/`__LAST`. PR #46 has not reached its cross-host matrix. The earlier Windows failure used an older guest kernel layout and is not a Windows compatibility result. The proposed 16 GB Windows and 14 GB Intel-macOS runners are below the 16 GiB guest allocation plus host overhead; no lower-memory profile is validated.
+
+Task 4: pending physical Intel and AMD acceptance for this optional guest launcher. These results remain separate from native x86_64 hosted-XNU acceptance.

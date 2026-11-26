@@ -17,6 +17,7 @@
 #include <linux/sched.h>
 #include <linux/smp.h>
 #include <linux/uaccess.h>
+#include <linux/version.h>
 #include <linux/vmalloc.h>
 #include <asm/arch_timer.h>
 #include <asm/barrier.h>
@@ -126,6 +127,10 @@ EXPORT_SYMBOL(fki_region_free);
 
 static __always_inline void keys_read(struct fki_pac_keys *k)
 {
+	if (!system_supports_address_auth()) {
+		memset(k, 0, sizeof(*k));
+		return;
+	}
 	k->ia[0] = read_sysreg_s(SYS_APIAKEYLO_EL1); k->ia[1] = read_sysreg_s(SYS_APIAKEYHI_EL1);
 	k->ib[0] = read_sysreg_s(SYS_APIBKEYLO_EL1); k->ib[1] = read_sysreg_s(SYS_APIBKEYHI_EL1);
 	k->da[0] = read_sysreg_s(SYS_APDAKEYLO_EL1); k->da[1] = read_sysreg_s(SYS_APDAKEYHI_EL1);
@@ -136,6 +141,8 @@ static __always_inline void keys_read(struct fki_pac_keys *k)
 
 static __always_inline void keys_write(const struct fki_pac_keys *k)
 {
+	if (!system_supports_address_auth())
+		return;
 	write_sysreg_s(k->ia[0], SYS_APIAKEYLO_EL1); write_sysreg_s(k->ia[1], SYS_APIAKEYHI_EL1);
 	write_sysreg_s(k->ib[0], SYS_APIBKEYLO_EL1); write_sysreg_s(k->ib[1], SYS_APIBKEYHI_EL1);
 	write_sysreg_s(k->da[0], SYS_APDAKEYLO_EL1); write_sysreg_s(k->da[1], SYS_APDAKEYHI_EL1);
@@ -147,10 +154,16 @@ static __always_inline void keys_write(const struct fki_pac_keys *k)
 
 void fki_fpsimd_forget(void)
 {
-	struct user_fpsimd_state scratch;	/* where Linux would save a kernel-mode state over a context switch: none here */
+	/* Linux 6.19 changed these helpers to take the task's saved kernel FP state. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
+	struct user_fpsimd_state scratch;
 
 	kernel_neon_begin(&scratch);
 	kernel_neon_end(&scratch);
+#else
+	kernel_neon_begin();
+	kernel_neon_end();
+#endif
 }
 
 __attribute__((target("branch-protection=none"))) unsigned long fki_enter(const struct fki_pac_keys *foreign, struct fki_pac_keys *saved)
@@ -176,6 +189,8 @@ EXPORT_SYMBOL(fki_leave);
 
 __attribute__((target("branch-protection=none"))) int fki_pac_swap(const struct fki_pac_keys *load, struct fki_pac_keys *save)
 {
+	if (!system_supports_address_auth())
+		return -EOPNOTSUPP;
 	keys_read(save);
 	keys_write(load);
 	return 0;
@@ -455,14 +470,49 @@ void fki_contig_free(struct fki_region *r)
 }
 EXPORT_SYMBOL(fki_contig_free);
 
+static void *window_l1_created[512];
+
 int fki_window_l1(unsigned long va, unsigned long long **l1_va, fki_u64 *l1_pa)
 {
 	u64 ttbr1 = read_sysreg(ttbr1_el1) & GENMASK_ULL(47, 1);
 	u64 *l0 = phys_to_virt(ttbr1 & ~0xfffULL);
-	u64 e = READ_ONCE(l0[(va >> 39) & 511]);
+	unsigned idx = (va >> 39) & 511;
+	u64 e = READ_ONCE(l0[idx]);
 
-	if ((e & 3) != 3)
-		return -ENOENT;
+	if ((e & 3) != 3) {
+		unsigned long long *page;
+		u64 pa, old;
+
+		if (e)
+			return -EBUSY;
+		page = (void *)get_zeroed_page(GFP_KERNEL);
+		if (!page)
+			return -ENOMEM;
+		pa = virt_to_phys(page);
+		{
+			struct page *root_page = phys_to_page(ttbr1 & ~0xfffULL);
+			u64 *l0_write = vmap(&root_page, 1, VM_MAP, PAGE_KERNEL);
+			if (!l0_write) {
+				free_page((unsigned long)page);
+				return -ENOMEM;
+			}
+			old = cmpxchg(&l0_write[idx], 0, pa | 3);
+			vunmap(l0_write);
+		}
+		if (old) {
+			free_page((unsigned long)page);
+			if ((old & 3) != 3)
+				return -EBUSY;
+			e = old;
+		} else {
+			window_l1_created[idx] = page;
+			e = pa | 3;
+			dsb(ishst);
+			__tlbi(vmalle1is);
+			dsb(ish);
+			isb();
+		}
+	}
 	*l1_pa = e & GENMASK_ULL(47, 12);
 	*l1_va = phys_to_virt(*l1_pa);
 	return 0;
@@ -641,6 +691,44 @@ int fki_arch_init(void)
 
 void fki_arch_exit(void)
 {
+	u64 ttbr1 = read_sysreg(ttbr1_el1) & GENMASK_ULL(47, 1);
+	int i;
+
+	for (i = 0; i < 512; i++) {
+		void *page = window_l1_created[i];
+		u64 pa, desc;
+		u64 *l1;
+		int j, used = 0;
+
+		if (!page)
+			continue;
+		pa = virt_to_phys(page);
+		desc = pa | 3;
+		l1 = page;
+		for (j = 0; j < 512; j++)
+			if (l1[j])
+				used = 1;
+		if (!used) {
+			struct page *root_page = phys_to_page(ttbr1 & ~0xfffULL);
+			u64 *l0_write = vmap(&root_page, 1, VM_MAP, PAGE_KERNEL);
+			u64 old = -1;
+			if (l0_write) {
+				old = cmpxchg(&l0_write[i], desc, 0);
+				vunmap(l0_write);
+			}
+			used = old != desc;
+		}
+		if (!used) {
+			dsb(ishst);
+			__tlbi(vmalle1is);
+			dsb(ish);
+			isb();
+			free_page((unsigned long)page);
+			window_l1_created[i] = NULL;
+		} else {
+			pr_warn("fki: leaving top-window L1 table %d in place\n", i);
+		}
+	}
 	if (resv_pg && !resv_used)
 		p_cma_release(*p_cma_area, resv_pg, resv_cnt);
 	fki_free_alt_stacks();

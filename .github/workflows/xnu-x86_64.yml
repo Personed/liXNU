@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: xnu-x86_64
+on:
+  push:
+  pull_request:
+jobs:
+  build-xnu-x86_64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Kernel headers
+        run: |
+          sudo apt-get update -qq
+          pkg=$(apt-cache search --names-only '^linux-headers-[0-9.]+-[0-9]+-generic$' | awk '{print $1}' | sort -V | tail -1)
+          test -n "$pkg" || { echo "no x86_64 generic kernel headers found" >&2; exit 1; }
+          sudo apt-get install -y -qq "$pkg" >/dev/null
+          echo "KDIR=/usr/src/$pkg" >> "$GITHUB_ENV"
+      - name: Build fail-closed x86_64 XNU module
+        run: make -C "$KDIR" M="$PWD/xnu-ko" modules
+      - name: Compile Mach-O/ADT validation objects
+        run: tests/x86_64/build-xnu-objects.sh "$KDIR"
+      - name: Run synthetic x86_64 Mach-O parser fixtures
+        run: tests/x86_64/test-macho-parser.sh
+      - name: Run read-only Mach-O artifact inspector fixtures
+        run: tests/x86_64/test-macho-inspect.sh
+      - name: Verify module license
+        run: |
+          sudo apt-get install -y -qq busybox-static cpio kmod qemu-system-x86 >/dev/null
+          test "$(modinfo -F license xnu-ko/xnu.ko)" = Proprietary
+      - name: Exercise refusal in a disposable x86_64 Linux VM
+        run: tests/x86_64/test-xnu-stub-vm.sh "$KDIR"

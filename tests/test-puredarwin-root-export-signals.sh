@@ -67,6 +67,7 @@ printf '%s\n' 'Filesystem features: has_journal ext_attr'
 WRAPPER
 cat >"$bin/e2fsck" <<'WRAPPER'
 #!/bin/sh
+if [ "${SIGNAL_BEFORE_MOUNT:-0}" = 1 ]; then kill -TERM "$PPID"; fi
 exit 0
 WRAPPER
 cat >"$bin/mktemp" <<'WRAPPER'
@@ -98,3 +99,27 @@ mount_dir=$(cat "$state/mount-dir")
 [ -z "$(find "$tmp" -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
 
 echo 'PureDarwin root exporter signal cleanup test passed.'
+
+# Also interrupt after loop setup and filesystem validation but before mount.
+# util-linux mountpoint returns 32 for the existing, unmounted directory;
+# cleanup must accept that state and still detach the loop and remove temps.
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted"
+export SIGNAL_BEFORE_MOUNT=1
+set +e
+"$script" "$image" "$output" >/dev/null 2>&1
+status=$?
+set -e
+[ "$status" -eq 143 ] || { echo "Expected pre-mount SIGTERM exit 143; got $status" >&2; exit 1; }
+[ ! -e "$output" ]
+[ ! -e "$state/mounted" ]
+[ ! -e "$state/loop-attached" ]
+[ "$(grep -c '^detached$' "$state/events")" -eq 1 ]
+if grep -q '^unmounted$' "$state/events"; then
+  echo 'pre-mount cleanup attempted to unmount an unmounted directory' >&2
+  exit 1
+fi
+mount_dir=$(cat "$state/mount-dir")
+[ ! -e "$mount_dir" ]
+[ -z "$(find "$tmp" -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
+
+echo 'PureDarwin root exporter pre-mount signal cleanup test passed.'

@@ -16,7 +16,10 @@ jobs:
       - name: Install ext4 and partition tools
         run: sudo apt-get update && sudo apt-get install -y fdisk e2fsprogs
       - name: Check shell syntax
-        run: bash -n scripts/puredarwin-root.sh tests/test-puredarwin-root-export.sh tests/test-puredarwin-root-export-signals.sh
+        run: |
+          for script in scripts/puredarwin-root.sh tests/test-puredarwin-root-export.sh tests/test-puredarwin-root-export-signals.sh; do
+            bash -n "$script"
+          done
       - name: Export a GPT ext4 root image
         run: sudo bash tests/test-puredarwin-root-export.sh
       - name: Clean up after SIGTERM during mount

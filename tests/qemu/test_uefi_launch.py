@@ -49,6 +49,17 @@ class UefiLaunchTest(unittest.TestCase):
         run.assert_called_once()
         qemu.kill.assert_called_once_with()
 
+    @mock.patch("os.name", "nt")
+    @mock.patch("subprocess.run", side_effect=OSError("taskkill could not start"))
+    def test_windows_cleanup_falls_back_when_taskkill_cannot_start(self, run):
+        qemu = mock.Mock(pid=123, poll=mock.Mock(return_value=None))
+        qemu.kill.side_effect = OSError("process already exited")
+
+        UefiLaunchTest().terminate_qemu(qemu)
+
+        run.assert_called_once()
+        qemu.kill.assert_called_once_with()
+
     def firmware_pair(self):
         code_override = os.environ.get("QEMU_FIRMWARE_CODE")
         vars_override = os.environ.get("QEMU_FIRMWARE_VARS")
@@ -168,7 +179,11 @@ class UefiLaunchTest(unittest.TestCase):
                 "--cpus", "1",
             ]
             guest_name = "xnulinux-uefi,window=Test"
-            window_titles = {f"QEMU ({guest_name})", f"QEMU ({guest_name}) (0)"}
+            window_titles = {
+                f"QEMU ({guest_name})",
+                f"QEMU ({guest_name}) (0)",
+                f"QEMU ({guest_name}-0)",
+            }
             if graphical:
                 command += ["--graphical", "--window-title", guest_name]
             qemu = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)

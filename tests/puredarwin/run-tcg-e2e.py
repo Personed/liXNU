@@ -459,6 +459,7 @@ def main() -> int:
         print("QEMU peak RSS: not measured on this platform", flush=True)
     else:
         print(f"QEMU peak RSS: {peak_rss_kib} KiB ({peak_rss_kib / 1048576:.2f} GiB)", flush=True)
+    print(f"QEMU exit status: {returncode}", flush=True)
 
     log = args.serial_log.read_text(encoding="utf-8", errors="replace") if args.serial_log.exists() else ""
     kmsg_prefix = re.compile(r"^\d+,\d+,\d+,[^;]*;(.*)$")

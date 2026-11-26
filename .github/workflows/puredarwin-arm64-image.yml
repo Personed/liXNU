@@ -559,12 +559,25 @@ jobs:
             measured_exit=$(awk -F': ' '/^QEMU exit status:/ {print $2; exit}' "$output")
             if [ -n "$measured_exit" ]; then qemu_exit=$measured_exit; fi
           fi
-          if [ "$BOOT_OUTCOME" = success ]; then
-            result='PASS'
-            qemu_exit='0 (required by the successful end-to-end boot script)'
-          else
-            result='FAIL'
-          fi
+          case "${BOOT_OUTCOME:-unknown}" in
+            success)
+              result='PASS'
+              qemu_exit='0 (required by the successful end-to-end boot script)'
+              ;;
+            failure)
+              result='FAIL'
+              ;;
+            skipped)
+              result='NOT RUN'
+              qemu_exit='not started (boot step skipped)'
+              ;;
+            cancelled)
+              result='CANCELLED'
+              ;;
+            *)
+              result='UNKNOWN'
+              ;;
+          esac
           {
             echo "## Experimental TCG RAM profile: ${PROFILE_ID}"
             echo

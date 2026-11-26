@@ -43,20 +43,24 @@ Report the profile alongside the stage:
   collection and FKI carve-out fields below do not apply to this profile. See
   [`tests/x86_64/README.md`](../tests/x86_64/README.md) for host prerequisites and limits.
 - **x86-64 PC → QEMU TCG → ARM64 Linux → PureDarwin console:** acceptance is tracked
-  in [#36]. The reference job runs on an Ubuntu 24.04 x86-64 runner with QEMU TCG and a
-  16 GiB ARM64 Linux guest using `mem=7G`, 4 KiB pages, PAC at EL1, an 8,156 MiB FKI
-  carve-out at `0x200000000`, and 7,900 MiB for XNU. Record host CPU model/core count,
-  OS/version, total and available physical RAM, QEMU version, guest kernel release, and
-  the complete guest kernel `.config` or its SHA-256; do not combine host RAM with the
-  16 GiB guest allocation in the report. The guest kernel is selected by the #36 workflow
-  from Ubuntu's latest generic ARM64 package and its release/config digest is recorded;
-  pinning the kernel package or repository snapshot is still needed for identical reruns.
-  The first run built the pinned image and HFS+ disk but failed at `kclink` on a
-  `__TEXT_EXEC`/`__PRELINK_INFO` overlap. Follow-up [#44](https://github.com/Personed/xnulinux/pull/44)
-  moves the segment boundary; its full run is pending, so no console or clean-halt pass is
-  recorded yet. Windows and macOS full-console checks are also pending. This profile does
-  not claim a universal minimum, support or practical speed on every PC, a desktop,
-  GPU/networking, or macOS/KVM.
+  in [#36]. The reference job runs on Ubuntu 24.04 x86-64 with QEMU TCG and a 16 GiB
+  ARM64 Linux guest using `mem=7G`, 4 KiB pages, PAC at EL1, an 8,156 MiB FKI carve-out
+  at `0x200000000`, and 7,900 MiB for XNU. Record host CPU model/core count, OS/version,
+  total and available physical RAM, QEMU version, guest kernel release, and the complete
+  guest kernel `.config` or its SHA-256; report host RAM separately from the guest's
+  16 GiB allocation. The workflow currently selects Ubuntu's latest generic ARM64
+  kernel package at run time and records its release/config digest; pinning the package
+  or repository snapshot is still needed for identical reruns. The first run built the
+  pinned image and HFS+ disk but failed at `kclink` on a `__TEXT_EXEC`/`__PRELINK_INFO`
+  overlap. Current head `5312b29` calculates `__PRELINK_INFO` from the kernel Mach-O;
+  run #72 is rebuilding, while review checks possible `__TEXT_EXEC`/`__KLD`/`__LAST`
+  overlap. No Darwin console or clean-halt pass is recorded. The full-console Linux job
+  currently runs only on Ubuntu; cross-host Windows/Intel-macOS jobs are proposed in
+  [#46](https://github.com/Personed/xnulinux/pull/46) and have no pass yet. Its proposed
+  public runners have 16 GB (Windows) and 14 GB (Intel macOS), below guest allocation
+  plus host overhead; larger runners or a validated lower-memory profile are needed
+  before those rows can be supported. This profile does not establish a universal
+  minimum, performance on every PC, a desktop, GPU/networking, or macOS/KVM.
 
 ## First end-to-end check for a new ARM64 FKI host profile
 

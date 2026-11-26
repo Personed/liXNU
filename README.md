@@ -100,13 +100,17 @@ Working on two arm64 Linux setups:
 | Intel/AMD x86_64 with VT-x/AMD-V and QEMU/KVM | User-prepared macOS Tahoe 26 x86_64 | Separate experimental path; physical desktop and host-integrity acceptance remain unverified. |
 
 QEMU TCG does not require VT-x/AMD-V. The reference profile allocates 16 GiB to the ARM64 Linux guest and needs
-additional physical RAM for the host OS and QEMU; report the host's total and available RAM separately from guest RAM.
-The first #36 run built the pinned image and HFS+ disk, but `kclink` failed because `__TEXT_EXEC` overlapped
-`__PRELINK_INFO`. Follow-up #44 moves that boundary and is rebuilding; no PureDarwin console or clean-halt result is
-verified yet. The full console job currently runs on Ubuntu x86-64 only; Windows and macOS still need the same guest
-console and halt checks. The result does not claim a universal minimum, performance on every PC, a GUI, networking, or
-Tahoe/KVM support. See [PR #3](https://github.com/Personed/xnulinux/pull/3) for Windows/macOS/Linux host setup and
+additional physical RAM for the host OS and QEMU; report host total/available RAM separately from guest RAM. The first
+#36 run built the pinned image and HFS+ disk, but `kclink` failed on a `__TEXT_EXEC`/`__PRELINK_INFO` overlap. The
+current #36 head `5312b29` calculates the plist location from the kernel Mach-O; workflow run #72 is rebuilding, and
+review is checking whether `__KLD`/`__LAST` remain overlapped by `__TEXT_EXEC`. There is no PureDarwin console or
+clean-halt pass yet. Full console checks for Windows and Intel macOS are proposed in #46 and remain pending. The
+proposed public runners are reported as 16 GB for Windows and 14 GB for Intel macOS, less than the 16 GiB guest
+allocation plus host overhead; use larger runners or mark those combinations unsupported for this profile if they
+cannot boot. This is not a universal RAM minimum or a performance, GUI, networking, or Tahoe/KVM claim. See
+[PR #3](https://github.com/Personed/xnulinux/pull/3) for Windows/macOS/Linux host setup and
 [`docs/portability-validation.md`](docs/portability-validation.md) for stage-specific evidence.
+
 Shipping it as a hosted service (what is distributed, what a user installs to run Apple's macOS) is in
 [`docs/hosted-service.md`](docs/hosted-service.md).
 

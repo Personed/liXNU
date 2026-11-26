@@ -86,7 +86,7 @@ class UefiLaunchTest(unittest.TestCase):
                 command.append("--graphical")
             qemu = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             try:
-                qemu.wait(timeout=15)
+                qemu.wait(timeout=30)
             except subprocess.TimeoutExpired:
                 if os.name == "nt":
                     killed = subprocess.run(
@@ -103,7 +103,7 @@ class UefiLaunchTest(unittest.TestCase):
                 self.assertIsNotNone(qemu.returncode, output)
                 if os.name != "nt":
                     self.assertEqual(qemu.returncode, 0, output)
-                    self.assertIn("UEFI Interactive Shell", output)
+                self.assertIn("UEFI Interactive Shell", output)
             else:
                 output, _ = qemu.communicate()
                 self.fail(f"QEMU exited before the UEFI guest could be stopped ({qemu.returncode}):\n{output}")

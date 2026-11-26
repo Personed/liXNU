@@ -63,8 +63,12 @@ insmod /fki.ko carve_base=0x70000000 carve_mb=256
 test -c /dev/xnu-hostcall
 test -d /sys/class/net/xnu0
 insmod /fki-carve-probe.ko
-dmesg | grep -Fq 'fki-carve-probe: allocated 16777216 bytes at physical 0x70000000' || {
-  echo "FKI did not allocate from the requested physical carve-out"
+dmesg | grep -Fq 'fki-carve-probe: allocation 1 got 16777216 bytes at physical 0x70000000' || {
+  echo "FKI did not allocate from the requested physical carve-out on pass 1"
+  exit 1
+}
+dmesg | grep -Fq 'fki-carve-probe: allocation 2 got 16777216 bytes at physical 0x70000000' || {
+  echo "FKI did not reuse the freed physical carve-out on pass 2"
   exit 1
 }
 rmmod fki-carve-probe

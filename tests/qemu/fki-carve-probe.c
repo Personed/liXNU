@@ -6,15 +6,25 @@
 static int __init fki_carve_probe_init(void)
 {
 	struct fki_region region = {0};
-	int err = fki_contig_alloc(16UL << 20, &region);
+	unsigned int pass;
 
-	if (err) {
-		pr_err("fki-carve-probe: allocation failed: %d\n", err);
-		return err;
+	for (pass = 1; pass <= 2; pass++) {
+		int err = fki_contig_alloc(16UL << 20, &region);
+
+		if (err) {
+			pr_err("fki-carve-probe: allocation %u failed: %d\n", pass, err);
+			return err;
+		}
+		if (region.size != (16UL << 20) || region.pa != 0x70000000) {
+			pr_err("fki-carve-probe: allocation %u got %#llx bytes at physical %#llx\n",
+			       pass, (unsigned long long)region.size, (unsigned long long)region.pa);
+			fki_contig_free(&region);
+			return -ERANGE;
+		}
+		pr_info("fki-carve-probe: allocation %u got %llu bytes at physical %#llx\n",
+			pass, (unsigned long long)region.size, (unsigned long long)region.pa);
+		fki_contig_free(&region);
 	}
-	pr_info("fki-carve-probe: allocated %llu bytes at physical %#llx\n",
-		(unsigned long long)region.size, (unsigned long long)region.pa);
-	fki_contig_free(&region);
 	return 0;
 }
 

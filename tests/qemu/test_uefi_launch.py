@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -31,9 +32,22 @@ class UefiLaunchTest(unittest.TestCase):
                     )
                 except (OSError, subprocess.TimeoutExpired):
                     if qemu.poll() is None:
-                        qemu.kill()
+                        try:
+                            qemu.kill()
+                        except OSError:
+                            pass
         elif qemu.poll() is None:
             qemu.send_signal(signal.SIGTERM)
+
+    @mock.patch("os.name", "nt")
+    @mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired("taskkill", 10))
+    def test_windows_cleanup_kills_launcher_when_taskkill_times_out(self, run):
+        qemu = mock.Mock(pid=123, poll=mock.Mock(return_value=None))
+
+        UefiLaunchTest().terminate_qemu(qemu)
+
+        run.assert_called_once()
+        qemu.kill.assert_called_once_with()
 
     def firmware_pair(self):
         code_override = os.environ.get("QEMU_FIRMWARE_CODE")
@@ -71,7 +85,7 @@ class UefiLaunchTest(unittest.TestCase):
                     return code, variables
         self.fail("could not find matching AArch64 UEFI images; see `qemu-system-aarch64 -L help`")
 
-    def wait_for_qemu_window(self, qemu):
+    def wait_for_qemu_window(self, qemu, expected_titles):
         deadline = time.monotonic() + 15
         tree_output = ""
         title_pattern = re.compile(r'^\s*(0x[0-9a-fA-F]+)\s+"([^\"]+)"')
@@ -88,7 +102,7 @@ class UefiLaunchTest(unittest.TestCase):
                 tree_output = tree.stdout or ""
                 for line in tree_output.splitlines():
                     match = title_pattern.match(line)
-                    if not match or not re.match(r"^QEMU(?:\b|\s)", match.group(2), re.IGNORECASE):
+                    if not match or match.group(2) not in expected_titles:
                         continue
                     detail = subprocess.run(
                         ["xwininfo", "-id", match.group(1)],
@@ -98,12 +112,25 @@ class UefiLaunchTest(unittest.TestCase):
                         timeout=2,
                         check=False,
                     )
-                    if "Map State: IsViewable" in (detail.stdout or ""):
+                    detail_output = detail.stdout or ""
+                    width = self._window_dimension(detail_output, "Width")
+                    height = self._window_dimension(detail_output, "Height")
+                    if (
+                        detail.returncode == 0
+                        and "Map State: IsViewable" in detail_output
+                        and width >= 640
+                        and height >= 480
+                    ):
                         return True, tree_output
             except (OSError, subprocess.TimeoutExpired) as error:
                 tree_output = f"{tree_output}\nxwininfo failed: {error}"
             time.sleep(0.25)
         return False, tree_output
+
+    @staticmethod
+    def _window_dimension(output, name):
+        match = re.search(rf"^\s*{name}:\s*(\d+)\s*$", output, re.MULTILINE)
+        return int(match.group(1)) if match else 0
 
     def start_guest(self, graphical=False):
         qemu_binary = shutil.which("qemu-system-aarch64")
@@ -140,15 +167,17 @@ class UefiLaunchTest(unittest.TestCase):
                 "--memory", "1024",
                 "--cpus", "1",
             ]
+            guest_name = "xnulinux-uefi,window=Test"
+            window_titles = {f"QEMU ({guest_name})", f"QEMU ({guest_name}) (0)"}
             if graphical:
-                command.append("--graphical")
+                command += ["--graphical", "--window-title", guest_name]
             qemu = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             window_found = False
             window_output = ""
             timed_out = False
             try:
                 if graphical:
-                    window_found, window_output = self.wait_for_qemu_window(qemu)
+                    window_found, window_output = self.wait_for_qemu_window(qemu, window_titles)
                 try:
                     qemu.wait(timeout=30)
                 except subprocess.TimeoutExpired:

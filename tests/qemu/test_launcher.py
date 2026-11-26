@@ -53,6 +53,13 @@ class QemuLauncherTest(unittest.TestCase):
             command = qemu_vm.build_command(self.args)
         self.assertEqual(command[command.index("-display") + 1], "sdl")
 
+    def test_escapes_qemu_name_option_separators(self):
+        self.args.window_title = "Linux, ARM64=Test"
+        with mock.patch.object(qemu_vm.platform, "system", return_value="Linux"), \
+             mock.patch.object(qemu_vm.subprocess, "run", return_value=mock.Mock(stdout="gtk\n")):
+            command = qemu_vm.build_command(self.args)
+        self.assertEqual(command[command.index("-name") + 1], "guest=Linux,, ARM64=Test")
+
     def test_reports_when_no_supported_graphics_backend_is_available(self):
         with mock.patch.object(qemu_vm.platform, "system", return_value="Linux"), \
              mock.patch.object(qemu_vm.subprocess, "run", return_value=mock.Mock(stdout="vnc\n")):

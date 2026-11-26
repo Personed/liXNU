@@ -29,12 +29,15 @@ def drive(path, options):
     return f"file={str(path).replace(',', ',,')},{options}"
 
 
-def choose_display_backend(qemu, host):
-    preferred = {
+def choose_display_backend(qemu, host, requested=None):
+    host_preference = {
         "Linux": ("gtk", "sdl"),
         "Darwin": ("cocoa", "sdl"),
         "Windows": ("sdl",),
-    }.get(host)
+    }
+    if requested is not None and requested not in ("gtk", "sdl", "cocoa"):
+        raise ValueError(f"unsupported graphical backend: {requested}")
+    preferred = (requested,) if requested is not None else host_preference.get(host)
     if preferred is None:
         raise ValueError(f"no graphical QEMU backend configured for {host}")
 
@@ -91,7 +94,9 @@ def build_command(args):
             "-device", "scsi-cd,bus=scsi.0,drive=installer,bootindex=0",
         ]
     if args.graphical:
-        display = choose_display_backend(args.qemu, platform.system())
+        display = choose_display_backend(
+            args.qemu, platform.system(), getattr(args, "display_backend", None)
+        )
         command += [
             "-display", display,
             "-device", "virtio-gpu-pci",
@@ -119,11 +124,17 @@ def main():
     parser.add_argument("--cpus", type=positive_int, default=4, help="guest CPUs (default: 4)")
     parser.add_argument("--ssh-port", type=positive_int, help="forward this host loopback port to guest TCP port 22")
     parser.add_argument("--graphical", action="store_true", help="enable a QEMU window and virtual display")
+    parser.add_argument(
+        "--display-backend", choices=("gtk", "sdl", "cocoa"),
+        help="force a graphical backend instead of selecting the host default",
+    )
     parser.add_argument("--window-title", help="set the QEMU window title (requires --graphical)")
     parser.add_argument("--qemu", default="qemu-system-aarch64", help="path to the QEMU executable")
     args = parser.parse_args()
     if args.window_title and not args.graphical:
         parser.error("--window-title requires --graphical")
+    if args.display_backend and not args.graphical:
+        parser.error("--display-backend requires --graphical")
     if args.ssh_port is not None and args.ssh_port > 65535:
         parser.error("--ssh-port must be between 1 and 65535")
 

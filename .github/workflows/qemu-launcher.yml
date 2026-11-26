@@ -17,10 +17,12 @@ jobs:
           python-version: "3.12"
       - name: Test platform launch options
         run: python tests/qemu/test_launcher.py
-      - name: Test Windows cleanup fallback
-        run: python tests/qemu/test_uefi_launch.py UefiLaunchTest.test_windows_cleanup_kills_launcher_when_taskkill_times_out
-      - name: Test cleanup when taskkill cannot start
-        run: python tests/qemu/test_uefi_launch.py UefiLaunchTest.test_windows_cleanup_falls_back_when_taskkill_cannot_start
+      - name: Test Windows cleanup fallback and process race
+        run: >-
+          python tests/qemu/test_uefi_launch.py
+          UefiLaunchTest.test_windows_cleanup_kills_launcher_when_taskkill_times_out
+          UefiLaunchTest.test_windows_cleanup_handles_process_disappearing_during_kill
+          UefiLaunchTest.test_windows_cleanup_falls_back_when_taskkill_cannot_start
       - name: Install QEMU on Linux
         if: runner.os == 'Linux'
         run: |
@@ -51,8 +53,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes qemu-system-arm qemu-efi-aarch64 qemu-utils qemu-system-gui xvfb x11-utils
-      - name: Start the graphical ARM64 guest through GTK or SDL
+      - name: Start the graphical ARM64 guest through SDL
         env:
           QEMU_TEST_REQUIRED: "1"
           QEMU_TEST_GRAPHICAL: "1"
+          QEMU_TEST_DISPLAY_BACKEND: sdl
         run: xvfb-run -a python tests/qemu/test_uefi_launch.py UefiLaunchTest.test_launcher_starts_graphical_uefi_guest

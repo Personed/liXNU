@@ -64,6 +64,7 @@ class KernelSegmentTests(unittest.TestCase):
     def test_missing_last_marker_requests_relink_and_final_check_rejects_it(self):
         header, segments = self.kernel_segments(kld_size=0x4000, include_last=False)
         segments[0].vmaddr += 0x4000  # main() subtracts 0x4000 to get the kernel header.
+        segments[2].vmaddr = header + 0x38d4000
         with tempfile.TemporaryDirectory() as temporary:
             temp = Path(temporary)
             kernel_path = temp / 'kernel.macho'

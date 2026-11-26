@@ -49,7 +49,8 @@ class UefiLaunchTest(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 qemu.send_signal(signal.SIGTERM)
                 output, _ = qemu.communicate(timeout=10)
-                self.assertEqual(qemu.returncode, -signal.SIGTERM, output)
+                self.assertEqual(qemu.returncode, 0, output)
+                self.assertIn("UEFI Interactive Shell", output)
             else:
                 output, _ = qemu.communicate()
                 self.fail(f"QEMU exited before the UEFI guest could be stopped ({qemu.returncode}):\n{output}")

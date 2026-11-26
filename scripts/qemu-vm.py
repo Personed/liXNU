@@ -55,28 +55,35 @@ def choose_display_backend(qemu, host, requested=None):
         if any(line.strip().split()[0].split(",", 1)[0].rstrip(":") == backend
                for line in available_text.splitlines() if line.strip())
     }
+    headless = (
+        "run headless after removing --graphical, --display-backend, "
+        "and --window-title"
+    )
     if requested is not None and requested not in available:
         choices = ", ".join(sorted(available)) or "none detected"
-        if not available and host != "Windows":
+        if host == "Windows" and "sdl" in available:
             recovery = (
-                "install a QEMU build with GTK, SDL, or Cocoa support, "
-                "or omit --graphical"
+                "use --display-backend sdl or omit --display-backend to use "
+                f"the Windows default; {headless}"
             )
-        elif host == "Windows" and requested == "sdl" and "sdl" not in available:
+        elif host == "Windows":
             alternative = (
                 f"; try an available backend with --display-backend ({choices}) "
-                "if it is supported by this QEMU build"
+                "if supported by this QEMU build"
                 if available else ""
             )
             recovery = (
-                "Windows graphical mode requires SDL; install QEMU with SDL support"
-                f"{alternative} or omit --graphical"
+                "Windows graphical mode requires SDL for its default; install "
+                f"QEMU with SDL support{alternative}; {headless}"
+            )
+        elif available:
+            recovery = (
+                f"select an available backend with --display-backend ({choices}) "
+                f"or omit --display-backend to use the host default; {headless}"
             )
         else:
-            recovery = (
-                f"select an available backend with --display-backend ({choices}), "
-                "or omit --display-backend to use the host default"
-            )
+            supported = "GTK or SDL" if host == "Linux" else "Cocoa or SDL"
+            recovery = f"install a QEMU build with {supported} support, or {headless}"
         raise ValueError(
             f"QEMU does not provide the requested display backend {requested!r} "
             f"(available: {choices}); {recovery}"
@@ -91,16 +98,17 @@ def choose_display_backend(qemu, host, requested=None):
         raise ValueError(
             f"QEMU has no graphical backend suitable for Windows (available: {choices}); "
             "Windows graphical mode requires SDL; install QEMU with SDL support"
-            f"{alternative} or omit --graphical"
+            f"{alternative}; {headless}"
         )
     for backend in preferred:
         if backend in available:
             return backend
 
     choices = ", ".join(sorted(available)) or "none detected"
+    supported = "GTK or SDL" if host == "Linux" else "Cocoa or SDL"
     raise ValueError(
         f"QEMU has no graphical backend suitable for {host} (available: {choices}); "
-        "install a QEMU build with GTK, SDL, or Cocoa support"
+        f"install a QEMU build with {supported} support, or {headless}"
     )
 
 

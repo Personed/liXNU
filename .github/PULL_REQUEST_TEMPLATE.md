@@ -18,6 +18,6 @@
 
 - [ ] ARM64 behavior remains covered when shared module code changes.
 - [ ] No Apple system images, firmware, or local SMC OSK values are included.
-- [ ] TCG evidence is labeled as development-only.
+- [ ] The x86-64 QEMU TCG → ARM64 Linux → PureDarwin console route is identified as the active portability target; the macOS/QEMU/KVM experiment is labeled separately.
 - [ ] Every related agent has visible scope, interface, and result updates in PR comments.
-- [ ] Merge when automated checks are green without waiting for human review; use GitHub auto-merge when repository settings permit it.
+- [ ] Required automated checks are green; merge or auto-merge has explicit user authorization.

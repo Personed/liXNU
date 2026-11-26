@@ -128,7 +128,7 @@ class TestCliAndInstaller(unittest.TestCase):
             fixture_installer = scripts / "install.sh"
             shutil.copy2(INSTALLER, fixture_installer)
             fixture_cli = scripts / "xnulinux"
-            fixture_cli.write_text("#!/bin/sh\nprintf 'fixture-doctor-ok\\n'\n", encoding="utf-8")
+            fixture_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             fixture_cli.chmod(0o755)
 
             prefix = pathlib.Path(tmp) / "system-prefix"
@@ -153,7 +153,7 @@ class TestCliAndInstaller(unittest.TestCase):
             fixture_installer = scripts / "install.sh"
             shutil.copy2(INSTALLER, fixture_installer)
             fixture_cli = scripts / "xnulinux"
-            fixture_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fixture_cli.write_text("#!/bin/sh\nprintf 'fixture-doctor-ok\\n'\n", encoding="utf-8")
             fixture_cli.chmod(0o755)
 
             prefix = public_root / "system-prefix"

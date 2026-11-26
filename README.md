@@ -107,10 +107,12 @@ At head `5312b29`, [run #72](https://github.com/Personed/xnulinux/actions/runs/4
 prepared the guest, and passed the full console command, guest halt, XNU unload, Linux power-off, and QEMU exit checks
 on Ubuntu 24.04 x86-64. A later Mach-O inspection found overlapping `__TEXT_EXEC`/`__KLD` ranges. Current #36 head
 `97727ac` adds a file-backed range check; run #74 failed before boot on that overlap, so run #72 does not validate
-the current layout. PR #50 proposes relocating `__KLD`/`__LAST` and relinking; its current run #86 is queued. PR #52
-pins the ARM64 guest kernel and records input hashes; run #81 is in progress. Cross-host PR #46 run #79 is still
-building the PureDarwin disk and is based on the pre-relink/pre-pin head, so it cannot count as current-head
-acceptance. PR #58 adds guest-input hash checks and reliable per-host preflight reports; its run #85 is queued.
+the current layout. PR #50 proposes relocating `__KLD`/`__LAST` and relinking; run #86 is rebuilding the pinned
+guest image. PR #52 pins the ARM64 guest kernel and records input hashes; run #81 built that image successfully and
+is queued to build the PureDarwin disk/collection. Cross-host PR #46 run #79 also built the guest image and is
+building the disk/collection, but it is based on the pre-relocation/pre-pin head and cannot count as current-head
+acceptance. PR #58 adds guest-input hash checks and reliable per-host preflight reports; run #85 is building its
+guest image.
 After #50/#52/#58 are synchronized, rerun the full console/halt route and the host matrix with identical guest hashes.
 Its public runners are reported as 16 GB for Windows and 14 GB for Intel macOS, less than the 16 GiB guest allocation
 plus host overhead; use larger runners or mark those combinations unsupported for this profile if they cannot boot.

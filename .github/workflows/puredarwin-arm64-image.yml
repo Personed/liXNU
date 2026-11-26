@@ -48,7 +48,7 @@ jobs:
               echo "- Artifact file: \`${image_name}\`"
               echo "- Size: ${image_bytes} bytes"
               echo "- SHA-256: \`${image_sha256}\`"
-              echo '- Validation stage: pinned image build and checksum only; xnulinux/FKI boot is not tested by this workflow.'
+              echo '- Validation stage: pinned build input and artifact checksum integrity only; byte-for-byte rebuild reproducibility and xnulinux/FKI boot are not tested by this workflow.'
             } >> "$GITHUB_STEP_SUMMARY"
           )
       - name: Upload the image and checksum

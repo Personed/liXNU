@@ -8,6 +8,15 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 
+SUCCESS_MARKER = "xnulinux QEMU smoke test passed"
+
+
+def guest_reported_success(log):
+    """Accept the unique success marker even if shutdown text shares its line."""
+    return log.count(SUCCESS_MARKER) == 1 and any(
+        line.startswith(SUCCESS_MARKER) for line in log.splitlines()
+    )
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -48,7 +57,7 @@ def main():
 
     if result.returncode:
         return result.returncode
-    if "xnulinux QEMU smoke test passed" not in log.splitlines():
+    if not guest_reported_success(log):
         print("Guest did not report a successful smoke test", file=sys.stderr)
         return 1
     return 0

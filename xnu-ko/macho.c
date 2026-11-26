@@ -7,6 +7,9 @@
 #define EOPNOTSUPP 95
 #endif
 #include "macho.h"
+#if defined(__x86_64__)
+#include "macho_parse_x86_64.h"
+#endif
 
 static int lc_bounds_ok(const unsigned char *base, unsigned long size,
 			u32_t ncmds, u32_t sizeofcmds)
@@ -53,6 +56,18 @@ static int cstr_bounded_eq(const char *s, unsigned long max_len, const char *wan
 
 int macho_load(struct xnu_image *img, const void *file, unsigned long size, unsigned long extra)
 {
+#if defined(__x86_64__)
+	struct xnu_macho_x86_64_info parsed;
+	int err;
+
+	/* Parse the x86 ABI, but keep loading disabled until the execution boundary exists. */
+	(void)img;
+	(void)extra;
+	err = xnu_macho_x86_64_parse(file, size, &parsed);
+	if (err)
+		return err;
+	return -EOPNOTSUPP;
+#else
 	const struct mh64 *mh = file;
 	int err;
 	(void)err;
@@ -146,6 +161,7 @@ int macho_load(struct xnu_image *img, const void *file, unsigned long size, unsi
 		return err;
 	img->slide = (u64_t)img->region.va - img->vmlow;
 	return macho_copy(img, img->region.va);
+#endif
 }
 
 /* Copy the segments to dst, which is where vmlow will live. */

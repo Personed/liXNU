@@ -43,7 +43,7 @@ rc=${PIPESTATUS[0]}
 set -e
 if [ "$rc" -ne 0 ]; then
   echo "kernel rebuild failed ($rc); showing the bounded build logs that explain missing compiler recipes"
-  for log in out/k27/obj/build-bootstrap.log out/k27/obj/build-raw.log; do
+  for log in out/k27/build-bootstrap.log out/k27/build-raw.log; do
     if [ -f "$log" ]; then
       echo "===== $log (last 120 lines) ====="
       tail -120 "$log"

@@ -151,8 +151,10 @@ jobs:
           logs="$RUNNER_TEMP/puredarwin-xnu-build-diagnostics"
           mkdir -p "$logs"
           dvm="$HOME/w/dvm/out/k27"
-          for path in "$dvm/xnulinux-rebuild.log" "$dvm/obj/build-bootstrap.log" "$dvm/obj/build-raw.log"; do
-            [ -f "$path" ] && cp "$path" "$logs/"
+          for path in "$dvm/xnulinux-rebuild.log" "$dvm/build-bootstrap.log" "$dvm/build-raw.log"; do
+            if [ -f "$path" ]; then
+              cp "$path" "$logs/"
+            fi
           done
       - name: Retain XNU build logs
         if: failure()

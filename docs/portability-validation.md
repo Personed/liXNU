@@ -72,30 +72,42 @@ Report the profile alongside the stage:
   TCG evidence for that workflow, not native-hosted-XNU evidence or the synchronized
   #52/#62/#64/#58 cross-host acceptance. PR #50 is not yet integrated into #36.
   PR #52 run #91 passed the pinned-package build, guest-preparation, and TCG console/halt
-  workflow using package `7.0.0-44.44~24.04.1`; modules run #600 remains queued, while
-  fixed expected package digests remain pending. Its Microsoft-hypervisor Ubuntu runner
+  workflow using package `7.0.0-44.44~24.04.1`. Its Microsoft-hypervisor Ubuntu runner
   exposed an AMD EPYC 9V45 virtual CPU, 4 vCPU, and runner-OS `MemTotal` of 16,367,524 kB
   (about 15.6 GiB), also below the 20 GiB reference screen; outer physical and pre-artifact
   available RAM were not reported. This is virtualized AMD-model evidence, not physical
-  AMD acceptance. PR #57 run #92 remains in
-  progress, with modules run #602 queued; PR #58 run #90 failed, with modules run #597
-  queued; and follow-up PR #64 run #95 is in progress, with modules run #644 passed.
-  Their launcher checks passed, but these stacked results do not replace an integrated
-  #36/#46 console/halt run with the same manifest. PR #46 run #79 built the guest image but failed at the same
-  overlap before the host matrix, so it provides no Windows or Intel-macOS boot result.
+  AMD acceptance. Current #52 head `c360e99` includes #64; modules run #679 and launcher
+  run #282 passed, while image run #104 is in progress. Candidate package hashes from run
+  #91 still need comparison with #104 before adding fixed expected-digest checks. PR #57
+  head `2a4a23f` image run #108 is in progress, with modules run #697
+  queued and its launcher check passed. PR #58 image run #90 failed, with modules run #597
+  queued; neither result provides a current cross-host acceptance pass. Follow-up PR #64's
+  synchronized head `5570fae` passed run #95 on its #52 branch: all four jobs passed for the
+  pinned image, real PureDarwin disk/HFS+ and collection build, ARM64 guest preparation, and
+  x86-64 TCG boot. The Ubuntu 24.04.5 x86-64 AWS-hosted virtual runner reported 4 CPUs,
+  `MemTotal: 16078424 kB`, and QEMU 8.2.2; the profile used 16 GiB guest RAM, Linux `mem=7G`,
+  and an 8,156 MiB FKI carve-out at `0x200000000`. The console recorded `Darwin`,
+  `XNULINUX_USERLAND_OK`, guest halt, XNU unload, and Linux power-off; the checked boot script
+  exited 0. Run [#95](https://github.com/Personed/xnulinux/actions/runs/45867603529) validates
+  that synchronized #52/#64 branch on this virtual runner only. PR #64 merged into the #52
+  branch as `c360e99`; this is not main-integrated or cross-host matrix acceptance. These
+  stacked results do not replace a current #36/#46 console/halt run with the same manifest.
+  PR #46 run #79 failed in `kclink` on the same overlap before guest preparation or the host
+  matrix, so it provides no Windows or Intel-macOS boot result.
   The earlier Windows run #71 faulted while loading XNU with an older kernel layout and is
   not a Windows compatibility result. The proposed Windows (16 GB) and Intel-macOS (14 GB)
   runners are below the 16 GiB guest allocation plus host overhead; a larger runner or
-  separately validated profile remains necessary. Status checked 2026-11-26 17:38 UTC.
+  separately validated profile remains necessary. Status checked 2026-11-26 18:37 UTC.
 
-  Merged PR #62 and follow-up PR #64 record separate local evidence using the exact #52
-  kernel package `7.0.0-44.44~24.04.1`: both ARM64 modules built against its headers, the
-  prepared guest inputs ran under QEMU TCG, and the harness reached the Darwin console,
-  accepted guest `halt`, unloaded `xnu.ko` and `fki.ko`, and powered Linux off. These runs
-  used a locally relocated collection checked with #50's `--check`, not the synchronized
-  #50/#52 CI manifest or cross-host matrix. #62's modules run #613 passed Linux 6.12 and
-  ARM64 smoke jobs, while its x86-64 FKI, SPDX, and QEMU matrix jobs were cancelled. This
-  is useful local TCG evidence, not native x86_64 or integrated #36/#46 acceptance.
+Merged PR #62 records separate local evidence using the exact #52 kernel package
+`7.0.0-44.44~24.04.1`: both ARM64 modules built against its headers, the prepared guest
+inputs ran under QEMU TCG, and the harness reached the Darwin console, accepted guest
+`halt`, unloaded `xnu.ko` and `fki.ko`, and powered Linux off. Those runs used a locally
+relocated collection checked with #50's `--check`, not the synchronized #50/#52 CI
+manifest or cross-host matrix. #62's modules run #613 passed Linux 6.12 and ARM64 smoke
+jobs, while its x86-64 FKI, SPDX, and QEMU matrix jobs were cancelled. PR #64's separate
+run #95 CI result is described above; it is on the #52 branch and has not been integrated
+into main. These are useful complementary TCG results, not native x86_64 acceptance.
 - **Native x86-64 hosted XNU on Intel/AMD Linux:** this is the project target for Tahoe 26.
   The x86_64 FKI host-backend build merged in [#48](https://github.com/Personed/xnulinux/pull/48) and passed compilation while preserving ARM64; it advertises no XNU execution capability.
   The fail-closed x86_64 XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47) still provides no execution support.

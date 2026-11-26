@@ -38,7 +38,7 @@ Project work is coordinated continuously through pull request comments. For **ev
 
 ## Merge policy
 
-The project owner explicitly authorized merging pull requests as soon as all required automated checks are green; do not wait for a human review. Never merge while a required check is pending or failed. Use auto-merge when it is available and enforces the checks; otherwise monitor the checks and merge directly once they are green. If a repository rule independently requires human approval and blocks a merge, report the exact restriction and continue other work; do not disable repository protections without separate authorization.
+The project owner explicitly authorized direct merging as soon as all required checks for the current head are green and GitHub reports the PR mergeable; do not wait for human review. Never merge while a required check is pending or failed. If a repository protection actually blocks the merge by requiring human approval, record the exact restriction and continue independent work. Do not disable repository protections.
 
 Do not leave parallel agents to infer ownership from the code. Use the PR comments to divide overlapping work and confirm interface changes. Continue independent work while waiting on a reply; record unresolved dependencies in the PR.
 

@@ -98,12 +98,25 @@ class UefiLaunchTest(unittest.TestCase):
                         timeout=2,
                         check=False,
                     )
-                    if "Map State: IsViewable" in (detail.stdout or ""):
+                    detail_output = detail.stdout or ""
+                    width = self._window_dimension(detail_output, "Width")
+                    height = self._window_dimension(detail_output, "Height")
+                    if (
+                        detail.returncode == 0
+                        and "Map State: IsViewable" in detail_output
+                        and width >= 640
+                        and height >= 480
+                    ):
                         return True, tree_output
             except (OSError, subprocess.TimeoutExpired) as error:
                 tree_output = f"{tree_output}\nxwininfo failed: {error}"
             time.sleep(0.25)
         return False, tree_output
+
+    @staticmethod
+    def _window_dimension(output, name):
+        match = re.search(rf"^\s*{name}:\s*(\d+)\s*$", output, re.MULTILINE)
+        return int(match.group(1)) if match else 0
 
     def start_guest(self, graphical=False):
         qemu_binary = shutil.which("qemu-system-aarch64")

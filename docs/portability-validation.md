@@ -68,11 +68,12 @@ Report the profile alongside the stage:
   head `97727ac` adds a file-backed range check; run #74 failed in `kclink` before boot because file-backed
   `__TEXT_EXEC` and `__KLD` overlap at `0x3854000-0x3858000`, so run #72 does not validate that changed head. PR #50
   proposes relocating `__KLD`/`__LAST` and relinking; its new run #86 is rebuilding the pinned guest image. PR #52's
-  run #81 built its pinned guest image successfully and has the PureDarwin disk/collection job queued, but #52 is
+  run #81 built its pinned guest image and is building the PureDarwin disk/collection, but #52 is
   still based on an older #50 head and needs a rebase before its results validate the canonical relink. Cross-host
   Windows and Intel-macOS checks are proposed in [#46](https://github.com/Personed/xnulinux/pull/46); its run #79
-  built the guest image and is building the PureDarwin disk/collection, but is based on the pre-relocation, pre-pin
-  head. PR #58 adds pre-boot guest image/initramfs hash verification and host-only reports for early failures; its
+  built the guest image, then failed the XNU source build in `kclink` on the same file-backed `__TEXT_EXEC`/`__KLD`
+  overlap. Guest preparation and host boots were skipped. It is based on the pre-relocation, pre-pin head and gives
+  no host acceptance result. PR #58 adds pre-boot guest image/initramfs hash verification and host-only reports for early failures; its
   run #85 is building the guest image. Review still requests a mocked macOS preflight regression and accurate
   ordering of the Python RAM measurement before artifact hash validation and QEMU. After these changes are
   synchronized, repeat the

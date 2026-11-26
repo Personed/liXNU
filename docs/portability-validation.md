@@ -166,15 +166,16 @@ A successful run must reach the PureDarwin command marker, accept guest-issued `
 
 ```text
 Repo commit(s) / PR(s):
-Profile (ARM64 hosted XNU, native x86_64 hosted XNU, supplemental QEMU/KVM guest, or TCG test):
-Outer machine + CPU / OS + version:
+Profile (direct ARM64 hosted XNU, active x86-64 PC → QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin, separate native x86_64/Tahoe experiment, or separate QEMU/KVM macOS guest):
+Evidence type (physical PC / hosted CI runner / other VM):
+Machine that runs QEMU (CPU / OS + version; if applicable):
 Runtime + version / accelerator:
 TCG Linux stage and result (if applicable; do not label as a macOS result):
 
 TCG full-route host capacity (only when applicable; separate from guest RAM):
 Outer physical host RAM total (if known; otherwise state unavailable):
 RAM visible to the OS that runs QEMU (`MemTotal`) / available before artifact preparation / sample time:
-20 GiB total / 4 GiB available reference-screen result using runner-visible RAM / capacity or overcommit caveat:
+Historical #36 16 GiB profile only: 20 GiB total / 4 GiB available operational screen using runner-visible RAM (not a physical minimum):
 Virtualization or nested-hypervisor details / cgroup or VM memory limit:
 QEMU version / host CPU model and core count:
 Pinned guest kernel package/version / APT snapshot / each package `.deb` SHA-256:

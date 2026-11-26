@@ -13,7 +13,6 @@ import sys
 REQUIRED = (
     "fki: 8156 MiB at 0x200000000 for the foreign kernel's DRAM",
     "xnu: contiguous DRAM at phys 0x",
-    "fki: darwin console: Darwin",
     "fki: darwin console: XNULINUX_USERLAND_OK",
     "xnu: the hosted system halted",
     "XNULINUX_E2E_PUREDARWIN_USERLAND_OK",
@@ -88,6 +87,9 @@ def main() -> int:
 
     log = args.serial_log.read_text(encoding="utf-8", errors="replace") if args.serial_log.exists() else ""
     missing = [marker for marker in REQUIRED if marker not in log]
+    darwin_line = "fki: darwin console: Darwin"
+    if darwin_line not in log.splitlines():
+        missing.append("exact Darwin uname output line")
     if not re.search(r"xnu: contiguous DRAM at phys 0x0*200000000\b", log):
         missing.append("XNU contiguous DRAM at physical 0x200000000")
     if result.returncode != 0 or missing:
@@ -99,7 +101,7 @@ def main() -> int:
         return 1
 
     for line in log.splitlines():
-        if any(marker in line for marker in REQUIRED):
+        if line == darwin_line or any(marker in line for marker in REQUIRED):
             print(line)
     print("PureDarwin ARM64 console boot and guest-requested halt passed under QEMU TCG.")
     return 0

@@ -12,9 +12,13 @@ if [ ! -x /usr/lib/llvm-21/bin/clang ]; then
   echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" | sudo tee /etc/apt/sources.list.d/llvm21.list
   sudo apt-get update -qq
 fi
+host_header_packages=()
+if [ "${INSTALL_HOST_HEADERS:-1}" != 0 ]; then
+  host_header_packages+=("linux-headers-$(uname -r)")
+fi
 sudo -E apt-get install -y -qq build-essential autoconf automake libtool pkg-config git python3 python3-yaml python3-packaging \
   cmake ninja-build meson bison flex m4 unifdef tcsh pax libbsd-dev uuid-dev libssl-dev zlib1g-dev cpio xz-utils zstd llvm-21 clang-21 lld-21 \
-  libmd-dev 7zip p7zip-full >/dev/null
+  libmd-dev 7zip p7zip-full "${host_header_packages[@]}" >/dev/null
 mkdir -p "$(dirname "$DVM")"
 DVM=$(cd "$(dirname "$DVM")" && pwd)/$(basename "$DVM")
 if [ ! -e "$DVM" ]; then

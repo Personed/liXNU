@@ -52,7 +52,7 @@ echo 'XNULINUX_E2E: loading source-built XNU and PureDarwin collection' >/dev/co
 insmod /xnu.ko mode=3 cpus=1 ram_mb=7900 image=xnu/kc-free.bin disk=/dev/vda \
   root_uuid="$ROOT_UUID" boot_uuid="$BOOT_UUID" preboot_uuid="$BOOT_UUID" \
   console_in=/tmp/console-in keystore=/tmp/keystore \
-  bootargs='amfi_get_out_of_my_way=1 lp-sip0=2050 bt-transport-override=10' \
+  bootargs='"amfi_get_out_of_my_way=1 lp-sip0=2050 bt-transport-override=10"' \
   >/tmp/xnu-insmod.log 2>&1 &
 xnu_pid=$!
 
@@ -83,7 +83,7 @@ for _ in $(seq 1 300); do
 done
 [ "$ended" = 1 ] || fail 'guest halt did not return from xnu.ko within five minutes'
 wait "$xnu_pid" || fail 'xnu.ko failed after the guest halt'
-grep -Fq 'fki: darwin console: Darwin' /tmp/kernel.log || fail 'Darwin uname output was not observed'
+grep -Fxq 'fki: darwin console: Darwin' /tmp/kernel.log || fail 'Darwin uname output was not exactly observed'
 grep -Fq 'fki: darwin console: XNULINUX_USERLAND_OK' /tmp/kernel.log || fail 'Darwin userspace marker was not observed'
 grep -Fq 'xnu: the hosted system halted' /tmp/kernel.log || fail 'host issued no guest halt confirmation'
 

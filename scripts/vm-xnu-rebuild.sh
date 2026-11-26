@@ -36,6 +36,7 @@ rm -rf $T/osfmk/corecrypto $T/osfmk/arm64/corecrypto
 mirror "$P"/corecrypto/include/corecrypto $T/EXTERNAL_HEADERS/corecrypto
 mirror "$P"/corecrypto/kernel $T/osfmk/xnulinux_crypto
 t=$SECONDS; JOBS="${JOBS:-12}" bash k27/build-kernel27.sh 2>&1 | tail -15; echo "kernel: $((SECONDS - t)) s"
+sudo install -d -m 0755 /lib/firmware/xnu
 if [ -e out/kc/kc27.bin ]; then
   cp k27/segaddrs.sh /tmp/segaddrs.before
   python3 k27/kc27-layout.py out/kc/kc27.bin out/k27/kernel-k27.macho --write k27/segaddrs.sh | tail -2
@@ -43,6 +44,8 @@ if [ -e out/kc/kc27.bin ]; then
     echo "kernel slots moved: linking the kernel again"
     JOBS="${JOBS:-12}" bash k27/build-kernel27.sh 2>&1 | tail -3
   fi
+fi
+if [ -e out/kc/kc27.bin ] || [ "${BUILD_NATIVE_KEXTS:-0}" = 1 ]; then
   # xnulinux's own kexts (kexts/*/NAME.json + NAME.cpp), built against the k27 kernel's objects and linked into the collection
   NATIVE=()
   # IONetworkingFamily's kernel headers (IOKit/network/*.h) for XnuEthernet: Apple's open source IONetworkingFamily-188 (APSL,
@@ -66,18 +69,20 @@ if [ -e out/kc/kc27.bin ]; then
     NATIVE+=("$j")
   done
   printf '%s\n' "${NATIVE[@]}" > out/k27/natives.txt	# the kexts of ours in this collection, for scripts/apple-kc/package.sh
-  # the collection (scripts/kclink): the kernel, xnulinux's kexts, and the Apple kexts of scripts/apple-kc/keep.txt from
-  # macOS 27.2's kernelcache
-  t=$SECONDS
-  python3 "$POC"/scripts/kclink/kclink.py out/kc/kc27.bin out/k27/kernel-k27.macho out/k27/kc-k27.bin \
-    --keep $(grep -v '^#' "$POC"/scripts/apple-kc/keep.txt) --native "${NATIVE[@]}" \
-    --rebind $(grep -v '^#' "$POC"/scripts/apple-kc/rebind.txt) > out/k27/kclink.log 2>&1 ||
-    { tail -5 out/k27/kclink.log; echo "kclink failed: out/k27/kclink.log"; exit 1; }
-  grep -E '^wrote|vtable check' out/k27/kclink.log; echo "collection: $((SECONDS - t)) s"
-  # AMFI of the collection's macOS expects the code-signature platform version of that build; the system disk's binaries
-  # carry their own (macOS 27.0.1: 26 where 27.2's AMFI expects 27)
-  python3 "$POC"/scripts/kc-amfi-platform.py out/k27/kc-k27.bin ${AMFI_PLATFORM:-26}
-  sudo cp out/k27/kc-k27.bin /lib/firmware/xnu/kc.bin
+  if [ -e out/kc/kc27.bin ]; then
+    # the collection (scripts/kclink): the kernel, xnulinux's kexts, and the Apple kexts of scripts/apple-kc/keep.txt from
+    # macOS 27.2's kernelcache
+    t=$SECONDS
+    python3 "$POC"/scripts/kclink/kclink.py out/kc/kc27.bin out/k27/kernel-k27.macho out/k27/kc-k27.bin \
+      --keep $(grep -v '^#' "$POC"/scripts/apple-kc/keep.txt) --native "${NATIVE[@]}" \
+      --rebind $(grep -v '^#' "$POC"/scripts/apple-kc/rebind.txt) > out/k27/kclink.log 2>&1 ||
+      { tail -5 out/k27/kclink.log; echo "kclink failed: out/k27/kclink.log"; exit 1; }
+    grep -E '^wrote|vtable check' out/k27/kclink.log; echo "collection: $((SECONDS - t)) s"
+    # AMFI of the collection's macOS expects the code-signature platform version of that build; the system disk's binaries
+    # carry their own (macOS 27.0.1: 26 where 27.2's AMFI expects 27)
+    python3 "$POC"/scripts/kc-amfi-platform.py out/k27/kc-k27.bin ${AMFI_PLATFORM:-26}
+    sudo cp out/k27/kc-k27.bin /lib/firmware/xnu/kc.bin
+  fi
 fi
 ls -la out/k27/kernel-k27.macho
 sudo cp out/k27/kernel-k27.macho /lib/firmware/xnu/kernel.macho

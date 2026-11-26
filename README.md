@@ -117,6 +117,17 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 - A macOS 27 installation (an Apple Virtualization VM disk) of your own. **No Apple binaries are in this repository or
   distributed by it**: the kexts Apple ships, the macOS system disk and its trust cache come from your own installation.
 
+### ARM64 guest on an Intel/AMD PC
+
+- An Intel/AMD x86-64 host with QEMU's AArch64 system emulator (`qemu-system-aarch64`) and ARM64 UEFI firmware. QEMU TCG
+  does not need VT-x or AMD-V. QEMU 10 or newer is used by the documented launcher profile.
+- For the full PureDarwin console profile, allocate 16 GiB to the guest and keep additional physical RAM available for
+  the host. The guest Linux kernel must use 4 KiB pages, expose ARM pointer authentication, and run at EL1. The profile
+  reserves 8,156 MiB for FKI and 7,900 MiB for XNU.
+- The end-to-end Actions profile currently runs on Ubuntu 24.04 x86-64. Windows and macOS hosts have UEFI launcher
+  coverage; the complete PureDarwin boot on those host operating systems is not yet validated. TCG may be too slow for
+  practical desktop use, and this profile does not establish graphics, networking, or macOS support.
+
 ### x86_64 QEMU/KVM path
 
 - An Intel or AMD x86_64 Linux PC with VT-x or AMD-V, `/dev/kvm` accessible to the running user, and SSE4.2, AVX, FMA,

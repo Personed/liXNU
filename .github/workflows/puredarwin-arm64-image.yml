@@ -4,14 +4,24 @@ on:
   pull_request:
     paths:
       - '.github/workflows/puredarwin-arm64-image.yml'
+      - 'README.md'
       - 'docs/free-kc.md'
       - 'docs/qemu.md'
       - 'docs/portability-validation.md'
       - 'scripts/free-kc/**'
       - 'scripts/vm-xnu-build.sh'
       - 'scripts/vm-xnu-rebuild.sh'
+      - 'scripts/xnulinux-boot.sh'
       - 'scripts/puredarwin-root.sh'
       - 'scripts/mk-puredarwin-disk.sh'
+      - 'scripts/kclink/**'
+      - 'scripts/kc-amfi-platform.py'
+      - 'scripts/apple-kc/keep.txt'
+      - 'scripts/apple-kc/rebind.txt'
+      - 'fki-ko/**'
+      - 'xnu-ko/**'
+      - 'xnu-patches/**'
+      - 'kexts/**'
       - 'tests/puredarwin/**'
   workflow_dispatch:
 permissions:
@@ -111,6 +121,8 @@ jobs:
       - name: Build the source XNU kernel and free collection
         env:
           JOBS: "2"
+          INSTALL_HOST_HEADERS: "0"
+          BUILD_NATIVE_KEXTS: "1"
           DVM_REV: 524d27bf57ae92375aa39e3a81e11727c08973ff
           OUT: ${{ runner.temp }}/puredarwin-e2e-inputs/kc-free.bin
         run: |

@@ -30,6 +30,10 @@ Report the profile alongside the stage:
   for the host alongside the 16 GiB guest allocation. PCs without sufficient memory,
   QEMU's ARM system emulator, or time for software emulation may not be practical for
   this profile.
+- **ARM64 module build prerequisites:** the host must have headers matching its running
+  Linux kernel (`/lib/modules/$(uname -r)/build`) and a compiler. The normal
+  `scripts/vm-xnu-build.sh` setup installs `linux-headers-$(uname -r)`; the x86-64
+  image-build CI sets `INSTALL_HOST_HEADERS=0` because it does not load the ARM64 modules.
 - **x86-64 guest on Intel/AMD Linux:** [#16] describes a distinct experimental QEMU/KVM
   path, not a port of the ARM64 XNU/FKI modules. Report KVM and TCG separately; a Linux
   test guest is not evidence of an x86-64 Darwin or macOS boot. The PureDarwin run below

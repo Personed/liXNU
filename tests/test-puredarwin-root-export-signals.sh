@@ -45,7 +45,9 @@ esac
 WRAPPER
 cat >"$bin/mountpoint" <<'WRAPPER'
 #!/bin/sh
-[ -e "$TEST_STATE/mounted" ]
+if [ -e "$TEST_STATE/mounted" ]; then exit 0; fi
+if [ -d "$3" ]; then exit 32; fi
+exit 1
 WRAPPER
 cat >"$bin/mount" <<'WRAPPER'
 #!/bin/sh

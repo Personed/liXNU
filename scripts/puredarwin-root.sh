@@ -75,7 +75,8 @@ cleanup() {
       fi
     else
       mount_status=$?
-      if [ "$mount_status" -ne 1 ]; then
+      # util-linux mountpoint returns 32 when an existing path is not mounted.
+      if [ "$mount_status" -ne 32 ]; then
         echo "Could not determine whether $mount_dir is mounted; leaving temporary resources for recovery." >&2
         return 1
       fi

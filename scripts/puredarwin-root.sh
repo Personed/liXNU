@@ -12,6 +12,10 @@ if [ ! -f "$image" ]; then
   echo 'Expected an image file.' >&2
   exit 2
 fi
+case "$image" in
+  /*) ;;
+  *) image=$PWD/$image ;;
+esac
 case "$output" in
   /*) ;;
   *) output=$PWD/$output ;;
@@ -36,7 +40,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 export PATH="$PATH:/usr/sbin:/sbin"
 export LC_ALL=C
-for tool in sfdisk python3 losetup mount mountpoint umount e2fsck tune2fs tar mktemp link; do
+for tool in sfdisk python3 losetup mount mountpoint umount e2fsck tune2fs tar mktemp link stat; do
   if ! command -v "$tool" >/dev/null; then
     echo "PureDarwin root export requires $tool." >&2
     exit 1
@@ -90,16 +94,35 @@ cleanup() {
   fi
   if [ -n "$mount_dir" ]; then rmdir -- "$mount_dir" || return 1; mount_dir=''; fi
   if [ -n "$archive" ]; then rm -f -- "$archive" || return 1; archive=''; fi
-  if [ -n "$archive_dir" ]; then rmdir -- "$archive_dir" || return 1; archive_dir=''; fi
   if [ -n "$check_log" ]; then rm -f -- "$check_log" || return 1; check_log=''; fi
+  if [ -n "$archive_dir" ]; then
+    cd -- "$output_dir" || return 1
+    if [ -d "$archive_dir" ] && [ ! -L "$archive_dir" ] &&
+       [ "$(stat -c '%u' -- "$archive_dir")" = "$EUID" ] &&
+       [ "$(stat -c '%a' -- "$archive_dir")" = 700 ]; then
+      rmdir -- "$archive_dir" || return 1
+    else
+      echo "Staging path changed during export; leaving it untouched: $archive_dir" >&2
+    fi
+    archive_dir=''
+  fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 mount_dir=$(mktemp -d)
+case "$mount_dir" in
+  /*) ;;
+  *) mount_dir=$PWD/$mount_dir ;;
+esac
 archive_dir=$(mktemp -d -- "$output_dir/.puredarwin-root.XXXXXXXX")
-archive=$archive_dir/root.tar.gz
-check_log=$(mktemp)
+cd -- "$archive_dir"
+if [ "$(stat -c '%u' .)" != "$EUID" ] || [ "$(stat -c '%a' .)" != 700 ]; then
+  echo "Staging directory changed before it could be opened securely: $archive_dir" >&2
+  exit 1
+fi
+archive=root.tar.gz
+check_log=check.log
 # Keep INT/TERM pending until losetup has returned the attached device. That
 # lets the EXIT trap detach the exact loop device if a signal arrives here.
 loop=$(trap '' INT TERM; "${as_root[@]}" losetup --find --show --read-only --offset "$offset" --sizelimit "$length" -- "$image")
@@ -139,6 +162,4 @@ if ! link "$archive" "$output"; then
 fi
 rm -- "$archive"
 archive=''
-rmdir -- "$archive_dir"
-archive_dir=''
 printf '%s\n' "$output"

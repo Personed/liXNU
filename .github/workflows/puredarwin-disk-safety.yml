@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: PureDarwin disk safety
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/puredarwin-disk-safety.yml'
+      - 'scripts/mk-puredarwin-disk.sh'
+      - 'scripts/lib/publish-file-no-replace.sh'
+      - 'tests/test-mk-puredarwin-disk-output.sh'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  output-safety:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: |
+          bash -n scripts/mk-puredarwin-disk.sh
+          bash -n scripts/lib/publish-file-no-replace.sh
+          bash -n tests/test-mk-puredarwin-disk-output.sh
+      - name: Disk output safety regressions
+        run: bash tests/test-mk-puredarwin-disk-output.sh
+  macos-cleanup:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: |
+          bash -n scripts/mk-puredarwin-disk.sh
+          bash -n scripts/lib/publish-file-no-replace.sh
+          bash -n tests/test-mk-puredarwin-disk-output.sh
+      - name: macOS attach failure and CDPATH regressions
+        run: bash tests/test-mk-puredarwin-disk-output.sh

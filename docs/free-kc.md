@@ -65,10 +65,46 @@ kernel has; and a kext's load tag.
    records a pinned build input and checks artifact integrity; it does not establish byte-for-byte reproducibility
    between independent builds because image UUID/GUID values can vary. It also does not pair the image with `kc-free.bin`
    or validate an xnulinux boot.
-2. `scripts/mk-puredarwin-disk.sh root.tar.gz pd.img > pd.conf` (Mac) makes the HFS+ disk and prints its UUIDs.
+2. Run the following on Linux or macOS to make the HFS+ disk and save its UUIDs after a successful build.
+
+   ```sh
+   scripts/mk-puredarwin-disk.sh root.tar.gz pd.img > pd.conf.new && mv pd.conf.new pd.conf
+   ```
+
+   Use a new output filename; the script refuses to replace an existing file, symlink, device or other destination. It
+   publishes the completed image with the POSIX `link` utility, so that utility and hard links must be supported by the
+   output directory's filesystem. On Linux, install `hfsprogs` and `sfdisk` (the `fdisk` package on Debian and Ubuntu). The Linux kernel needs loop devices and
+   writable HFS+ support. The script uses root privileges for those operations and writes a non-journaled volume. After
+   an unclean shutdown, check the HFS+ partition on Linux before booting again.
+
+   ```sh
+   (
+     set -e
+     if systemctl cat xnulinux.service >/dev/null 2>&1; then
+       sudo systemctl stop xnulinux.service
+     fi
+     scripts/xnulinux-boot.sh stop
+     loop=$(sudo losetup --find --show --partscan pd.img)
+     trap 'sudo losetup --detach "$loop"' EXIT
+     if ! sudo fsck.hfsplus -f "${loop}p1"; then
+       echo "HFS+ check failed; do not boot this disk until it is repaired." >&2
+       exit 1
+     fi
+     sudo losetup --detach "$loop"
+     trap - EXIT
+   )
+   ```
+
+   Stop the hosted system and any `xnulinux.service` supervisor so it cannot restart during the check, and ensure the
+   partition is unmounted before checking it. The subshell keeps `set -e` and a failed check from changing the terminal
+   session. The image uses GPT, so run
+   `fsck.hfsplus` on the first partition exposed by `losetup --partscan`, not on `pd.img`. If the check fails, repair the
+   volume before booting it again.
 3. In the VM, after `scripts/vm-xnu-rebuild.sh`: `scripts/free-kc/build.sh`, which writes `/lib/firmware/xnu/kc-free.bin`.
 4. Boot it: `MAC_CONF=pd.conf DISK=pd.img IMAGE=xnu/kc-free.bin TRUSTCACHE= GPU=off scripts/xnulinux-boot.sh`. The console
-   (`CONSOLE_IN`) is PureDarwin's zsh. Its `halt` and `reboot` end the run.
+   (`CONSOLE_IN`) is PureDarwin's zsh. Its `halt` and `reboot` end the run. For a service-managed boot, use
+   `sudo systemctl start xnulinux.service` instead of the manual command, after configuring the service for this disk;
+   this restores its supervision and automatic restart after a disk check.
 
 ## Apple's kexts, linked on the user's machine
 

@@ -4,6 +4,7 @@
 
 import argparse
 from pathlib import Path
+import re
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -11,10 +12,17 @@ from tempfile import TemporaryDirectory
 SUCCESS_MARKER = "xnulinux QEMU smoke test passed"
 
 
-def guest_reported_success(log):
-    """Accept the unique success marker even if shutdown text shares its line."""
-    return log.count(SUCCESS_MARKER) == 1 and any(
-        line.startswith(SUCCESS_MARKER) for line in log.splitlines()
+def reports_smoke_success(log: str) -> bool:
+    """Accept one exact marker, optionally followed by Linux's power-off text."""
+    if log.count(SUCCESS_MARKER) != 1:
+        return False
+
+    shutdown_append = re.compile(
+        re.escape(SUCCESS_MARKER) + r"(?:\[\s*\d+(?:\.\d+)?\]\s*)?reboot: Power down"
+    )
+    return any(
+        line == SUCCESS_MARKER or shutdown_append.fullmatch(line)
+        for line in log.splitlines()
     )
 
 
@@ -44,7 +52,7 @@ def main():
             "-no-reboot",
             "-kernel", str(kernel),
             "-initrd", str(initramfs),
-            "-append", "console=ttyAMA0 rdinit=/init panic=1 loglevel=4 mem=768M",
+            "-append", "console=ttyAMA0 rdinit=/init panic=1 loglevel=4 printk.time=0 mem=768M",
         ]
         try:
             result = subprocess.run(command, timeout=180)
@@ -57,7 +65,7 @@ def main():
 
     if result.returncode:
         return result.returncode
-    if not guest_reported_success(log):
+    if not reports_smoke_success(log):
         print("Guest did not report a successful smoke test", file=sys.stderr)
         return 1
     return 0

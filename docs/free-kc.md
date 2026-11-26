@@ -20,6 +20,7 @@ their install names change (otherwise their first page fails validation in every
 | `com.apple.kec.pthread` | PureDarwin (Apple's libpthread kext) | |
 | `com.apple.iokit.IOStorageFamily`, `HFSEncodings`, `hfs` | PureDarwin (Apple's open-source projects) | |
 
+`scripts/vm-xnu-rebuild.sh` builds XnuCPU, XnuDisk and XnuDrm even when Apple’s kernelcache is absent.
 Every kext is compiled from source as arm64e with this kernel's own compile flags (`scripts/free-kc/kcc.py`), and
 linked into the collection by `scripts/kclink` the way xnulinux's own kexts are.
 
@@ -39,10 +40,31 @@ kernel has; and a kext's load tag.
 
 ## Using it
 
-1. `scripts/puredarwin-root.sh IMAGE root.tar.gz` (Linux) unpacks the root of a PureDarwin arm64 image:
+1. `scripts/puredarwin-root.sh IMAGE root.tar.gz` archives the PureDarwin arm64 root on Linux, including x86-64.
+   It requires `fdisk` (`sfdisk`), `util-linux` (loop devices, mount tools, `unshare`, and `setpriv`), `e2fsprogs`
+   (`tune2fs` and `e2fsck`), `python3`, `tar`, `coreutils` (`link`, `stat`, and `chmod`), and kernel support for ext4,
+   loop devices, and private mount namespaces. Run as root or as a regular user with `sudo` available. For output on
+   root-squashed NFS, run as a regular user so the archive remains owned by that account.
+   The input image's ext4
+   root must be clean and have no pending journal recovery; the exporter refuses filesystems that need repair. It opens
+   the source image read-only, mounts below a private mode-0700 directory in a private mount namespace, disables
+   journal replay, and preserves numeric owners in the archive. It tries a root-accessible `TMPDIR` first and falls
+   back to `/tmp`, allowing the output directory itself to be on root-squashed NFS. Set `TMPDIR` to a local filesystem
+   if neither path is accessible to the mount helper. The output path must be new, its parent directory must exist,
+   and that filesystem
+   must support hard links. The archive
+   is published without replacing an existing file or symlink and has mode `0644`. The exporter refuses output paths
+   with an ancestor controlled by another account or writable by a group or other user outside a sticky directory;
+   use a private directory or a root-owned sticky shared directory such as `/tmp`.
+   Build the input image with
    `nix build 'git+https://github.com/AFK-surf/PureDarwin?submodules=1&rev=b3b4b2812fdd1c5c251dc3089b5a1a9e00d29970#image-arm64-virt-minimal'` (PureDarwin's
    binary cache, https://hydra.lab004.dev, has its toolchain and what the fork did not change; the images there are
    upstream's).
+   The [ARM64 image workflow](../.github/workflows/puredarwin-arm64-image.yml) builds this pinned AFK revision
+   on an x86-64 runner, verifies the release SHA-256 and retains the compressed image artifact for three days. This
+   records a pinned build input and checks artifact integrity; it does not establish byte-for-byte reproducibility
+   between independent builds because image UUID/GUID values can vary. It also does not pair the image with `kc-free.bin`
+   or validate an xnulinux boot.
 2. `scripts/mk-puredarwin-disk.sh root.tar.gz pd.img > pd.conf` (Mac) makes the HFS+ disk and prints its UUIDs.
 3. In the VM, after `scripts/vm-xnu-rebuild.sh`: `scripts/free-kc/build.sh`, which writes `/lib/firmware/xnu/kc-free.bin`.
 4. Boot it: `MAC_CONF=pd.conf DISK=pd.img IMAGE=xnu/kc-free.bin TRUSTCACHE= GPU=off scripts/xnulinux-boot.sh`. The console

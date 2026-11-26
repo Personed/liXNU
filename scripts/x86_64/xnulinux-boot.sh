@@ -20,8 +20,9 @@ Required environment:
 
 Common overrides:
   DISK_FORMAT=qcow2    Disk source format (raw or qcow2)
-  OVMF_CODE            OVMF_CODE_4M.fd path
-  OVMF_VARS_TEMPLATE   OVMF_VARS_4M.fd path
+  OVMF_CODE            OVMF code firmware path (auto-detected when possible)
+  OVMF_VARS_TEMPLATE   OVMF variables template path (auto-detected when possible)
+  OVMF_DIR             Extra firmware directory searched before system paths
   STATE_DIR            Writable per-VM state directory
   CPU_MODEL            QEMU CPU model (default: host for KVM, max for TCG)
   CPUS=4 RAM_MB=8192
@@ -67,10 +68,104 @@ case "$DISK_FORMAT" in
 esac
 DISK_PATH="$(realpath -e -- "$DISK")" || fail 'could not resolve DISK path'
 
-OVMF_CODE="${OVMF_CODE:-/usr/share/OVMF/OVMF_CODE_4M.fd}"
-OVMF_VARS_TEMPLATE="${OVMF_VARS_TEMPLATE:-/usr/share/OVMF/OVMF_VARS_4M.fd}"
+OVMF_PAIR_SPECS=(
+  'OVMF_CODE_4M.fd|OVMF_VARS_4M.fd'
+  'OVMF_CODE_4M.qcow2|OVMF_VARS_4M.qcow2'
+  'OVMF_CODE.4m.fd|OVMF_VARS.4m.fd'
+  'OVMF_CODE.fd|OVMF_VARS.fd'
+  'ovmf-x86_64-4m-code.bin|ovmf-x86_64-4m-vars.bin'
+)
+OVMF_SYSTEM_PAIRS=(
+  '/usr/share/OVMF/OVMF_CODE_4M.fd|/usr/share/OVMF/OVMF_VARS_4M.fd'
+  '/usr/share/edk2/x64/OVMF_CODE.4m.fd|/usr/share/edk2/x64/OVMF_VARS.4m.fd'
+  '/usr/share/edk2/ovmf/OVMF_CODE_4M.qcow2|/usr/share/edk2/ovmf/OVMF_VARS_4M.qcow2'
+  '/usr/share/edk2/ovmf-4m/OVMF_CODE.fd|/usr/share/edk2/ovmf-4m/OVMF_VARS.fd'
+  '/usr/share/qemu/ovmf-x86_64-4m-code.bin|/usr/share/qemu/ovmf-x86_64-4m-vars.bin'
+)
+
+find_ovmf_pair_in_dir() {
+  local dir="$1" spec code_name vars_name code vars
+  [[ -d "$dir" ]] || return 1
+  for spec in "${OVMF_PAIR_SPECS[@]}"; do
+    code_name="${spec%%|*}"
+    vars_name="${spec##*|}"
+    code="$dir/$code_name"
+    vars="$dir/$vars_name"
+    if [[ -f "$code" && -r "$code" && -f "$vars" && -r "$vars" ]]; then
+      printf '%s\n%s\n' "$code" "$vars"
+      return 0
+    fi
+  done
+  return 1
+}
+
+find_ovmf_pair() {
+  local spec code vars
+  if [[ -n "${OVMF_DIR:-}" ]] && find_ovmf_pair_in_dir "$OVMF_DIR"; then
+    return 0
+  fi
+  for spec in "${OVMF_SYSTEM_PAIRS[@]}"; do
+    code="${spec%%|*}"
+    vars="${spec##*|}"
+    if [[ -f "$code" && -r "$code" && -f "$vars" && -r "$vars" ]]; then
+      printf '%s\n%s\n' "$code" "$vars"
+      return 0
+    fi
+  done
+  return 1
+}
+
+find_ovmf_counterpart() {
+  local explicit="$1" wanted="$2" dir base spec code_name vars_name counterpart
+  dir="$(dirname -- "$explicit")"
+  base="${explicit##*/}"
+  for spec in "${OVMF_PAIR_SPECS[@]}"; do
+    code_name="${spec%%|*}"
+    vars_name="${spec##*|}"
+    if [[ "$wanted" == vars && "$base" == "$code_name" ]]; then
+      counterpart="$dir/$vars_name"
+    elif [[ "$wanted" == code && "$base" == "$vars_name" ]]; then
+      counterpart="$dir/$code_name"
+    else
+      continue
+    fi
+    if [[ -f "$counterpart" && -r "$counterpart" ]]; then
+      printf '%s\n' "$counterpart"
+      return 0
+    fi
+    return 1
+  done
+  return 1
+}
+
+ovmf_firmware_format() {
+  local magic
+  magic="$(od -An -N4 -tx1 -- "$1" 2>/dev/null | tr -d ' \n')"
+  if [[ "$magic" == 514649fb ]]; then
+    printf 'qcow2\n'
+  else
+    printf 'raw\n'
+  fi
+}
+
+OVMF_CODE="${OVMF_CODE:-}"
+OVMF_VARS_TEMPLATE="${OVMF_VARS_TEMPLATE:-}"
+if [[ -z "$OVMF_CODE" && -z "$OVMF_VARS_TEMPLATE" ]]; then
+  OVMF_PAIR_OUTPUT="$(find_ovmf_pair)" \
+    || fail 'could not find a readable 4 MiB OVMF firmware pair; install the distribution OVMF/edk2 package or set OVMF_CODE and OVMF_VARS_TEMPLATE'
+  mapfile -t OVMF_PAIR <<<"$OVMF_PAIR_OUTPUT"
+  OVMF_CODE="${OVMF_PAIR[0]}"
+  OVMF_VARS_TEMPLATE="${OVMF_PAIR[1]}"
+elif [[ -z "$OVMF_CODE" ]]; then
+  OVMF_CODE="$(find_ovmf_counterpart "$OVMF_VARS_TEMPLATE" code)" \
+    || fail 'OVMF_CODE must be set when OVMF_VARS_TEMPLATE does not use a recognized OVMF filename'
+elif [[ -z "$OVMF_VARS_TEMPLATE" ]]; then
+  OVMF_VARS_TEMPLATE="$(find_ovmf_counterpart "$OVMF_CODE" vars)" \
+    || fail 'OVMF_VARS_TEMPLATE must be set when OVMF_CODE does not use a recognized OVMF filename'
+fi
 [[ -f "$OVMF_CODE" && -r "$OVMF_CODE" ]] || fail 'OVMF_CODE is not a readable file'
 [[ -f "$OVMF_VARS_TEMPLATE" && -r "$OVMF_VARS_TEMPLATE" ]] || fail 'OVMF_VARS_TEMPLATE is not a readable file'
+OVMF_CODE_FORMAT="$(ovmf_firmware_format "$OVMF_CODE")"
 
 APPLE_SMC_OSK="${APPLE_SMC_OSK:-}"
 [[ -n "$APPLE_SMC_OSK" ]] || fail 'APPLE_SMC_OSK must be set'
@@ -293,6 +388,7 @@ if [[ ! -e "$VARS_FILE" ]]; then
   fi
   rm -f -- "$VARS_TMP"
 fi
+OVMF_VARS_FORMAT="$(ovmf_firmware_format "$VARS_FILE")"
 if [[ ! -e "$DISK_OVERLAY" ]]; then
   OVERLAY_TMP="$DISK_OVERLAY.tmp.$$"
   if ! "$QEMU_IMG_PATH" create -q -f qcow2 -F "$DISK_FORMAT" -b "$DISK_PATH" "$OVERLAY_TMP"; then
@@ -327,8 +423,8 @@ QEMU_ARGS=(
   -cpu "$CPU_MODEL"
   -smp "$CPUS"
   -m "$RAM_MB"
-  -drive "file=${OVMF_CODE//,/,,},if=pflash,format=raw,readonly=on"
-  -drive "file=${VARS_FILE//,/,,},if=pflash,format=raw"
+  -drive "file=${OVMF_CODE//,/,,},if=pflash,format=${OVMF_CODE_FORMAT},readonly=on"
+  -drive "file=${VARS_FILE//,/,,},if=pflash,format=${OVMF_VARS_FORMAT}"
   -readconfig "$SMC_CONFIG"
   -device ich9-ahci,id=sata
   -drive "file=${DISK_OVERLAY//,/,,},format=qcow2,if=none,id=disk0"

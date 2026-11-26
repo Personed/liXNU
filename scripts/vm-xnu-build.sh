@@ -63,4 +63,4 @@ rm -f out/x12377/build/xnu/hdrs-obj/SETUP/decomment/decomment
 python3 scripts/setup-env.py x12377 --jobs 12
 # the first kernel build is the rebuild's: xnu-patches and xnulinux's corecrypto go into the tree before anything of it
 # is compiled (XNU's own corecrypto never is)
-bash "$POC"/scripts/vm-xnu-rebuild.sh
+DVM="$PWD" bash "$POC"/scripts/vm-xnu-rebuild.sh

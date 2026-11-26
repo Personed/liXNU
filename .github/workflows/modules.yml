@@ -4,7 +4,11 @@
 name: modules
 on:
   push:
+    branches: [main]
   pull_request:
+concurrency:
+  group: modules-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
     runs-on: ubuntu-24.04-arm
@@ -55,7 +59,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        host: [ubuntu-24.04, windows-2025, macos-15]
+        host: [ubuntu-24.04, windows-2025, macos-15-intel]
     runs-on: ${{ matrix.host }}
     timeout-minutes: 20
     steps:
@@ -113,3 +117,5 @@ jobs:
           missing=$(git ls-files '*.c' '*.h' '*.cpp' '*.mm' '*.m' '*.rs' '*.S' '*.s' '*.sh' '*.py' '*.metal' '*.comp' '*Makefile' |
             while read -r f; do head -3 "$f" | grep -q SPDX-License-Identifier || echo "$f"; done)
           [ -z "$missing" ] || { echo "no SPDX-License-Identifier:"; echo "$missing"; exit 1; }
+      - name: Resolve relative PureDarwin workspace paths
+        run: python3 tests/host/test_free_kc_dvm_path.py

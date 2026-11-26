@@ -88,9 +88,11 @@ host measurements do not establish a physical host-RAM minimum.
 ## Reproducing the active QEMU TCG boot
 
 On an x86-64 Linux PC, install QEMU ARM system emulation and Python 3. On Ubuntu, use
-`sudo apt-get install qemu-system-arm python3`; on other distributions install the
-equivalent packages. The boot block below only checks for the executables, so it also
-works without APT or `sudo` when they are already installed. The current
+`sudo apt-get install qemu-system-arm python3 coreutils util-linux`. On Alpine, install
+the QEMU package that provides `qemu-system-aarch64`, plus `python3`,
+`coreutils` (for `sha256sum`) and `util-linux` (for `lscpu`).
+The boot block checks all required executables before starting the VM, so it also works
+without APT or `sudo` when they are already installed. The current
 pinned-kernel implementation is on [PR #52](https://github.com/Personed/xnulinux/pull/52)
 and its follow-ups; its `puredarwin-e2e-guest` and `puredarwin-e2e-disk` artifacts must
 come from the same successful workflow run. The image workflow builds the pinned
@@ -100,21 +102,27 @@ guest, and prepares a direct-boot `Image` and initramfs. Do not mix artifacts ac
 
 In a checkout of the pinned-kernel branch, use the guest `Image` and
 `initramfs.cpio.gz` from `puredarwin-e2e-guest` and `pd.img` from
-`puredarwin-e2e-disk`. Make a writable copy of the disk for every run:
+`puredarwin-e2e-disk`. Replace each `/path/to/...` placeholder below with the actual
+downloaded file path. Make a writable copy of the disk for every run:
 
 ```sh
 (
   set +e
-  for program in qemu-system-aarch64 python3 timeout; do
+  for program in qemu-system-aarch64 python3 timeout sha256sum lscpu; do
     command -v "$program" >/dev/null 2>&1 || {
       echo "$program is not available on PATH; install the required host packages first." >&2
       exit 1
     }
   done
-  checksum_file=$(mktemp) || exit 1
-  trap 'rm -f "$checksum_file"' EXIT
-  sha256sum /path/to/pd.img > "$checksum_file" || exit 1
-  cp --reflink=auto /path/to/pd.img /path/to/pd-tcg-test.img || exit 1
+  input_hashes=$(mktemp) || exit 1
+  trap 'rm -f "$input_hashes"' EXIT
+  cat > "$input_hashes" <<'SHA256'
+02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6  /path/to/Image
+431c6a2dcdbb77fc1131a8359149a59ad5f4aa5867eff3cf182175cf8a24e322  /path/to/initramfs.cpio.gz
+84fc7065d5a9bfb87a8db4fe1c3e7c5f485a0c1b23cdcb7beccdd426f03528a1  /path/to/pd.img
+SHA256
+  sha256sum --check "$input_hashes" || exit 1
+  cp /path/to/pd.img /path/to/pd-tcg-test.img || exit 1
   python3 tests/puredarwin/run-tcg-e2e.py \
     --timeout-seconds 5400 \
     --qemu-memory 6G \
@@ -128,14 +136,17 @@ In a checkout of the pinned-kernel branch, use the guest `Image` and
     /path/to/pd-tcg-test.img \
     /path/to/puredarwin-tcg-serial.log
   boot_status=$?
-  sha256sum --check "$checksum_file"
-  disk_status=$?
-  test "$boot_status" -eq 0 && test "$disk_status" -eq 0
+  sha256sum --check "$input_hashes"
+  input_hash_status=$?
+  test "$boot_status" -eq 0 && test "$input_hash_status" -eq 0
 )
 ```
 
 The guest writes to the HFS+ disk. Keep the downloaded `pd.img` as the pristine input;
-the final command confirms its original SHA-256 did not change.
+the checksum preflight confirms the Image, initramfs, and disk match run #140 before QEMU
+starts, and the final command confirms none of those original inputs changed. The plain
+`cp` makes a full disk copy rather than relying on GNU reflink support, so reserve free
+space at least as large as `pd.img`.
 
 The command uses ARM64 `virt`, multi-threaded TCG, 2 guest CPUs, and the reduced 6 GiB profile.
 It records host and QEMU facts, captures the serial console, sends the required Darwin

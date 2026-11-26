@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+"""Check QEMU launcher arguments on Linux, macOS, and Windows."""
+
+import importlib.util
+from pathlib import Path
+import tempfile
+import unittest
+from unittest import mock
+
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts/qemu-vm.py"
+spec = importlib.util.spec_from_file_location("qemu_vm", SCRIPT)
+qemu_vm = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(qemu_vm)
+
+
+class QemuLauncherTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.disk = root / "linux disk,1.qcow2"
+        self.firmware_code = root / "firmware code.fd"
+        self.firmware_vars = root / "firmware vars.fd"
+        self.installer = root / "ubuntu installer.iso"
+        for path in (self.disk, self.firmware_code, self.firmware_vars, self.installer):
+            path.touch()
+        self.args = qemu_vm.argparse.Namespace(
+            qemu="qemu-system-aarch64",
+            cpus=4,
+            memory=16384,
+            disk=self.disk,
+            disk_format="qcow2",
+            firmware_code=self.firmware_code,
+            firmware_vars=self.firmware_vars,
+            installer=self.installer,
+            ssh_port=2222,
+            graphical=True,
+        )
+
+    def test_graphics_backend_matches_host(self):
+        for host, backend in (("Linux", "gtk"), ("Darwin", "cocoa"), ("Windows", "sdl")):
+            with self.subTest(host=host), mock.patch.object(qemu_vm.platform, "system", return_value=host):
+                command = qemu_vm.build_command(self.args)
+            self.assertEqual(command[command.index("-display") + 1], backend)
+
+    def test_current_platform_has_a_graphical_backend(self):
+        backends = {"Linux": "gtk", "Darwin": "cocoa", "Windows": "sdl"}
+        host = qemu_vm.platform.system()
+        self.assertIn(host, backends)
+        command = qemu_vm.build_command(self.args)
+        self.assertEqual(command[command.index("-display") + 1], backends[host])
+
+    def test_headless_mode_and_escaped_paths(self):
+        self.args.graphical = False
+        command = qemu_vm.build_command(self.args)
+        self.assertEqual(command[command.index("-display") + 1], "none")
+        self.assertIn("file=" + str(self.disk).replace(",", ",,") + ",if=none,id=linux,format=qcow2",
+                      command)
+        self.assertIn("hostfwd=tcp:127.0.0.1:2222-:22", command[command.index("-netdev") + 1])
+
+    def test_windows_launch_waits_for_qemu_exit(self):
+        argv = [
+            "qemu-vm.py", str(self.disk),
+            "--firmware-code", str(self.firmware_code),
+            "--firmware-vars", str(self.firmware_vars),
+        ]
+        completed = qemu_vm.subprocess.CompletedProcess([], 0)
+        with (
+            mock.patch.object(qemu_vm.sys, "argv", argv),
+            mock.patch.object(qemu_vm.platform, "system", return_value="Windows"),
+            mock.patch.object(qemu_vm.subprocess, "run", return_value=completed) as run,
+        ):
+            self.assertEqual(qemu_vm.main(), 0)
+        self.assertEqual(run.call_count, 1)
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("-display") + 1], "none")
+
+
+if __name__ == "__main__":
+    unittest.main()

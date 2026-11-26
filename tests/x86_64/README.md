@@ -65,7 +65,7 @@ they are not pass/fail tests for the selected QEMU/KVM path.
 
 ## Evidence and limits
 
-- The fake-QEMU launcher suite passes preflight errors, OVMF auto-detection including qcow2 firmware arguments, TCG
+- The fake-QEMU launcher suite passes preflight errors, OVMF auto-detection including qcow2 firmware arguments and persistent NVRAM format detection, TCG
   and KVM argument construction, paths containing spaces and commas, SMC config permissions/redaction/cleanup,
   source-disk immutability, same-content base restoration, rejection
   of changed base contents, detection of unassociated legacy overlays, rejection of a managed overlay selected as its

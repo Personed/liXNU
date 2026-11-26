@@ -182,7 +182,7 @@ scripts/x86_64/xnulinux-boot.sh --check
 
 If OVMF is not auto-detected, set `OVMF_CODE` and `OVMF_VARS_TEMPLATE` to the corresponding 4 MiB files before
 preflight. `OVMF_DIR` adds one custom directory to the search path. Fedora's qcow2 firmware pair is passed to QEMU as
-qcow2; raw `.fd`/`.bin` pairs remain raw. If preflight succeeds, run:
+qcow2; raw pairs remain raw, and existing NVRAM state keeps its own format. If preflight succeeds, run:
 
 ```sh
 scripts/x86_64/xnulinux-boot.sh

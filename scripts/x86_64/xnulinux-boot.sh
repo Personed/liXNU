@@ -139,10 +139,13 @@ find_ovmf_counterpart() {
 }
 
 ovmf_firmware_format() {
-  case "$1" in
-    *.qcow2) printf 'qcow2\n' ;;
-    *) printf 'raw\n' ;;
-  esac
+  local magic
+  magic="$(od -An -N4 -tx1 -- "$1" 2>/dev/null | tr -d ' \n')"
+  if [[ "$magic" == 514649fb ]]; then
+    printf 'qcow2\n'
+  else
+    printf 'raw\n'
+  fi
 }
 
 OVMF_CODE="${OVMF_CODE:-}"
@@ -163,7 +166,6 @@ fi
 [[ -f "$OVMF_CODE" && -r "$OVMF_CODE" ]] || fail 'OVMF_CODE is not a readable file'
 [[ -f "$OVMF_VARS_TEMPLATE" && -r "$OVMF_VARS_TEMPLATE" ]] || fail 'OVMF_VARS_TEMPLATE is not a readable file'
 OVMF_CODE_FORMAT="$(ovmf_firmware_format "$OVMF_CODE")"
-OVMF_VARS_FORMAT="$(ovmf_firmware_format "$OVMF_VARS_TEMPLATE")"
 
 APPLE_SMC_OSK="${APPLE_SMC_OSK:-}"
 [[ -n "$APPLE_SMC_OSK" ]] || fail 'APPLE_SMC_OSK must be set'
@@ -386,6 +388,7 @@ if [[ ! -e "$VARS_FILE" ]]; then
   fi
   rm -f -- "$VARS_TMP"
 fi
+OVMF_VARS_FORMAT="$(ovmf_firmware_format "$VARS_FILE")"
 if [[ ! -e "$DISK_OVERLAY" ]]; then
   OVERLAY_TMP="$DISK_OVERLAY.tmp.$$"
   if ! "$QEMU_IMG_PATH" create -q -f qcow2 -F "$DISK_FORMAT" -b "$DISK_PATH" "$OVERLAY_TMP"; then

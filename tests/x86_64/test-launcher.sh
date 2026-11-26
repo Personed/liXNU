@@ -104,8 +104,8 @@ AUTO_OVMF_DIR="$FIXTURE_DIR/edk2 auto"
 AUTO_STATE_DIR="$TMP_DIR/auto ovmf state"
 AUTO_QEMU_IMG_COUNT="$TMP_DIR/auto qemu-img count"
 mkdir -p -- "$AUTO_OVMF_DIR"
-printf 'auto-detected ovmf code firmware\n' >"$AUTO_OVMF_DIR/OVMF_CODE_4M.qcow2"
-printf 'auto-detected ovmf variables template\n' >"$AUTO_OVMF_DIR/OVMF_VARS_4M.qcow2"
+printf 'QFI\373auto-detected ovmf code firmware\n' >"$AUTO_OVMF_DIR/OVMF_CODE_4M.qcow2"
+printf 'QFI\373auto-detected ovmf variables template\n' >"$AUTO_OVMF_DIR/OVMF_VARS_4M.qcow2"
 cat >"$CPUINFO_FULL" <<'CPUINFO'
 processor : 0
 flags : fpu vmx sse4_2 avx fma movbe popcnt lzcnt bmi1 avx2 bmi2
@@ -429,5 +429,25 @@ print("auto-detected OVMF argument contract passed")
 PY
 cmp -s -- "$AUTO_OVMF_DIR/OVMF_VARS_4M.qcow2" "$AUTO_STATE_DIR/OVMF_VARS.fd" \
   || fail 'auto-detected OVMF variables template was not copied'
+
+# Existing NVRAM state keeps its own format across later launches even if the
+# selected template uses another format.
+printf 'persistent raw NVRAM state\n' >"$AUTO_STATE_DIR/OVMF_VARS.fd"
+env "${BASE_ENV[@]}" OVMF_CODE= OVMF_VARS_TEMPLATE= "OVMF_DIR=$AUTO_OVMF_DIR" \
+  STATE_DIR="$AUTO_STATE_DIR" QEMU_IMG_COUNT="$AUTO_QEMU_IMG_COUNT" ACCEL=tcg \
+  "$LAUNCHER" >"$TMP_DIR/auto-ovmf-existing-state.out" 2>&1 || {
+  cat "$TMP_DIR/auto-ovmf-existing-state.out" >&2
+  fail 'existing OVMF variables state was rejected'
+}
+python3 - "$QEMU_LOG" <<'PY'
+from pathlib import Path
+import sys
+
+args = [arg.decode() for arg in Path(sys.argv[1]).read_bytes().split(b"\0") if arg]
+vars_args = [arg for arg in args if arg.startswith("file=") and "OVMF_VARS.fd" in arg and "if=pflash" in arg]
+assert len(vars_args) == 1
+assert "format=raw" in vars_args[0]
+print("existing OVMF variables format contract passed")
+PY
 
 printf 'PASS: launcher preflight, OVMF auto-detection, TCG/KVM arguments, protected SMC handling, and persistent disk identity\n'

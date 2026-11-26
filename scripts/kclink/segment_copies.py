@@ -36,7 +36,16 @@ def check_kernel_segment_copies(segments, kernel, collection, header):
             a_bytes = kernel[a_file + start - a_dest:a_file + end - a_dest]
             b_bytes = kernel[b_file + start - b_dest:b_file + end - b_dest]
             if a_bytes != b_bytes:
-                raise ValueError(f'{a.name} and {b.name}: conflicting file-backed overlap at {start:#x}-{end:#x}')
+                ranges = '; '.join(
+                    f'{segment.name} vmaddr={segment.vmaddr:#x} vmsize={segment.vmsize:#x} '
+                    f'fileoff={segment.fileoff:#x} filesize={segment.filesize:#x} '
+                    f'collection={dest_start:#x}-{dest_end:#x}'
+                    for segment, _, _, dest_start, dest_end in mapped
+                )
+                raise ValueError(
+                    f'{a.name} and {b.name}: conflicting file-backed overlap at {start:#x}-{end:#x}; '
+                    f'mapped kernel segment ranges: {ranges}'
+                )
             overlaps.append((a.name, b.name, start, end))
 
     for segment, source_start, source_end, dest_start, dest_end in mapped:

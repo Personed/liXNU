@@ -128,8 +128,14 @@ grep -Fq "backing file: $USER_DISK_PATH" <<<"$USER_OVERLAY_INFO" \
   || { printf 'launcher overlay does not point to the user qcow2 base\n%s\n' "$USER_OVERLAY_INFO" >&2; exit 1; }
 USER_OVERLAY_ARG="file=${USER_OVERLAY//,/,,},format=qcow2,if=none,id=disk0"
 mapfile -d '' -t USER_QEMU_ARGS <"$USER_QEMU_ARGS_LOG"
-[[ " ${USER_QEMU_ARGS[*]} " == *" $USER_OVERLAY_ARG "* ]] \
-  || { printf 'QEMU did not receive the expected overlay argument\n' >&2; exit 1; }
+USER_OVERLAY_DRIVE_COUNT=0
+for ((i = 0; i + 1 < ${#USER_QEMU_ARGS[@]}; i++)); do
+  if [[ "${USER_QEMU_ARGS[i]}" == -drive && "${USER_QEMU_ARGS[i + 1]}" == "$USER_OVERLAY_ARG" ]]; then
+    USER_OVERLAY_DRIVE_COUNT=$((USER_OVERLAY_DRIVE_COUNT + 1))
+  fi
+done
+[[ "$USER_OVERLAY_DRIVE_COUNT" == 1 ]] \
+  || { printf 'QEMU did not receive exactly one -drive pair for the expected overlay\n' >&2; exit 1; }
 [[ -f "$USER_STATE_DIR/disk-$USER_DISK_ID.base" ]] \
   || { printf 'launcher did not write an ownership sidecar for its new overlay\n' >&2; exit 1; }
 printf 'PASS: symlinked managed overlays are rejected; an unowned user qcow2 base with the reserved filename shape is accepted and remains unchanged\n'

@@ -16,7 +16,7 @@ jobs:
           sudo apt-get install -y -qq "$pkg" >/dev/null
           echo "KDIR=/usr/src/$pkg" >> "$GITHUB_ENV"
       - name: Build fail-closed x86_64 XNU module
-        run: make -C "$KDIR" M="$PWD/xnu-ko" modules
+        run: make -C "$KDIR" ARCH=x86_64 M="$PWD/xnu-ko" modules
       - name: Compile Mach-O/ADT validation objects
         run: tests/x86_64/build-xnu-objects.sh "$KDIR"
       - name: Run synthetic x86_64 Mach-O parser fixtures

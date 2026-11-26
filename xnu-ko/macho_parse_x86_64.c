@@ -6,6 +6,7 @@
  * ABI references (pinned public XNU headers):
  *   osfmk/mach/machine.h: CPU_TYPE_X86_64, CPU_SUBTYPE_X86_64_{ALL,H}
  *   EXTERNAL_HEADERS/mach-o/loader.h: Mach-O commands and segment layouts
+ *   EXTERNAL_HEADERS/mach-o/fixup-chains.h: chained-fixup starts/layouts
  *   osfmk/mach/i386/thread_status.h: x86_THREAD_STATE64 flavor and count
  *   osfmk/mach/i386/_structs.h: x86_thread_state64 register order
  */
@@ -15,6 +16,8 @@
 #define LOAD_COMMAND_SIZE 8U
 #define SEGMENT_COMMAND_64_SIZE 72U
 #define SECTION_64_SIZE 80U
+#define DYLD_CHAINED_FIXUPS_HEADER_SIZE 28U
+#define DYLD_CHAINED_STARTS_IN_SEGMENT_HEADER_SIZE 22U
 
 #define MH_MAGIC_64 0xfeedfacfU
 #define MH_EXECUTE 2U
@@ -43,6 +46,14 @@
 #define SYMTAB_COMMAND_SIZE 24U
 #define NLIST_64_SIZE 16U
 
+#define DYLD_CHAINED_PTR_START_NONE 0xffffU
+#define DYLD_CHAINED_PTR_START_MULTI 0x8000U
+#define DYLD_CHAINED_PTR_START_LAST 0x8000U
+#define DYLD_CHAINED_PTR_64 2U
+#define DYLD_CHAINED_PTR_64_OFFSET 6U
+#define DYLD_CHAINED_PTR_64_KERNEL_CACHE 8U
+#define DYLD_CHAINED_PTR_X86_64_KERNEL_CACHE 11U
+
 #define VM_PROT_READ 1U
 #define VM_PROT_WRITE 2U
 #define VM_PROT_EXECUTE 4U
@@ -57,8 +68,10 @@ struct segment_info {
 	xnu_macho_u64 vmsize;
 	xnu_macho_u64 fileoff;
 	xnu_macho_u64 filesize;
+	xnu_macho_u32 maxprot;
 	xnu_macho_u32 initprot;
 	xnu_macho_u32 nsects;
+	xnu_macho_u32 flags;
 };
 
 static xnu_macho_u32 read_u32le(const unsigned char *p)
@@ -75,17 +88,18 @@ static xnu_macho_u64 read_u64le(const unsigned char *p)
 	       ((xnu_macho_u64)read_u32le(p + 4) << 32);
 }
 
+static xnu_macho_u16 read_u16le(const unsigned char *p)
+{
+	return (xnu_macho_u16)p[0] | ((xnu_macho_u16)p[1] << 8);
+}
+
 static void clear_info(struct xnu_macho_x86_64_info *out)
 {
-	out->vm_low = 0;
-	out->vm_high = 0;
-	out->entry = 0;
-	out->segment_count = 0;
-	out->mapped_segment_count = 0;
-	out->inspection_flags = 0;
-	out->unclassified_load_command_count = 0;
-	out->linkedit_data_command_count = 0;
-	out->reserved = 0;
+	unsigned char *bytes = (unsigned char *)out;
+	unsigned long i;
+
+	for (i = 0; i < sizeof(*out); i++)
+		bytes[i] = 0;
 }
 
 static int reject(struct xnu_macho_x86_64_info *out, int error)
@@ -168,6 +182,258 @@ static int parse_dyld_info(const unsigned char *file, unsigned long file_size,
 	return 0;
 }
 
+static int relative_range_ok(unsigned long region_size, xnu_macho_u32 offset,
+			     unsigned long size)
+{
+	return (unsigned long)offset <= region_size &&
+	       size <= region_size - (unsigned long)offset;
+}
+
+static int ranges_overlap(unsigned long first_start, unsigned long first_end,
+			  unsigned long second_start, unsigned long second_end)
+{
+	return first_start < second_end && second_start < first_end;
+}
+
+static int x86_chained_pointer_format_supported(xnu_macho_u16 pointer_format)
+{
+	return pointer_format == DYLD_CHAINED_PTR_64 ||
+	       pointer_format == DYLD_CHAINED_PTR_64_OFFSET ||
+	       pointer_format == DYLD_CHAINED_PTR_64_KERNEL_CACHE ||
+	       pointer_format == DYLD_CHAINED_PTR_X86_64_KERNEL_CACHE;
+}
+
+static int chained_start_offset_ok(xnu_macho_u16 start, xnu_macho_u16 page_size)
+{
+	/* All accepted x86_64 chained pointer formats store an eight-byte word. */
+	return start < page_size && page_size - start >= 8;
+}
+
+static int parse_chained_starts_in_segment(
+	const unsigned char *starts, unsigned long starts_size,
+	xnu_macho_u32 starts_table_size, xnu_macho_u32 starts_offset,
+	struct xnu_macho_x86_64_segment *segment,
+	xnu_macho_u64 image_vm_low)
+{
+	const unsigned char *record;
+	xnu_macho_u32 record_size;
+	xnu_macho_u16 page_size;
+	xnu_macho_u16 pointer_format;
+	xnu_macho_u16 page_count;
+	xnu_macho_u64 segment_offset;
+	unsigned long min_size;
+	unsigned long extra_start_count;
+	unsigned long total_start_count;
+	xnu_macho_u64 pages_in_segment;
+	xnu_macho_u32 i;
+
+	if ((starts_offset & 3U) || starts_offset < starts_table_size ||
+	    !relative_range_ok(starts_size, starts_offset,
+			       DYLD_CHAINED_STARTS_IN_SEGMENT_HEADER_SIZE))
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+
+	record = starts + starts_offset;
+	record_size = read_u32le(record);
+	page_size = read_u16le(record + 4);
+	pointer_format = read_u16le(record + 6);
+	segment_offset = read_u64le(record + 8);
+	page_count = read_u16le(record + 20);
+	min_size = DYLD_CHAINED_STARTS_IN_SEGMENT_HEADER_SIZE +
+		   (unsigned long)page_count * 2UL;
+	if (!page_count || record_size < min_size || (record_size & 1U) ||
+	    !relative_range_ok(starts_size, starts_offset, record_size))
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	if (page_size != 0x1000U && page_size != 0x4000U)
+		return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
+	if (!x86_chained_pointer_format_supported(pointer_format))
+		return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
+	if (!segment->vmsize || segment->vmaddr < image_vm_low ||
+	    segment_offset != segment->vmaddr - image_vm_low)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+
+	pages_in_segment = segment->vmsize / page_size;
+	if (segment->vmsize % page_size)
+		pages_in_segment++;
+	if ((xnu_macho_u64)page_count > pages_in_segment)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+
+	extra_start_count =
+		(record_size - min_size) / 2UL;
+	total_start_count = (unsigned long)page_count + extra_start_count;
+	for (i = 0; i < page_count; i++) {
+		xnu_macho_u16 start =
+			read_u16le(record + DYLD_CHAINED_STARTS_IN_SEGMENT_HEADER_SIZE +
+				   (unsigned long)i * 2UL);
+
+		if (start == DYLD_CHAINED_PTR_START_NONE)
+			continue;
+		if (!(start & DYLD_CHAINED_PTR_START_MULTI)) {
+			if (!chained_start_offset_ok(start, page_size))
+				return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+			continue;
+		}
+
+		{
+			unsigned long index = start & ~DYLD_CHAINED_PTR_START_MULTI;
+			unsigned long j;
+			int found_last = 0;
+
+			if (index < page_count || index >= total_start_count)
+				return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+			for (j = index; j < total_start_count; j++) {
+				xnu_macho_u16 multi = read_u16le(
+					record + DYLD_CHAINED_STARTS_IN_SEGMENT_HEADER_SIZE +
+					j * 2UL);
+				xnu_macho_u16 page_start =
+					multi & ~DYLD_CHAINED_PTR_START_LAST;
+
+				if (!chained_start_offset_ok(page_start, page_size))
+					return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+				if (multi & DYLD_CHAINED_PTR_START_LAST) {
+					found_last = 1;
+					break;
+				}
+			}
+			if (!found_last)
+				return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+		}
+	}
+
+	segment->chained_pointer_format = pointer_format;
+	segment->chained_page_size = page_size;
+	segment->chained_page_count = page_count;
+	return 0;
+}
+
+static int parse_chained_fixups(const unsigned char *file,
+				unsigned long file_size,
+				xnu_macho_u32 data_offset,
+				xnu_macho_u32 data_size,
+				struct xnu_macho_x86_64_info *out)
+{
+	const unsigned char *payload;
+	const unsigned char *starts;
+	xnu_macho_u32 version;
+	xnu_macho_u32 starts_offset;
+	xnu_macho_u32 imports_offset;
+	xnu_macho_u32 symbols_offset;
+	xnu_macho_u32 imports_count;
+	xnu_macho_u32 imports_format;
+	xnu_macho_u32 symbols_format;
+	xnu_macho_u32 starts_segment_count;
+	xnu_macho_u32 starts_table_size;
+	unsigned long starts_size;
+	unsigned long imports_entry_size = 0;
+	unsigned long imports_table_size = 0;
+	unsigned long imports_range_end = 0;
+	unsigned long i;
+	unsigned long range_start[XNU_MACHO_X86_64_MAX_SEGMENTS];
+	unsigned long range_end[XNU_MACHO_X86_64_MAX_SEGMENTS];
+	unsigned long range_count = 0;
+
+	if (!file_range_ok(file_size, data_offset, data_size) ||
+	    data_size < DYLD_CHAINED_FIXUPS_HEADER_SIZE)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	payload = file + data_offset;
+	version = read_u32le(payload);
+	starts_offset = read_u32le(payload + 4);
+	imports_offset = read_u32le(payload + 8);
+	symbols_offset = read_u32le(payload + 12);
+	imports_count = read_u32le(payload + 16);
+	imports_format = read_u32le(payload + 20);
+	symbols_format = read_u32le(payload + 24);
+	if (version != 0)
+		return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
+	if (starts_offset < DYLD_CHAINED_FIXUPS_HEADER_SIZE ||
+	    (starts_offset & 3U) ||
+	    !relative_range_ok(data_size, starts_offset, sizeof(xnu_macho_u32)) ||
+	    imports_offset > data_size || symbols_offset > data_size ||
+	    (imports_offset && imports_offset < DYLD_CHAINED_FIXUPS_HEADER_SIZE) ||
+	    (symbols_offset && symbols_offset < DYLD_CHAINED_FIXUPS_HEADER_SIZE))
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	if (symbols_format > 1U)
+		return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
+	if (imports_count) {
+		switch (imports_format) {
+		case 1: imports_entry_size = 4; break;
+		case 2: imports_entry_size = 8; break;
+		case 3: imports_entry_size = 16; break;
+		default:
+			return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
+		}
+		imports_table_size = (unsigned long)imports_count * imports_entry_size;
+		if (imports_offset < DYLD_CHAINED_FIXUPS_HEADER_SIZE ||
+		    (imports_offset & 3U) ||
+		    !relative_range_ok(data_size, imports_offset,
+				       imports_table_size))
+			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+		imports_range_end = (unsigned long)imports_offset + imports_table_size;
+	} else if (imports_format > 3U) {
+		return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
+	}
+	if (imports_table_size && symbols_offset &&
+	    ranges_overlap(imports_offset, imports_range_end,
+			   symbols_offset, data_size))
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+
+	starts_size = data_size - starts_offset;
+	starts = payload + starts_offset;
+	starts_segment_count = read_u32le(starts);
+	if (starts_segment_count != out->segment_count ||
+	    starts_segment_count > XNU_MACHO_X86_64_MAX_SEGMENTS)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	starts_table_size = 4U + starts_segment_count * 4U;
+	if (starts_size < starts_table_size)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	if ((imports_table_size &&
+	     ranges_overlap(starts_offset, (unsigned long)starts_offset + starts_table_size,
+			imports_offset, imports_range_end)) ||
+	    (symbols_offset &&
+	     ranges_overlap(starts_offset, (unsigned long)starts_offset + starts_table_size,
+			    symbols_offset, data_size)))
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	out->chained_starts_segment_count = starts_segment_count;
+	for (i = 0; i < starts_segment_count; i++) {
+		xnu_macho_u32 segment_info_offset = read_u32le(starts + 4 + i * 4UL);
+		struct xnu_macho_x86_64_segment *segment = &out->segments[i];
+		unsigned long end;
+		unsigned long absolute_start;
+		unsigned long absolute_end;
+		unsigned long j;
+		int err;
+
+		if (!segment_info_offset)
+			continue;
+		err = parse_chained_starts_in_segment(starts, starts_size,
+						     starts_table_size,
+						     segment_info_offset,
+						     segment, out->vm_low);
+		if (err)
+			return err;
+		end = (unsigned long)segment_info_offset +
+		      read_u32le(starts + segment_info_offset);
+		absolute_start = (unsigned long)starts_offset + segment_info_offset;
+		absolute_end = (unsigned long)starts_offset + end;
+		if ((imports_table_size &&
+		     ranges_overlap(absolute_start, absolute_end,
+				    imports_offset, imports_range_end)) ||
+		    (symbols_offset &&
+		     ranges_overlap(absolute_start, absolute_end,
+				    symbols_offset, data_size)))
+			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+		for (j = 0; j < range_count; j++) {
+			if ((unsigned long)segment_info_offset < range_end[j] &&
+			    range_start[j] < end)
+				return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+		}
+		range_start[range_count] = segment_info_offset;
+		range_end[range_count] = end;
+		range_count++;
+		out->chained_starts_nonempty_segment_count++;
+	}
+	return 0;
+}
+
 static int parse_symtab(const unsigned char *file, unsigned long file_size,
 			unsigned long command_off,
 			xnu_macho_u32 command_size)
@@ -209,8 +475,10 @@ static int parse_segment(const unsigned char *file, unsigned long file_size,
 	segment->fileoff = read_u64le(file + command_off + 40);
 	segment->filesize = read_u64le(file + command_off + 48);
 	maxprot = read_u32le(file + command_off + 56);
+	segment->maxprot = maxprot;
 	segment->initprot = read_u32le(file + command_off + 60);
 	segment->nsects = read_u32le(file + command_off + 64);
+	segment->flags = read_u32le(file + command_off + 68);
 
 	if (segment->nsects >
 	    (command_size - SEGMENT_COMMAND_64_SIZE) / SECTION_64_SIZE)
@@ -281,6 +549,23 @@ static int parse_segment(const unsigned char *file, unsigned long file_size,
 	return 0;
 }
 
+static void export_segment_plan(struct xnu_macho_x86_64_segment *out,
+				const struct segment_info *in)
+{
+	unsigned long i;
+
+	for (i = 0; i < 16; i++)
+		out->name[i] = in->name[i];
+	out->vmaddr = in->vmaddr;
+	out->vmsize = in->vmsize;
+	out->fileoff = in->fileoff;
+	out->filesize = in->filesize;
+	out->maxprot = in->maxprot;
+	out->initprot = in->initprot;
+	out->flags = in->flags;
+	out->section_count = in->nsects;
+}
+
 int xnu_macho_x86_64_parse(const void *input, unsigned long file_size,
 			   struct xnu_macho_x86_64_info *out)
 {
@@ -293,6 +578,8 @@ int xnu_macho_x86_64_parse(const void *input, unsigned long file_size,
 	xnu_macho_u32 thread_count = 0;
 	xnu_macho_u32 dyld_info_count = 0;
 	xnu_macho_u32 chained_fixups_count = 0;
+	xnu_macho_u32 chained_fixups_data_offset = 0;
+	xnu_macho_u32 chained_fixups_data_size = 0;
 	xnu_macho_u32 symtab_count = 0;
 	xnu_macho_u32 entry_matches = 0;
 	xnu_macho_u64 entry = 0;
@@ -337,12 +624,17 @@ int xnu_macho_x86_64_parse(const void *input, unsigned long file_size,
 
 		if (command == LC_SEGMENT_64) {
 			struct segment_info segment;
+			struct xnu_macho_x86_64_segment *plan_segment;
 			xnu_macho_u64 vm_end;
 			int err = parse_segment(file, file_size, command_off,
 						command_size, &segment);
 
 			if (err)
 				return reject(out, err);
+			if (out->segment_count >= XNU_MACHO_X86_64_MAX_SEGMENTS)
+				return reject(out, -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP);
+			plan_segment = &out->segments[out->segment_count];
+			export_segment_plan(plan_segment, &segment);
 			out->segment_count++;
 			if (segment.vmsize && !is_pagezero(segment.name)) {
 				vm_end = segment.vmaddr + segment.vmsize;
@@ -377,6 +669,8 @@ int xnu_macho_x86_64_parse(const void *input, unsigned long file_size,
 			if (parse_linkedit_data(file, file_size, command_off,
 						command_size))
 				return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
+			chained_fixups_data_offset = read_u32le(file + command_off + 8);
+			chained_fixups_data_size = read_u32le(file + command_off + 12);
 			out->inspection_flags |= XNU_MACHO_X86_64_HAS_CHAINED_FIXUPS;
 			out->linkedit_data_command_count++;
 		} else if (command == LC_DYLD_INFO || command == LC_DYLD_INFO_ONLY) {
@@ -409,6 +703,14 @@ int xnu_macho_x86_64_parse(const void *input, unsigned long file_size,
 	if (command_off != command_end || thread_count != 1 ||
 	    !have_loaded_segment || out->vm_high <= out->vm_low)
 		return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
+	if (chained_fixups_count) {
+		int err = parse_chained_fixups(file, file_size,
+					       chained_fixups_data_offset,
+					       chained_fixups_data_size, out);
+
+		if (err)
+			return reject(out, err);
+	}
 
 	/* Entry validation is deliberately deferred until all commands are parsed. */
 	entry_matches = 0;

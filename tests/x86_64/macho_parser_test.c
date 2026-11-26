@@ -5,7 +5,10 @@
 
 #include "../../xnu-ko/macho_parse_x86_64.h"
 
-#define FILE_BYTES 1024U
+_Static_assert(sizeof(struct xnu_macho_x86_64_info) <= 2048,
+	       "parser result must stay bounded for kernel stack callers");
+
+#define FILE_BYTES 4096U
 #define HEADER_SIZE 32U
 #define PAGEZERO_OFF HEADER_SIZE
 #define PAGEZERO_SIZE 72U
@@ -36,6 +39,12 @@ static void put_u32(unsigned char *p, unsigned int value)
 	p[1] = (value >> 8) & 0xffU;
 	p[2] = (value >> 16) & 0xffU;
 	p[3] = (value >> 24) & 0xffU;
+}
+
+static void put_u16(unsigned char *p, unsigned short value)
+{
+	p[0] = value & 0xffU;
+	p[1] = (value >> 8) & 0xffU;
 }
 
 static void put_u64(unsigned char *p, unsigned long long value)
@@ -99,10 +108,13 @@ static void make_valid_image(unsigned char *file, unsigned int subtype)
 
 static int info_is_zero(const struct xnu_macho_x86_64_info *info)
 {
-	return !info->vm_low && !info->vm_high && !info->entry &&
-	       !info->segment_count && !info->mapped_segment_count &&
-	       !info->inspection_flags && !info->unclassified_load_command_count &&
-	       !info->linkedit_data_command_count && !info->reserved;
+	const unsigned char *bytes = (const unsigned char *)info;
+	unsigned int i;
+
+	for (i = 0; i < sizeof(*info); i++)
+		if (bytes[i])
+			return 0;
+	return 1;
 }
 
 static int expect_ok(const char *name, unsigned int subtype)
@@ -120,6 +132,13 @@ static int expect_ok(const char *name, unsigned int subtype)
 	    info.entry != 0x1100 || info.segment_count != 2 ||
 	    info.mapped_segment_count != 1 || info.inspection_flags ||
 	    info.unclassified_load_command_count || info.linkedit_data_command_count ||
+	    info.segments[0].vmaddr != 0 || info.segments[0].vmsize != 0x1000 ||
+	    info.segments[0].fileoff || info.segments[0].filesize ||
+	    memcmp(info.segments[0].name, "__PAGEZERO", 10) ||
+	    info.segments[1].vmaddr != 0x1000 || info.segments[1].vmsize != 0x2000 ||
+	    info.segments[1].fileoff || info.segments[1].filesize != 0x200 ||
+	    info.segments[1].maxprot != 5 || info.segments[1].initprot != 5 ||
+	    info.segments[1].section_count != 1 || info.segments[1].flags ||
 	    memcmp(file, original, sizeof(file))) {
 		fprintf(stderr, "FAIL: %s (result=%d, low=%llx, high=%llx, entry=%llx)\n",
 			name, result, info.vm_low, info.vm_high, info.entry);
@@ -139,9 +158,55 @@ static void append_command(unsigned char *file, unsigned int command,
 
 static void append_chained_fixups_valid(unsigned char *file)
 {
+	unsigned char *payload = file + 512;
+	unsigned char *starts = payload + 28;
+	unsigned char *segment = starts + 12;
+
 	append_command(file, LC_DYLD_CHAINED_FIXUPS, 16);
 	put_u32(file + COMMANDS_END + 8, 512);
-	put_u32(file + COMMANDS_END + 12, 32);
+	put_u32(file + COMMANDS_END + 12, 64);
+	put_u32(payload, 0); /* fixups_version */
+	put_u32(payload + 4, 28); /* starts_offset */
+	put_u32(payload + 8, 64); /* empty imports at end of blob */
+	put_u32(payload + 12, 64); /* empty symbols at end of blob */
+	put_u32(payload + 16, 0); /* imports_count */
+	put_u32(payload + 20, 0); /* imports_format */
+	put_u32(payload + 24, 0); /* uncompressed symbol strings */
+	put_u32(starts, 2); /* segment_count includes __PAGEZERO */
+	put_u32(starts + 4, 0); /* no starts for __PAGEZERO */
+	put_u32(starts + 8, 12); /* segment record offset relative to starts */
+	put_u32(segment, 24); /* 22-byte header + one page_start */
+	put_u32(segment + 4, 0x000b1000U); /* format 11, page size 4K */
+	put_u64(segment + 8, 0); /* __TEXT starts at image_vm_low */
+	put_u32(segment + 16, 0); /* max_valid_pointer */
+	put_u32(segment + 20, 1); /* page_count and first page_start */
+	put_u16(segment + 22, 0x10); /* structurally valid page offset */
+}
+
+static void append_chained_fixups_multi_valid(unsigned char *file)
+{
+	unsigned char *payload = file + 512;
+	unsigned char *starts = payload + 28;
+	unsigned char *segment = starts + 12;
+
+	append_command(file, LC_DYLD_CHAINED_FIXUPS, 16);
+	put_u32(file + COMMANDS_END + 8, 512);
+	put_u32(file + COMMANDS_END + 12, 72);
+	put_u32(payload + 4, 28);
+	put_u32(payload + 8, 72);
+	put_u32(payload + 12, 72);
+	put_u32(starts, 2);
+	put_u32(starts + 4, 0);
+	put_u32(starts + 8, 12);
+	put_u32(segment, 30); /* header + two page starts + two overflow entries */
+	put_u32(segment + 4, 0x000b1000U);
+	put_u64(segment + 8, 0);
+	put_u32(segment + 16, 0);
+	put_u32(segment + 20, 2); /* two 4K pages */
+	put_u16(segment + 22, 0x8002); /* MULTI points at overflow index 2 */
+	put_u16(segment + 24, 0xffff); /* second page has no chain */
+	put_u16(segment + 26, 0x10);
+	put_u16(segment + 28, 0x8020); /* LAST, start offset 0x20 */
 }
 
 static void append_chained_fixups_outside_file(unsigned char *file)
@@ -149,6 +214,168 @@ static void append_chained_fixups_outside_file(unsigned char *file)
 	append_command(file, LC_DYLD_CHAINED_FIXUPS, 16);
 	put_u32(file + COMMANDS_END + 8, FILE_BYTES - 8);
 	put_u32(file + COMMANDS_END + 12, 32);
+}
+
+static void append_chained_fixups_truncated_header(unsigned char *file)
+{
+	append_command(file, LC_DYLD_CHAINED_FIXUPS, 16);
+	put_u32(file + COMMANDS_END + 8, 512);
+	put_u32(file + COMMANDS_END + 12, 27);
+}
+
+static void append_chained_fixups_bad_version(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u32(file + 512, 1);
+}
+
+static void append_chained_fixups_bad_starts_offset(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u32(file + 512 + 4, 0xfffffff8U);
+}
+
+static void append_chained_fixups_unaligned_starts_offset(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u32(file + 512 + 4, 29);
+}
+
+static void append_chained_fixups_bad_import_extent(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u32(file + 512 + 8, 60);
+	put_u32(file + 512 + 16, 2);
+	put_u32(file + 512 + 20, 1);
+}
+
+static void append_chained_fixups_imports_overlap_starts(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u32(file + 512 + 8, 40);
+	put_u32(file + 512 + 16, 1);
+	put_u32(file + 512 + 20, 1);
+}
+
+static void append_chained_fixups_symbols_overlap_starts(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u32(file + 512 + 12, 40);
+}
+
+static void append_chained_fixups_imports_overlap_symbols(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u32(file + 512 + 8, 40);
+	put_u32(file + 512 + 12, 42);
+	put_u32(file + 512 + 16, 1);
+	put_u32(file + 512 + 20, 1);
+}
+
+static void append_chained_fixups_bad_segment_count(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u32(file + 512 + 28, 1);
+}
+
+static void append_chained_fixups_segment_offset_outside_blob(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u32(file + 512 + 28 + 8, 64);
+}
+
+static void append_chained_fixups_starts_table_short(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u32(file + COMMANDS_END + 12, 38);
+}
+
+static void append_chained_fixups_segment_offset_overlaps_table(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u32(file + 512 + 28 + 8, 4);
+}
+
+static void append_chained_fixups_segment_size_short(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u32(file + 512 + 28 + 12, 22);
+}
+
+static void append_chained_fixups_bad_page_size(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u16(file + 512 + 28 + 12 + 4, 0x2000);
+}
+
+static void append_chained_fixups_bad_pointer_format(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u16(file + 512 + 28 + 12 + 6, 0x7777);
+}
+
+static void append_chained_fixups_bad_segment_vm_offset(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u64(file + 512 + 28 + 12 + 8, 8);
+}
+
+static void append_chained_fixups_page_count_exceeds_segment(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u32(file + 512 + 28 + 12, 28);
+	put_u16(file + 512 + 28 + 12 + 20, 3);
+}
+
+static void append_chained_fixups_zero_page_count(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u32(file + 512 + 28 + 12, 22);
+	put_u16(file + 512 + 28 + 12 + 20, 0);
+}
+
+static void append_chained_fixups_simple_start_outside_page(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u16(file + 512 + 28 + 12 + 22, 0x0fff);
+}
+
+static void append_chained_fixups_multi_index_outside_record(unsigned char *file)
+{
+	append_chained_fixups_multi_valid(file);
+	put_u16(file + 512 + 28 + 12 + 22, 0x8004);
+}
+
+static void append_chained_fixups_multi_list_missing_last(unsigned char *file)
+{
+	append_chained_fixups_multi_valid(file);
+	put_u16(file + 512 + 28 + 12 + 28, 0x0020);
+}
+
+static void append_chained_fixups_multi_start_outside_page(unsigned char *file)
+{
+	append_chained_fixups_multi_valid(file);
+	put_u16(file + 512 + 28 + 12 + 28, 0x8fff);
+}
+
+static void append_dummy_segments(unsigned char *file, unsigned int count)
+{
+	unsigned int i;
+
+	for (i = 0; i < count; i++) {
+		unsigned char *command = file + COMMANDS_END + i * 72U;
+
+		put_u32(command, LC_SEGMENT_64);
+		put_u32(command + 4, 72);
+		put_name(command + 8, "__DUMMY");
+	}
+	put_u32(file + 16, 3 + count);
+	put_u32(file + 20, COMMAND_BYTES + count * 72U);
+}
+
+static void too_many_segments(unsigned char *file)
+{
+	append_dummy_segments(file, XNU_MACHO_X86_64_MAX_SEGMENTS - 1U);
 }
 
 static void append_dyld_info_valid(unsigned char *file)
@@ -209,11 +436,60 @@ static int expect_metadata(const char *name, void (*mutate)(unsigned char *),
 	    info.linkedit_data_command_count != expected_linkedit_count ||
 	    info.unclassified_load_command_count != expected_unclassified_count ||
 	    info.vm_low != 0x1000 || info.vm_high != 0x3000 || info.entry != 0x1100 ||
+	    ((expected_flags & XNU_MACHO_X86_64_HAS_CHAINED_FIXUPS) &&
+	     (info.chained_starts_segment_count != 2 ||
+	      info.chained_starts_nonempty_segment_count != 1 ||
+	      info.segments[1].chained_pointer_format != 11 ||
+	      info.segments[1].chained_page_size != 0x1000 ||
+	      !info.segments[1].chained_page_count)) ||
 	    memcmp(file, original, sizeof(file))) {
 		fprintf(stderr, "FAIL: %s (result=%d flags=%x linkedit=%u unknown=%u)\n",
 			name, result, info.inspection_flags,
 			info.linkedit_data_command_count,
 			info.unclassified_load_command_count);
+		return 1;
+	}
+	return 0;
+}
+
+static int expect_multi_chained_fixups(void)
+{
+	unsigned char file[FILE_BYTES];
+	unsigned char original[FILE_BYTES];
+	struct xnu_macho_x86_64_info info;
+	int result;
+
+	make_valid_image(file, CPU_SUBTYPE_X86_64_ALL);
+	append_chained_fixups_multi_valid(file);
+	memcpy(original, file, sizeof(file));
+	result = xnu_macho_x86_64_parse(file, FILE_BYTES, &info);
+	if (result || info.chained_starts_segment_count != 2 ||
+	    info.chained_starts_nonempty_segment_count != 1 ||
+	    info.segments[1].chained_pointer_format != 11 ||
+	    info.segments[1].chained_page_size != 0x1000 ||
+	    info.segments[1].chained_page_count != 2 ||
+	    memcmp(file, original, sizeof(file))) {
+		fprintf(stderr, "FAIL: valid multi-start fixups (result=%d, page_count=%u)\n",
+			result, info.segments[1].chained_page_count);
+		return 1;
+	}
+	return 0;
+}
+
+static int expect_segment_plan_capacity(void)
+{
+	unsigned char file[FILE_BYTES];
+	struct xnu_macho_x86_64_info info;
+	int result;
+
+	make_valid_image(file, CPU_SUBTYPE_X86_64_ALL);
+	append_dummy_segments(file, XNU_MACHO_X86_64_MAX_SEGMENTS - 2U);
+	result = xnu_macho_x86_64_parse(file, FILE_BYTES, &info);
+	if (result || info.segment_count != XNU_MACHO_X86_64_MAX_SEGMENTS ||
+	    memcmp(info.segments[XNU_MACHO_X86_64_MAX_SEGMENTS - 1U].name,
+		   "__DUMMY", 7)) {
+		fprintf(stderr, "FAIL: segment plan capacity (result=%d count=%u)\n",
+			result, info.segment_count);
 		return 1;
 	}
 	return 0;
@@ -388,6 +664,75 @@ int main(void)
 	failures += expect_rejected("chained-fixup extent outside file",
 				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
 				    FILE_BYTES, append_chained_fixups_outside_file);
+	failures += expect_rejected("truncated chained-fixups header",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_truncated_header);
+	failures += expect_rejected("unsupported chained-fixups version",
+				    -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP,
+				    FILE_BYTES, append_chained_fixups_bad_version);
+	failures += expect_rejected("chained-fixups starts offset outside blob",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_bad_starts_offset);
+	failures += expect_rejected("chained-fixups starts offset unaligned",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_unaligned_starts_offset);
+	failures += expect_rejected("chained-fixups import table outside blob",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_bad_import_extent);
+	failures += expect_rejected("chained imports overlap starts records",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_imports_overlap_starts);
+	failures += expect_rejected("chained symbols overlap starts records",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_symbols_overlap_starts);
+	failures += expect_rejected("chained imports overlap symbols",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_imports_overlap_symbols);
+	failures += expect_rejected("chained starts segment count mismatch",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_bad_segment_count);
+	failures += expect_rejected("chained starts offset table truncated",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_starts_table_short);
+	failures += expect_rejected("chained segment record overlaps offset table",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_segment_offset_overlaps_table);
+	failures += expect_rejected("chained segment record offset outside blob",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_segment_offset_outside_blob);
+	failures += expect_rejected("chained segment record too short",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_segment_size_short);
+	failures += expect_rejected("unsupported chained page size",
+				    -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP,
+				    FILE_BYTES, append_chained_fixups_bad_page_size);
+	failures += expect_rejected("unsupported chained pointer format",
+				    -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP,
+				    FILE_BYTES, append_chained_fixups_bad_pointer_format);
+	failures += expect_rejected("chained segment VM offset mismatch",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_bad_segment_vm_offset);
+	failures += expect_rejected("chained page count exceeds segment",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_page_count_exceeds_segment);
+	failures += expect_rejected("chained starts has zero page count",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_zero_page_count);
+	failures += expect_rejected("chained page start outside page",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_simple_start_outside_page);
+	failures += expect_rejected("multi-start index outside record",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_multi_index_outside_record);
+	failures += expect_rejected("multi-start list lacks LAST marker",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_multi_list_missing_last);
+	failures += expect_rejected("multi-start offset outside page",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_chained_fixups_multi_start_outside_page);
+	failures += expect_rejected("segment plan exceeds its bounded capacity",
+				    -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP,
+				    FILE_BYTES, too_many_segments);
 	failures += expect_rejected("dyld-info extent outside file",
 				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
 				    FILE_BYTES, append_dyld_info_outside_file);
@@ -401,6 +746,8 @@ int main(void)
 	failures += expect_metadata("chained-fixup command is flagged",
 				    append_chained_fixups_valid,
 				    XNU_MACHO_X86_64_HAS_CHAINED_FIXUPS, 1, 0);
+	failures += expect_multi_chained_fixups();
+	failures += expect_segment_plan_capacity();
 	failures += expect_metadata("dyld-info extents are flagged",
 				    append_dyld_info_valid,
 				    XNU_MACHO_X86_64_HAS_DYLD_INFO, 0, 0);

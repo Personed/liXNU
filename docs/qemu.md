@@ -10,6 +10,11 @@ The launcher needs Python 3, `qemu-system-aarch64`, and a matching pair of AArch
 variable-store images. Use one writable copy of the variables image per VM. The defaults are 4
 guest CPUs and 16 GiB of guest RAM. Allow additional RAM for the physical host.
 
+The current complete PureDarwin reference profile assigns 16 GiB to the ARM64 guest. Plan for at
+least 20 GiB of physical host RAM and 4 GiB available before starting QEMU. This is a planning
+screen from virtualized CI results, not a measured minimum; the physical RAM floor is not known.
+See the [validation matrix](portability-validation.md) for the evidence and limits.
+
 ## Tested host and guest architectures
 
 CI starts the ARM64 guest through UEFI on Ubuntu 24.04 x86-64 and ARM64, Windows Server 2025

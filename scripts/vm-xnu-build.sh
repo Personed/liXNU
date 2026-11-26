@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-only
-# Inside the arm64 Ubuntu VM: the DroidVM Linux toolchain (native compile, no Darling: the kernel build does not need it)
-# and the xnu-12377 kernel from source.
+# On the Ubuntu build machine: the DroidVM Linux toolchain (native compile, no Darling: the kernel build does not need
+# it) and the xnu-12377 kernel from source.
 set -ex
 POC=$(cd "$(dirname "$0")/.." && pwd)
 export DEBIAN_FRONTEND=noninteractive
@@ -16,17 +16,21 @@ sudo -E apt-get install -y -qq build-essential autoconf automake libtool pkg-con
 mkdir -p ~/w && cd ~/w
 [ -d dvm ] || git clone -q https://github.com/Droid-VM/macOS-DroidVM dvm
 cd dvm
-python3 - <<'PY'
+HOST_MULTIARCH=$(dpkg-architecture -qDEB_HOST_MULTIARCH 2>/dev/null || printf '%s-linux-gnu' "$(uname -m)")
+python3 - "$HOST_MULTIARCH" <<'PY'
+import sys
 p='scripts/setup-env.py'; s=open(p).read()
 a=s.find("    apple = linux / 'appleclang'"); b=s.find("    # bin26: the kernel's adapters")
 if a>0 and b>a:
     s=s[:a]+"    # (xnupoc) no Darling/AppleClang: native_compile builds the kernel with host LLVM\n"+s[b:]
     open(p,'w').write(s)
 s=open(p).read()
-# arm64 host: the committed gunyah-linux.mk names x86_64 multiarch paths
+# The committed gunyah-linux.mk names x86_64 multiarch paths; non-x86 build hosts substitute their own.
+multiarch=sys.argv[1]
 k="    (X / 'gunyah-linux.mk').write_text('\\n'.join(lines) + '\\n')"
-if k in s and 'aarch64-linux-gnu' not in s:
-    s=s.replace(k, k.replace("'\\n'.join(lines)", "'\\n'.join(lines).replace('x86_64-linux-gnu', 'aarch64-linux-gnu')"))
+patch=k.replace("'\\n'.join(lines)", f"'\\n'.join(lines).replace('x86_64-linux-gnu', '{multiarch}')")
+if k in s and multiarch != 'x86_64-linux-gnu' and patch not in s:
+    s=s.replace(k, patch)
     open(p,'w').write(s)
 PY
 # cctools' foreign mach/machine headers know x86 only; host tools (kextsymboltool, ...) only need LP64 types.

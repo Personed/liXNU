@@ -38,6 +38,8 @@ case "${1-}" in
 esac
 [[ "$#" -le 1 ]] || { usage >&2; fail 'too many arguments'; }
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+
 readonly XNU_URL='https://github.com/apple-oss-distributions/xnu.git'
 readonly XNU_COMMIT='ac9718fb1af618d5ce8678d0dc6e8a58f252216f'
 readonly XNU_TAG='xnu-12377.121.6'
@@ -97,16 +99,23 @@ OUT_DIR="$BUILD_ROOT/out"
 BASE_SDK_DIR=''
 HOST_CLANG=''
 HOST_OS_VERSION=''
+CLANG=''
+CXX_CLANG=''
 HOST_SYS_UNISTD_BASE_SHA256=''
 HOST_SYS_UNISTD_OVERLAY_SHA256=''
 XNU_HEADER_TREE_DIAGNOSTICS_RECORDED='false'
 XNU_TARGET_INCLUDE_PATHS_VERIFIED='false'
+XNU_TARGET_SYSROOT_MODE='unknown'
 XNU_WARNING_POLICY_VERIFIED='false'
 XNU_GENERIC_SDK_HEADER_DEPENDENCY_COUNT='unknown'
 XNU_TARGET_DEPENDENCY_FILE_COUNT='unknown'
 XNU_DEPENDENCY_FILE_ENTRY_COUNT='unknown'
 XNU_HEADER_DEPENDENCY_COUNT='unknown'
 XNU_MISSING_DEPENDENCY_FILE_COUNT='unknown'
+XNU_TARGET_SDKROOT_OVERLAY_NOTE_COUNT='unknown'
+XNU_TARGET_SDKROOT_BASE_NOTE_COUNT='unknown'
+XNU_TARGET_NO_EXPLICIT_SYSROOT_COMMAND_COUNT='unknown'
+XNU_OVERLAY_HEADER_DEPENDENCY_COUNT='unknown'
 HOST_TOOL_UNISTD_BASE_PROBE_LOG="$OUT_DIR/host-tool-unistd-base-probe.log"
 HOST_TOOL_UNISTD_OVERLAY_PROBE_LOG="$OUT_DIR/host-tool-unistd-overlay-probe.log"
 SDK_DIR="$OUT_DIR/sdk/MacOSX26.1.sdk"
@@ -279,22 +288,50 @@ verify_host_tool_unistd_probe() {
 }
 
 verify_xnu_warning_policy() {
+  local -a warning_exceptions=(
+    -Wno-error=reserved-identifier
+    -Wno-error=unused-but-set-variable
+    -Wno-error=void-pointer-to-enum-cast
+  )
   : > "$XNU_WARNING_DIAGNOSTIC_LOG"
-  if ! printf 'extern int __xnu_reserved_warning_probe;\n' |
-    "$CLANG" -Weverything -Werror -Wno-error=reserved-identifier -fsyntax-only -x c - \
+  if ! cat <<'PROBES' | "$CLANG" -Weverything -Werror "${warning_exceptions[@]}" -fsyntax-only -x c - \
       >>"$XNU_WARNING_DIAGNOSTIC_LOG" 2>&1; then
+extern int __xnu_reserved_warning_probe;
+enum xnu_void_enum_probe { XNU_VOID_ENUM_VALUE };
+enum xnu_void_enum_probe xnu_convert_void_pointer(void *);
+enum xnu_void_enum_probe xnu_convert_void_pointer(void *value) {
+  return (enum xnu_void_enum_probe)value;
+}
+int main(void) {
+  int xnu_set_but_unused;
+  xnu_set_but_unused = 1;
+  return (int)xnu_convert_void_pointer((void *)0) + __xnu_reserved_warning_probe;
+}
+PROBES
     fail "selective reserved-identifier warning probe failed; see $XNU_WARNING_DIAGNOSTIC_LOG"
   fi
   grep -Fq 'reserved-identifier' "$XNU_WARNING_DIAGNOSTIC_LOG" \
     || fail "reserved-identifier probe did not exercise the expected warning; see $XNU_WARNING_DIAGNOSTIC_LOG"
-  if printf 'void xnu_other_warning_probe(void) { int unused; }\n' |
-    "$CLANG" -Weverything -Werror -Wno-error=reserved-identifier -Werror=unused-variable \
+  grep -Fq 'unused-but-set-variable' "$XNU_WARNING_DIAGNOSTIC_LOG" \
+    || fail "unused-but-set-variable probe did not exercise the expected warning; see $XNU_WARNING_DIAGNOSTIC_LOG"
+  grep -Fq 'void-pointer-to-enum-cast' "$XNU_WARNING_DIAGNOSTIC_LOG" \
+    || fail "void-pointer-to-enum-cast probe did not exercise the expected warning; see $XNU_WARNING_DIAGNOSTIC_LOG"
+
+  if ! printf 'int main(void) { int unused; return 0; }\n' |
+    "$CLANG" -Weverything -Wunused-variable -fsyntax-only -x c - \
+      >>"$XNU_WARNING_DIAGNOSTIC_LOG" 2>&1; then
+    fail "baseline unused-variable probe failed without global -Werror; see $XNU_WARNING_DIAGNOSTIC_LOG"
+  fi
+  grep -Fq 'warning: unused variable' "$XNU_WARNING_DIAGNOSTIC_LOG" \
+    || fail "baseline probe did not emit unused-variable warning; see $XNU_WARNING_DIAGNOSTIC_LOG"
+  if printf 'int main(void) { int unused; return 0; }\n' |
+    "$CLANG" -Weverything -Wunused-variable -Werror "${warning_exceptions[@]}" \
       -fsyntax-only -x c - >>"$XNU_WARNING_DIAGNOSTIC_LOG" 2>&1; then
-    fail "general warning probe unexpectedly passed with -Werror; see $XNU_WARNING_DIAGNOSTIC_LOG"
+    fail "general warning probe unexpectedly passed with global -Werror; see $XNU_WARNING_DIAGNOSTIC_LOG"
   fi
   grep -Fq 'error: unused variable' "$XNU_WARNING_DIAGNOSTIC_LOG" \
-    || fail "general warning probe did not remain an error; see $XNU_WARNING_DIAGNOSTIC_LOG"
-  printf 'reserved_identifier_warning=nonfatal\nother_warnings_remain_errors=true\n' \
+    || fail "global -Werror did not promote the unrelated warning; see $XNU_WARNING_DIAGNOSTIC_LOG"
+  printf 'reserved_identifier_warning=nonfatal\nunused_but_set_variable_warning=nonfatal\nvoid_pointer_to_enum_cast_warning=nonfatal\nother_warnings_remain_errors=true\n' \
     >> "$XNU_WARNING_DIAGNOSTIC_LOG"
   XNU_WARNING_POLICY_VERIFIED='true'
 }
@@ -402,211 +439,11 @@ PY
 }
 
 verify_xnu_target_compile_commands() {
-  if ! python3 - "$LOG" "$OBJROOT" "$SDK_DIR" "$BASE_SDK_DIR" "$SOURCE_DIR" "$XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG" <<'PY'
-import pathlib
-import re
-import shlex
-import sys
-
-log_path = pathlib.Path(sys.argv[1])
-objroot = pathlib.Path(sys.argv[2]).resolve()
-sdk_root = pathlib.Path(sys.argv[3]).resolve()
-base_sdk_root = pathlib.Path(sys.argv[4]).resolve()
-source_root = pathlib.Path(sys.argv[5]).resolve()
-diagnostic_path = pathlib.Path(sys.argv[6])
-excluded_suffixes = {
-    "kernel_usr_local": "usr/local/include/kernel",
-    "iBoot_usr_local": "usr/local/include/iBoot",
-    "Kernel_framework_AppleFeatures": "System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/AppleFeatures",
-    "Kernel_framework_platform": "System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/platform",
-}
-excluded_paths = {name: [sdk_root / suffix, base_sdk_root / suffix] for name, suffix in excluded_suffixes.items()}
-private_include_root = sdk_root / "usr/local/include"
-ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
-
-def include_paths(tokens):
-    paths = []
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        if token == "-I" and index + 1 < len(tokens):
-            paths.append(pathlib.Path(tokens[index + 1]).resolve())
-            index += 2
-            continue
-        if token.startswith("-I") and len(token) > 2:
-            paths.append(pathlib.Path(token[2:]).resolve())
-        index += 1
-    return paths
-
-def dependency_entries(path):
-    text = path.read_text(errors="replace").replace("\\\r\n", " ").replace("\\\n", " ")
-    first_rule = next((line for line in text.splitlines() if line.strip()), "")
-    _, separator, dependencies = first_rule.partition(":")
-    if not separator:
-        raise SystemExit(f"compiler dependency file has no rule separator: {path}")
-    return shlex.split(dependencies)
-
-def resolve_dependency(token, depfile):
-    raw = pathlib.Path(token)
-    candidates = [raw] if raw.is_absolute() else [
-        pathlib.Path.cwd() / raw,
-        source_root / raw,
-        depfile.parent / raw,
-    ]
-    for candidate in candidates:
-        resolved = candidate.resolve()
-        if resolved.is_file():
-            return resolved
-    return candidates[0].resolve()
-
-def path_is_within(path, root):
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False
-
-target_commands = []
-for raw_line in log_path.read_text(errors="replace").splitlines():
-    raw_line = ansi.sub("", raw_line)
-    try:
-        tokens = shlex.split(raw_line)
-    except ValueError:
-        continue
-    if len(tokens) < 2 or "-mkernel" not in tokens or "-c" not in tokens:
-        continue
-    executable = pathlib.PurePath(tokens[0]).name
-    if executable not in ("clang", "clang++"):
-        continue
-    sysroots = [
-        pathlib.Path(tokens[index + 1]).resolve()
-        for index, token in enumerate(tokens[:-1]) if token == "-isysroot"
-    ]
-    target_commands.append((tokens, include_paths(tokens), sysroots))
-
-target_dependency_files = []
-target_commands_without_depfile = []
-for index, (tokens, _, _) in enumerate(target_commands, 1):
-    depfile_tokens = [
-        tokens[position + 1]
-        for position, token in enumerate(tokens[:-1]) if token == "-MF"
-    ]
-    if not depfile_tokens:
-        target_commands_without_depfile.append(index)
-        continue
-    for token in depfile_tokens:
-        raw = pathlib.Path(token)
-        candidates = [raw] if raw.is_absolute() else [
-            pathlib.Path.cwd() / raw,
-            source_root / raw,
-            objroot / raw,
-        ]
-        resolved = next((candidate.resolve() for candidate in candidates if candidate.resolve().is_file()), candidates[0].resolve())
-        if resolved not in target_dependency_files:
-            target_dependency_files.append(resolved)
-
-dependency_entries_seen = []
-missing_dependency_files = []
-excluded_tree_dependencies = {name: [] for name in excluded_paths}
-missing_target_dependency_files = [path for path in target_dependency_files if not path.is_file()]
-for path in target_dependency_files:
-    if not path.is_file():
-        continue
-    for token in dependency_entries(path):
-        resolved = resolve_dependency(token, path)
-        dependency_entries_seen.append((path, token, resolved))
-        if not resolved.is_file():
-            missing_dependency_files.append((path, token, resolved))
-        for name, excluded_path in excluded_paths.items():
-            if any(path_is_within(resolved, root) for root in excluded_path):
-                excluded_tree_dependencies[name].append((path, resolved))
-header_dependencies = [
-    (depfile, token, resolved)
-    for depfile, token, resolved in dependency_entries_seen
-    if resolved.suffix.lower() in {".h", ".hh", ".hpp", ".hxx", ".inc", ".def"}
-]
-
-diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
-commands_without_werror = [
-    index for index, (tokens, _, _) in enumerate(target_commands, 1) if "-Werror" not in tokens
-]
-commands_without_reserved_identifier_policy = [
-    index for index, (tokens, _, _) in enumerate(target_commands, 1)
-    if "-Wno-error=reserved-identifier" not in tokens
-]
-reserved_identifier_policy_before_werror = []
-for index, (tokens, _, _) in enumerate(target_commands, 1):
-    error_positions = [position for position, token in enumerate(tokens) if token == "-Werror"]
-    policy_positions = [position for position, token in enumerate(tokens) if token == "-Wno-error=reserved-identifier"]
-    if error_positions and policy_positions and max(policy_positions) < max(error_positions):
-        reserved_identifier_policy_before_werror.append(index)
-with diagnostic_path.open("w", encoding="utf-8") as diagnostic:
-    diagnostic.write(f"target_xnu_compile_commands={len(target_commands)}\n")
-    diagnostic.write(f"target_commands_without_depfile={len(target_commands_without_depfile)}\n")
-    diagnostic.write(f"target_dependency_files={len(target_dependency_files)}\n")
-    diagnostic.write(f"missing_target_dependency_files={len(missing_target_dependency_files)}\n")
-    diagnostic.write(f"target_dependency_file_entries={len(dependency_entries_seen)}\n")
-    diagnostic.write(f"target_header_dependencies={len(header_dependencies)}\n")
-    diagnostic.write(f"missing_dependency_files={len(missing_dependency_files)}\n")
-    diagnostic.write(f"excluded_sdk_header_dependencies={sum(map(len, excluded_tree_dependencies.values()))}\n")
-    diagnostic.write(f"target_commands_with_werror={len(target_commands) - len(commands_without_werror)}\n")
-    diagnostic.write(f"target_commands_with_reserved_identifier_policy={len(target_commands) - len(commands_without_reserved_identifier_policy)}\n")
-    diagnostic.write(f"target_commands_with_reserved_identifier_policy_after_werror={len(target_commands) - len(reserved_identifier_policy_before_werror)}\n")
-    diagnostic.write(f"private_usr_local_include_root={private_include_root} directory_exists={private_include_root.is_dir()} headers={len(list(private_include_root.rglob('*.h'))) if private_include_root.is_dir() else 0}\n")
-    for name, paths in excluded_paths.items():
-        for index, path in enumerate(paths):
-            headers = list(path.rglob("*.h")) if path.is_dir() else []
-            root_label = "overlay" if index == 0 else "base_sdk"
-            diagnostic.write(f"{name}_{root_label}_excluded_include_path={path} directory_exists={path.is_dir()} headers={len(headers)} dependency_references={len(excluded_tree_dependencies[name])}\n")
-        for depfile, header in excluded_tree_dependencies[name][:5]:
-            diagnostic.write(f"{name}_dependency_file={depfile} header={header}\n")
-    for depfile, token, resolved in missing_dependency_files[:20]:
-        diagnostic.write(f"missing_dependency_file={depfile} token={token} resolved={resolved}\n")
-    for depfile in missing_target_dependency_files[:20]:
-        diagnostic.write(f"missing_target_dependency_file={depfile}\n")
-    for depfile, token, resolved in header_dependencies:
-        diagnostic.write(f"header_dependency={depfile} token={token} resolved={resolved} exists={resolved.is_file()}\n")
-    for index, (_, paths, sysroots) in enumerate(target_commands, 1):
-        selected = [str(path) for path in paths if path == private_include_root or any(path in roots for roots in excluded_paths.values())]
-        diagnostic.write(f"target_command_{index}_sysroots={' '.join(map(str, sysroots))}\n")
-        diagnostic.write(f"target_command_{index}_sdk_include_paths={' '.join(selected)}\n")
-
-if not target_commands:
-    raise SystemExit(f"no XNU target clang compile commands found in {log_path}")
-if target_commands_without_depfile:
-    raise SystemExit(f"XNU target clang commands are missing -MF dependency files: {target_commands_without_depfile[:10]}")
-if not target_dependency_files:
-    raise SystemExit(f"no -MF dependency files found in XNU target clang commands in {log_path}")
-if missing_target_dependency_files:
-    raise SystemExit(f"XNU target clang dependency files are missing: {missing_target_dependency_files[:5]}")
-if not dependency_entries_seen:
-    raise SystemExit(f"no dependency entries found in XNU target dependency files under {objroot}")
-if missing_dependency_files:
-    raise SystemExit(f"XNU compiler dependency files reference missing inputs: {missing_dependency_files[:5]}")
-if any(excluded_tree_dependencies.values()):
-    details = {name: entries[:3] for name, entries in excluded_tree_dependencies.items() if entries}
-    raise SystemExit(f"XNU target dependencies unexpectedly reference removed SDK header roots: {details}")
-if commands_without_werror:
-    raise SystemExit(f"XNU target clang commands lost general -Werror policy: {commands_without_werror[:10]}")
-if commands_without_reserved_identifier_policy:
-    raise SystemExit(f"XNU target clang commands lack the selective reserved-identifier policy: {commands_without_reserved_identifier_policy[:10]}")
-if reserved_identifier_policy_before_werror:
-    raise SystemExit(f"selective reserved-identifier policy precedes global -Werror in target commands: {reserved_identifier_policy_before_werror[:10]}")
-for index, (_, paths, sysroots) in enumerate(target_commands, 1):
-    if sysroots != [sdk_root]:
-        raise SystemExit(f"target clang command {index} uses sysroots {sysroots}; expected isolated XNU SDK {sdk_root}")
-    if private_include_root not in paths:
-        raise SystemExit(f"target clang command {index} is missing staged private include root {private_include_root}")
-    present = [name for name, roots in excluded_paths.items() if any(path in paths for path in roots)]
-    if present:
-        raise SystemExit(f"target clang command {index} still searches excluded SDK roots: {present}")
-print(
-    f"Verified {len(target_commands)} XNU target clang commands: staged usr/local/include is preserved, all four absent generic "
-    f"SDK roots are omitted, -Werror remains active with only reserved-identifier nonfatal, and all {len(dependency_entries_seen)} dependency entries exist "
-    f"({len(target_dependency_files)} target dependency files scanned)."
-)
-PY
-  then
+  if ! python3 "$SCRIPT_DIR/verify-xnu-target-build.py" \
+    --log "$LOG" --objroot "$OBJROOT" --sdk-root "$SDK_DIR" \
+    --base-sdk-root "$BASE_SDK_DIR" --source-root "$SOURCE_DIR" \
+    --diagnostic "$XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG" \
+    --clang "$CLANG" --clangxx "$CXX_CLANG"; then
     fail "XNU target include commands/dependencies are inconsistent; see $XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG"
   fi
   XNU_TARGET_INCLUDE_PATHS_VERIFIED='true'
@@ -615,8 +452,22 @@ PY
   XNU_DEPENDENCY_FILE_ENTRY_COUNT="$(awk -F= '$1 == "target_dependency_file_entries" { print $2 }' "$XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG")"
   XNU_HEADER_DEPENDENCY_COUNT="$(awk -F= '$1 == "target_header_dependencies" { print $2 }' "$XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG")"
   XNU_MISSING_DEPENDENCY_FILE_COUNT="$(awk -F= '$1 == "missing_dependency_files" { print $2 }' "$XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG")"
-  [[ "$XNU_GENERIC_SDK_HEADER_DEPENDENCY_COUNT" =~ ^[0-9]+$ && "$XNU_TARGET_DEPENDENCY_FILE_COUNT" =~ ^[1-9][0-9]*$ && "$XNU_DEPENDENCY_FILE_ENTRY_COUNT" =~ ^[1-9][0-9]*$ && "$XNU_HEADER_DEPENDENCY_COUNT" =~ ^[1-9][0-9]*$ && "$XNU_MISSING_DEPENDENCY_FILE_COUNT" == 0 ]] \
-    || fail "dependency diagnostic counts are incomplete or nonzero in $XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG"
+  XNU_TARGET_SYSROOT_MODE="$(awk -F= '$1 == "target_sdkroot_resolution_mode" { print $2 }' "$XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG")"
+  XNU_TARGET_SDKROOT_OVERLAY_NOTE_COUNT="$(awk -F= '$1 == "sdkroot_overlay_notes" { print $2 }' "$XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG")"
+  XNU_TARGET_SDKROOT_BASE_NOTE_COUNT="$(awk -F= '$1 == "sdkroot_base_notes" { print $2 }' "$XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG")"
+  XNU_TARGET_NO_EXPLICIT_SYSROOT_COMMAND_COUNT="$(awk -F= '$1 == "target_commands_without_explicit_isysroot" { print $2 }' "$XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG")"
+  XNU_OVERLAY_HEADER_DEPENDENCY_COUNT="$(awk -F= '$1 == "overlay_header_dependencies" { print $2 }' "$XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG")"
+  [[ "$XNU_GENERIC_SDK_HEADER_DEPENDENCY_COUNT" =~ ^[0-9]+$ && \
+     "$XNU_TARGET_DEPENDENCY_FILE_COUNT" =~ ^[1-9][0-9]*$ && \
+     "$XNU_DEPENDENCY_FILE_ENTRY_COUNT" =~ ^[1-9][0-9]*$ && \
+     "$XNU_HEADER_DEPENDENCY_COUNT" =~ ^[1-9][0-9]*$ && \
+     "$XNU_MISSING_DEPENDENCY_FILE_COUNT" == 0 && \
+     "$XNU_TARGET_SYSROOT_MODE" =~ ^(sdkroot-resolved-no-explicit-isysroot|explicit-isysroot-overlay|mixed-explicit-and-sdkroot)$ && \
+     "$XNU_TARGET_SDKROOT_OVERLAY_NOTE_COUNT" =~ ^[1-9][0-9]*$ && \
+     "$XNU_TARGET_SDKROOT_BASE_NOTE_COUNT" =~ ^[0-9]+$ && \
+     "$XNU_TARGET_NO_EXPLICIT_SYSROOT_COMMAND_COUNT" =~ ^[0-9]+$ && \
+     "$XNU_OVERLAY_HEADER_DEPENDENCY_COUNT" =~ ^[1-9][0-9]*$ ]] \
+    || fail "XNU SDK-root and dependency diagnostics are incomplete or invalid in $XNU_TARGET_INCLUDE_DIAGNOSTIC_LOG"
 }
 
 verify_firehose_header_closure() {
@@ -876,6 +727,7 @@ if (( CHECK_ONLY )); then
     || fail 'recorded SDK public availability header SHA-256 is malformed'
   verify_sdk
   verify_host_tool_unistd_probe "$BASE_SDK_DIR" 'base Xcode'
+  python3 "$SCRIPT_DIR/verify-xnu-target-build.py" --self-test
   xcodebuild -version
   xcrun --find clang >/dev/null
   xcrun --find ld >/dev/null
@@ -927,9 +779,11 @@ fi
 verify_availability_source
 
 verify_xcode_and_sdk
+python3 "$SCRIPT_DIR/verify-xnu-target-build.py" --self-test
 : > "$HOST_TOOL_UNISTD_BASE_PROBE_LOG"
 verify_host_tool_unistd_probe "$BASE_SDK_DIR" 'base Xcode' "$HOST_TOOL_UNISTD_BASE_PROBE_LOG"
 CLANG="$(xcrun --find clang)"
+CXX_CLANG="$(xcrun --find clang++)"
 LD="$(xcrun --find ld)"
 IIG="$(xcrun --find iig)"
 verify_xnu_warning_policy
@@ -1076,10 +930,17 @@ xnu_target_dependency_files=$XNU_TARGET_DEPENDENCY_FILE_COUNT
 xnu_dependency_file_entries=$XNU_DEPENDENCY_FILE_ENTRY_COUNT
 xnu_header_dependencies=$XNU_HEADER_DEPENDENCY_COUNT
 xnu_missing_dependency_files=$XNU_MISSING_DEPENDENCY_FILE_COUNT
-xnu_target_include_path_policy=keep \$SDKROOT/usr/local/include; omit only empty kernel/iBoot/AppleFeatures/platform SDK roots for X86_64/NONE; retain KDK includes
+xnu_target_include_path_policy=keep \$SDKROOT/usr/local/include; omit empty kernel/iBoot/AppleFeatures/platform SDK roots for X86_64/NONE; retain KDK includes
 xnu_warning_policy_verified=$XNU_WARNING_POLICY_VERIFIED
 xnu_compiler_reserved_identifier_warning=-Wno-error=reserved-identifier
+xnu_compiler_unused_but_set_variable_warning=-Wno-error=unused-but-set-variable
+xnu_compiler_void_pointer_to_enum_cast_warning=-Wno-error=void-pointer-to-enum-cast
 xnu_general_warning_policy=-Werror
+xnu_target_sdkroot_resolution_mode=$XNU_TARGET_SYSROOT_MODE
+xnu_target_sdkroot_overlay_notes=$XNU_TARGET_SDKROOT_OVERLAY_NOTE_COUNT
+xnu_target_sdkroot_base_notes=$XNU_TARGET_SDKROOT_BASE_NOTE_COUNT
+xnu_target_commands_without_explicit_isysroot=$XNU_TARGET_NO_EXPLICIT_SYSROOT_COMMAND_COUNT
+xnu_overlay_header_dependencies=$XNU_OVERLAY_HEADER_DEPENDENCY_COUNT
 sdk_version=$SDK_VERSION
 platform=MacOSX
 arch_config=X86_64
@@ -1100,13 +961,16 @@ EOF
 
 printf 'Building XNU %s for X86_64/NONE with %s\n' "$XNU_TAG" "$ACTUAL_XCODE_VERSION"
 rm -rf -- "$OBJROOT" "$SYMROOT" "$DSTROOT"
-# Xcode 26.1.1's clang activates reserved-identifier through -Weverything. Demote only
-# that diagnostic, after the upstream -Werror flags; keep every other warning fatal.
+# Xcode 26.1.1 enables three source-level warning classes for the pinned x86
+# target that are non-actionable there: reserved internal identifiers, dead
+# stores (including ARM-only trace arguments), and the intentional enum-as-
+# opaque-sysctl-argument round trip. Keep the warnings visible and all other
+# warnings fatal; apply these exceptions only to X86_64/NONE.
 if make -C "$SOURCE_DIR" build \
   SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$BASE_SDK_DIR" \
   SDKVERSION="$SDK_VERSION" PLATFORM=MacOSX \
   ARCH_CONFIGS=X86_64 MACHINE_CONFIGS=NONE KERNEL_CONFIGS=DEVELOPMENT \
-  INCFLAGS_SDK='-I$(SDKROOT)/usr/local/include $(if $(KDKROOT),-I$(KDKROOT)/$(KPINCDIR) -I$(KDKROOT)/System/Library/KernelSupport) -Wno-error=reserved-identifier' \
+  INCFLAGS_SDK='-I$(SDKROOT)/usr/local/include $(if $(KDKROOT),-I$(KDKROOT)/$(KPINCDIR) -I$(KDKROOT)/System/Library/KernelSupport) -Wno-error=reserved-identifier -Wno-error=unused-but-set-variable -Wno-error=void-pointer-to-enum-cast' \
   INCFLAGS_PLATFORM='$(if $(KDKROOT),-I$(KDKROOT)/$(KINCDIR)/platform -I$(KDKROOT)/$(KPINCDIR)/platform)' \
   RC_DARWIN_KERNEL_VERSION="$KERNEL_VERSION" RC_ProjectSourceVersion="$SOURCE_VERSION" \
   OBJROOT="$OBJROOT" SYMROOT="$SYMROOT" DSTROOT="$DSTROOT" VERBOSE=YES \
@@ -1136,7 +1000,10 @@ python3 - "$PACKAGE_KERNEL" "$RESULT" "$XNU_COMMIT" "$XNU_TAG" "$SOURCE_VERSION"
   "$XNU_HEADER_TREE_DIAGNOSTICS_RECORDED" "$XNU_TARGET_INCLUDE_PATHS_VERIFIED" \
   "$XNU_GENERIC_SDK_HEADER_DEPENDENCY_COUNT" "$XNU_TARGET_DEPENDENCY_FILE_COUNT" \
   "$XNU_DEPENDENCY_FILE_ENTRY_COUNT" "$XNU_HEADER_DEPENDENCY_COUNT" \
-  "$XNU_MISSING_DEPENDENCY_FILE_COUNT" "$XNU_WARNING_POLICY_VERIFIED" <<'PY'
+  "$XNU_MISSING_DEPENDENCY_FILE_COUNT" "$XNU_WARNING_POLICY_VERIFIED" \
+  "$XNU_TARGET_SYSROOT_MODE" "$XNU_TARGET_SDKROOT_OVERLAY_NOTE_COUNT" \
+  "$XNU_TARGET_SDKROOT_BASE_NOTE_COUNT" "$XNU_TARGET_NO_EXPLICIT_SYSROOT_COMMAND_COUNT" \
+  "$XNU_OVERLAY_HEADER_DEPENDENCY_COUNT" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -1169,8 +1036,20 @@ result = {
     "xnu_missing_dependency_files": int(sys.argv[32]),
     "xnu_warning_policy_verified": sys.argv[33] == "true",
     "xnu_reserved_identifier_warning_nonfatal": True,
+    "xnu_unused_but_set_variable_warning_nonfatal": True,
+    "xnu_void_pointer_to_enum_cast_warning_nonfatal": True,
     "xnu_other_warnings_remain_errors": True,
-    "xnu_target_include_path_policy": "keep SDKROOT/usr/local/include; omit only empty kernel/iBoot/AppleFeatures/platform SDK roots for X86_64/NONE; retain KDK includes",
+    "xnu_compiler_warning_exceptions": [
+        "-Wno-error=reserved-identifier",
+        "-Wno-error=unused-but-set-variable",
+        "-Wno-error=void-pointer-to-enum-cast",
+    ],
+    "xnu_target_sdkroot_resolution_mode": sys.argv[34],
+    "xnu_target_sdkroot_overlay_notes": int(sys.argv[35]),
+    "xnu_target_sdkroot_base_notes": int(sys.argv[36]),
+    "xnu_target_commands_without_explicit_isysroot": int(sys.argv[37]),
+    "xnu_overlay_header_dependencies": int(sys.argv[38]),
+    "xnu_target_include_path_policy": "keep SDKROOT/usr/local/include; omit generic kernel/iBoot/AppleFeatures/platform SDK roots from X86_64/NONE search paths; retain KDK includes",
     "xnu_commit": sys.argv[3],
     "xnu_tag": sys.argv[4],
     "xnu_source_version": sys.argv[5],

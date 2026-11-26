@@ -5,11 +5,13 @@ on:
     paths:
       - ".github/workflows/x86_64-xnu-kernel.yml"
       - "scripts/x86_64/build-xnu-kernel.sh"
+      - "scripts/x86_64/verify-xnu-target-build.py"
   push:
     branches: [main]
     paths:
       - ".github/workflows/x86_64-xnu-kernel.yml"
       - "scripts/x86_64/build-xnu-kernel.sh"
+      - "scripts/x86_64/verify-xnu-target-build.py"
 permissions:
   contents: read
 concurrency:
@@ -66,7 +68,20 @@ jobs:
           assert manifest["xnu_missing_dependency_files"] == 0, manifest
           assert manifest["xnu_warning_policy_verified"] is True, manifest
           assert manifest["xnu_reserved_identifier_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_unused_but_set_variable_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_void_pointer_to_enum_cast_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_compiler_warning_exceptions"] == [
+              "-Wno-error=reserved-identifier",
+              "-Wno-error=unused-but-set-variable",
+              "-Wno-error=void-pointer-to-enum-cast",
+          ], manifest
           assert manifest["xnu_other_warnings_remain_errors"] is True, manifest
+          assert manifest["xnu_target_sdkroot_resolution_mode"] in {
+              "sdkroot-resolved-no-explicit-isysroot", "explicit-isysroot-overlay",
+              "mixed-explicit-and-sdkroot",
+          }, manifest
+          assert manifest["xnu_target_sdkroot_overlay_notes"] > 0, manifest
+          assert manifest["xnu_target_commands_without_explicit_isysroot"] >= 0, manifest
           PY
       - uses: actions/upload-artifact@v4
         with:
@@ -148,7 +163,20 @@ jobs:
           assert manifest["xnu_missing_dependency_files"] == 0, manifest
           assert manifest["xnu_warning_policy_verified"] is True, manifest
           assert manifest["xnu_reserved_identifier_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_unused_but_set_variable_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_void_pointer_to_enum_cast_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_compiler_warning_exceptions"] == [
+              "-Wno-error=reserved-identifier",
+              "-Wno-error=unused-but-set-variable",
+              "-Wno-error=void-pointer-to-enum-cast",
+          ], manifest
           assert manifest["xnu_other_warnings_remain_errors"] is True, manifest
+          assert manifest["xnu_target_sdkroot_resolution_mode"] in {
+              "sdkroot-resolved-no-explicit-isysroot", "explicit-isysroot-overlay",
+              "mixed-explicit-and-sdkroot",
+          }, manifest
+          assert manifest["xnu_target_sdkroot_overlay_notes"] > 0, manifest
+          assert manifest["xnu_target_commands_without_explicit_isysroot"] >= 0, manifest
           PY
       - uses: actions/upload-artifact@v4
         with:

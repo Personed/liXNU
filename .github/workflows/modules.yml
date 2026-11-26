@@ -4,7 +4,11 @@
 name: modules
 on:
   push:
+    branches: [main]
   pull_request:
+concurrency:
+  group: modules-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
     runs-on: ubuntu-24.04-arm
@@ -55,7 +59,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        host: [ubuntu-24.04, windows-2025, macos-15]
+        host: [ubuntu-24.04, windows-2025, macos-15-intel]
     runs-on: ${{ matrix.host }}
     timeout-minutes: 20
     steps:

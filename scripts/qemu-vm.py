@@ -55,6 +55,12 @@ def choose_display_backend(qemu, host, requested=None):
         if any(line.strip().split()[0].split(",", 1)[0].rstrip(":") == backend
                for line in available_text.splitlines() if line.strip())
     }
+    if requested is not None and requested not in available:
+        choices = ", ".join(sorted(available)) or "none detected"
+        raise ValueError(
+            f"QEMU does not provide the requested display backend {requested!r} "
+            f"(available: {choices}); omit --display-backend to use the host default"
+        )
     for backend in preferred:
         if backend in available:
             return backend

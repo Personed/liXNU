@@ -66,7 +66,10 @@ class QemuLauncherTest(unittest.TestCase):
         self.args.display_backend = "sdl"
         with mock.patch.object(qemu_vm.platform, "system", return_value="Linux"), \
              mock.patch.object(qemu_vm.subprocess, "run", return_value=mock.Mock(stdout="gtk\n")):
-            with self.assertRaisesRegex(ValueError, "no graphical backend suitable"):
+            with self.assertRaisesRegex(
+                ValueError,
+                "requested display backend 'sdl'.*available: gtk.*omit --display-backend",
+            ):
                 qemu_vm.build_command(self.args)
 
     def test_display_backend_requires_graphical_mode(self):

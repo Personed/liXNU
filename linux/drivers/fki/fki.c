@@ -199,6 +199,8 @@ EXPORT_SYMBOL(fki_log_alert);
 
 int fki_kmem_alloc(unsigned long size, unsigned long high_va, fki_u64 pa_base, struct fki_region *r) { return -EOPNOTSUPP; }
 EXPORT_SYMBOL(fki_kmem_alloc);
+int fki_kmem_alias(struct fki_region *r, unsigned long va, unsigned long size) { return -EOPNOTSUPP; }
+EXPORT_SYMBOL(fki_kmem_alias);
 void fki_kmem_free(struct fki_region *r) {}
 EXPORT_SYMBOL(fki_kmem_free);
 int fki_high_map(unsigned long va, fki_u64 xpa, unsigned long size, int prot) { return -EOPNOTSUPP; }

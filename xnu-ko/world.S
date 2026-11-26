@@ -81,11 +81,20 @@ xnu_world_call:
 	W(x9)
 	mov	x19, #0
 	b	2f
-xnu_world_abort:			/* from the upcall: Linux keys and TPIDR are live */
+/*
+ * From the upcall: Linux keys, TPIDR and user half are live. The upcall's TO_LINUX_MM already switched, and Linux may
+ * have scheduled during the host call since, so the TTBR0 saved at the last TO_XNU_MM is stale: loading it again would
+ * leave this CPU on an mm Linux has moved off (the next task with the same mm faults on its user addresses for ever).
+ */
+xnu_world_abort:
+	W(x9)
+	mov	x19, #1
+	b	3f
+xnu_world_abort_mm:			/* from a fault in XNU: XNU's user half is live */
 	W(x9)
 	mov	x19, #1
 2:	TO_LINUX_MM
-	ldr	x18, [x9, #464]
+3:	ldr	x18, [x9, #464]
 	ldr	x10, [x9, #216]
 	msr	tpidr_el0, x10
 	ldr	x10, [x9, #224]
@@ -113,7 +122,7 @@ xnu_world_fault_abort:			/* exception return here: XNU keys live, XNU stack */
 	add	x0, x9, #240		/* load Linux keys */
 	add	x1, x9, #328		/* save XNU keys */
 	bl	fki_pac_swap
-	b	xnu_world_abort
+	b	xnu_world_abort_mm
 	.size	xnu_world_fault_abort, . - xnu_world_fault_abort
 
 	.globl	xnu_world_upcall

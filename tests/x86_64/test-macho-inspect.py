@@ -344,7 +344,19 @@ def main():
     chained = make_valid_image()
     append_command(chained, LC_DYLD_CHAINED_FIXUPS, 16)
     put_u32(chained, COMMANDS_END + 8, 512)
-    put_u32(chained, COMMANDS_END + 12, 32)
+    put_u32(chained, COMMANDS_END + 12, 40)
+    payload = 512
+    starts = payload + 28
+    put_u32(chained, payload, 0)  # fixups_version
+    put_u32(chained, payload + 4, 28)  # starts_offset
+    put_u32(chained, payload + 8, 40)  # empty imports after starts table
+    put_u32(chained, payload + 12, 40)  # empty symbols after imports
+    put_u32(chained, payload + 16, 0)  # imports_count
+    put_u32(chained, payload + 20, 1)  # imports_format
+    put_u32(chained, payload + 24, 0)  # uncompressed symbol strings
+    put_u32(chained, starts, 2)  # PAGEZERO and TEXT, no starts records
+    put_u32(chained, starts + 4, 0)
+    put_u32(chained, starts + 8, 0)
     run_case(
         binary,
         "bounded chained-fixup metadata",

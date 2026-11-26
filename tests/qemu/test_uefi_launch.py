@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class UefiLaunchTest(unittest.TestCase):
-    def test_launcher_starts_qemu_with_uefi_firmware(self):
+    def start_guest(self, graphical=False):
         if not shutil.which("qemu-system-aarch64") or not shutil.which("qemu-img"):
             self.skipTest("QEMU system emulation tools are not installed")
         firmware_code = Path(os.environ.get(
@@ -43,6 +43,8 @@ class UefiLaunchTest(unittest.TestCase):
                 "--memory", "1024",
                 "--cpus", "1",
             ]
+            if graphical:
+                command.append("--graphical")
             qemu = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             try:
                 qemu.wait(timeout=15)
@@ -54,6 +56,13 @@ class UefiLaunchTest(unittest.TestCase):
             else:
                 output, _ = qemu.communicate()
                 self.fail(f"QEMU exited before the UEFI guest could be stopped ({qemu.returncode}):\n{output}")
+
+    def test_launcher_starts_headless_uefi_guest(self):
+        self.start_guest()
+
+    @unittest.skipUnless(os.environ.get("QEMU_TEST_GRAPHICAL") == "1", "graphical QEMU CI is not enabled")
+    def test_launcher_starts_graphical_uefi_guest(self):
+        self.start_guest(graphical=True)
 
 
 if __name__ == "__main__":

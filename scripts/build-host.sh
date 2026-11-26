@@ -8,7 +8,17 @@ git checkout -q -- drivers/Kconfig drivers/Makefile
 rsync -a $P/linux/ ./
 grep -q drivers/fki/Kconfig drivers/Kconfig || sed -i 's|^endmenu|source "drivers/fki/Kconfig"\n\nendmenu|' drivers/Kconfig
 grep -q 'CONFIG_FKI' drivers/Makefile || echo 'obj-$(CONFIG_FKI) += fki/' >> drivers/Makefile
-M="make -s ARCH=arm64 LLVM=-19 O=$O -j$(nproc)"
+if [ -z "${LLVM:-}" ]; then
+  if command -v clang >/dev/null 2>&1; then
+    LLVM=1
+  else
+    for v in 21 20 19 18; do
+      if command -v "clang-$v" >/dev/null 2>&1; then LLVM="-$v"; break; fi
+    done
+  fi
+fi
+[ -n "${LLVM:-}" ] || { echo "build-host: clang not found (install clang/lld or set LLVM=)" >&2; exit 1; }
+M="make -s ARCH=arm64 LLVM=$LLVM O=$O -j$(nproc)"
 [ -f $O/.config ] || $M defconfig
 S=scripts/config; C="--file $O/.config"
 $S $C -e ARM64_4K_PAGES -e ARM64_VA_BITS_48 \

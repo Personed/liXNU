@@ -35,6 +35,13 @@ if needle in s and insert not in s:
     s=s.replace(needle, insert)
     open(p,'w').write(s)
 s=open(p).read()
+# Ubuntu 22.04 has both legacy 7z and newer 7zz; only the latter extracts the KDK's LZFSE/LZVN-compressed DMG here.
+needle="    script = download(LOCK['downloads']['kdk-headers.py'])\n"
+insert=needle+"    text = script.read_text()\n    if shutil.which('7zz') and \"['7z', 'e'\" in text:\n        script.write_text(text.replace(\"['7z', 'e'\", \"['7zz', 'e'\"))\n"
+if needle in s and insert not in s:
+    s=s.replace(needle, insert)
+    open(p,'w').write(s)
+s=open(p).read()
 # The committed gunyah-linux.mk names x86_64 multiarch paths; non-x86 build hosts substitute their own.
 multiarch=sys.argv[1]
 k="    (X / 'gunyah-linux.mk').write_text('\\n'.join(lines) + '\\n')"

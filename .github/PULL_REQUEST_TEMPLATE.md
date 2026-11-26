@@ -21,4 +21,4 @@
 - [ ] The active Intel/AMD PC compatibility route is QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin; direct hosted XNU on compatible ARM64 Linux remains a separate host profile.
 - [ ] Native x86_64/Tahoe and QEMU/KVM macOS results are labeled as separate experiments and are not used as acceptance evidence for the TCG PC route.
 - [ ] Every related agent has visible scope, interface, and result updates in PR comments.
-- [ ] Required automated checks are green before merge; the owner authorized merging without waiting for human review.
+- [ ] Manual merge only after all required checks on the current PR head are green and GitHub reports `mergeable=true`; do not enable auto-merge without explicit authorization.

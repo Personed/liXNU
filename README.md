@@ -7,9 +7,9 @@ module (`xnu.ko`) inside an unmodified arm64 Linux kernel. The hosted XNU drives
 processes run natively next to Linux processes on the same CPUs. Linux lends XNU its memory, timers, files, network and
 GPU through a small interface module (`fki.ko`).
 
-On x86-64 PCs, QEMU TCG boots an ARM64 Linux guest, where `fki.ko` and `xnu.ko` run. The target validation reaches a real
-PureDarwin console command and guest-issued halt. Firmware, Linux userspace, FKI allocation, XNU execution, the
-PureDarwin console, and a macOS desktop are separate validation stages; see
+On x86-64 PCs, QEMU TCG boots an ARM64 Linux guest, where `fki.ko` and `xnu.ko` run. The target validation requires a real
+PureDarwin console command, guest-issued halt, XNU unload, and Linux guest power-off with a clean QEMU exit. Firmware,
+Linux userspace, FKI allocation, XNU execution, the PureDarwin console, and a macOS desktop are separate validation stages; see
 [`docs/portability-validation.md`](docs/portability-validation.md).
 
 The separate x86-64 QEMU/KVM experiment runs a user-prepared macOS Tahoe guest. It does not use the project's ARM64
@@ -132,10 +132,10 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 
 ### x86_64 QEMU TCG path
 
-- The host setup for Windows/macOS/Linux is documented in [PR #3](https://github.com/Personed/xnulinux/pull/3). Current CI reaches UEFI on Linux and Windows x86-64 and macOS Apple Silicon; Intel macOS and Windows ARM64 are not in that launcher matrix.
+- The reusable host launcher and setup for Windows/macOS/Linux are documented in [PR #3](https://github.com/Personed/xnulinux/pull/3). Its separate CI smoke reaches the ARM64 UEFI shell on Linux x86-64, Windows x86-64, and macOS Apple Silicon; the Apple Silicon result is not x86-64 host coverage. Intel macOS and Windows ARM64 are not in that launcher matrix. This UEFI smoke does not boot PureDarwin; full-console cross-host checks are proposed in [PR #46](https://github.com/Personed/xnulinux/pull/46) and remain pending.
 - QEMU 10 or newer with AArch64 system emulation, matching AArch64 UEFI code and variables, and Python 3. VT-x/AMD-V is not required.
 - The PureDarwin reference profile allocates 16 GiB to the ARM64 Linux guest plus additional physical RAM for the host OS and QEMU. Smaller Linux/FKI profiles do not validate PureDarwin. Record physical host RAM and available RAM separately from guest RAM; this is a measured profile, not a universal minimum.
-- Use an ARM64 Linux kernel with 4 KiB pages and PAC at EL1, built with matching FKI/XNU modules. The [#36 guest workflow](https://github.com/Personed/xnulinux/blob/487c2fb3f5effd741ccf1d270c73f4c244aa01a/.github/workflows/puredarwin-arm64-image.yml) currently selects the latest Ubuntu generic ARM64 kernel available at run time and records its release and configuration digest; pinning the package or repository snapshot is still needed for identical reruns.
+- Use an ARM64 Linux kernel with 4 KiB pages and PAC at EL1, built with matching FKI/XNU modules. The [#36 guest workflow](https://github.com/Personed/xnulinux/blob/codex/puredarwin-x86-tcg-e2e/.github/workflows/puredarwin-arm64-image.yml) currently selects the latest Ubuntu generic ARM64 kernel available at run time and records its release and configuration digest; pinning the package or repository snapshot is still needed for identical reruns.
 - The full x86-64 TCG route, tested guest profile, kernel reporting fields, FKI carve-out, and stage limits are documented in [`docs/portability-validation.md`](docs/portability-validation.md).
 
 ### Separate experimental x86_64 QEMU/KVM path

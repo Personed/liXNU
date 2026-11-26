@@ -15,17 +15,47 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class UefiLaunchTest(unittest.TestCase):
+    def firmware_pair(self):
+        code_override = os.environ.get("QEMU_FIRMWARE_CODE")
+        vars_override = os.environ.get("QEMU_FIRMWARE_VARS")
+        if code_override or vars_override:
+            self.assertTrue(code_override and vars_override, "set both QEMU_FIRMWARE_CODE and QEMU_FIRMWARE_VARS")
+            code, variables = Path(code_override), Path(vars_override)
+            self.assertTrue(code.is_file(), f"missing UEFI code image: {code}")
+            self.assertTrue(variables.is_file(), f"missing UEFI variables template: {variables}")
+            return code, variables
+
+        pairs = (
+            ("AAVMF_CODE.fd", "AAVMF_VARS.fd"),
+            ("edk2-aarch64-code.fd", "edk2-arm-vars.fd"),
+            ("edk2-aarch64-code.fd", "edk2-aarch64-vars.fd"),
+        )
+        directories = [Path("/usr/share/AAVMF")]
+        qemu = shutil.which("qemu-system-aarch64")
+        if qemu:
+            result = subprocess.run(
+                [qemu, "-L", "help"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                errors="replace",
+                check=False,
+            )
+            directories.extend(Path(line.strip()) for line in (result.stdout or "").splitlines()
+                               if line.strip())
+        for directory in directories:
+            for code_name, vars_name in pairs:
+                code = directory / code_name
+                variables = directory / vars_name
+                if code.is_file() and variables.is_file():
+                    return code, variables
+        self.fail("could not find matching AArch64 UEFI images; see `qemu-system-aarch64 -L help`")
+
     def start_guest(self, graphical=False):
-        if not shutil.which("qemu-system-aarch64") or not shutil.which("qemu-img"):
+        qemu_binary = shutil.which("qemu-system-aarch64")
+        if not qemu_binary or not shutil.which("qemu-img"):
             self.skipTest("QEMU system emulation tools are not installed")
-        firmware_code = Path(os.environ.get(
-            "QEMU_FIRMWARE_CODE", "/usr/share/AAVMF/AAVMF_CODE.fd"
-        ))
-        firmware_vars_template = Path(os.environ.get(
-            "QEMU_FIRMWARE_VARS", "/usr/share/AAVMF/AAVMF_VARS.fd"
-        ))
-        self.assertTrue(firmware_code.is_file(), f"missing UEFI code image: {firmware_code}")
-        self.assertTrue(firmware_vars_template.is_file(), f"missing UEFI variables template: {firmware_vars_template}")
+        firmware_code, firmware_vars_template = self.firmware_pair()
 
         with tempfile.TemporaryDirectory() as directory:
             vm_dir = Path(directory)
@@ -38,6 +68,7 @@ class UefiLaunchTest(unittest.TestCase):
                 sys.executable,
                 str(ROOT / "scripts/qemu-vm.py"),
                 str(disk),
+                "--qemu", qemu_binary,
                 "--firmware-code", str(firmware_code),
                 "--firmware-vars", str(firmware_vars),
                 "--memory", "1024",
@@ -49,10 +80,22 @@ class UefiLaunchTest(unittest.TestCase):
             try:
                 qemu.wait(timeout=15)
             except subprocess.TimeoutExpired:
-                qemu.send_signal(signal.SIGTERM)
+                if os.name == "nt":
+                    killed = subprocess.run(
+                        ["taskkill", "/PID", str(qemu.pid), "/T", "/F"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(killed.returncode, 0, killed.stdout)
+                else:
+                    qemu.send_signal(signal.SIGTERM)
                 output, _ = qemu.communicate(timeout=10)
-                self.assertEqual(qemu.returncode, 0, output)
-                self.assertIn("UEFI Interactive Shell", output)
+                self.assertIsNotNone(qemu.returncode, output)
+                if os.name != "nt":
+                    self.assertEqual(qemu.returncode, 0, output)
+                    self.assertIn("UEFI Interactive Shell", output)
             else:
                 output, _ = qemu.communicate()
                 self.fail(f"QEMU exited before the UEFI guest could be stopped ({qemu.returncode}):\n{output}")

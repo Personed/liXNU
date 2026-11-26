@@ -61,7 +61,8 @@ For the experimental 16 GiB VM profile, the QEMU `virt` RAM starts at `0x4000000
 Use `GPU=off` for the hosted system. The optional QEMU graphical display is for Linux's console.
 
 The QEMU launcher has been exercised from x86-64 Linux through the ARM64 Debian installer and in
-CI by starting headless and graphical ARM64 guests through UEFI firmware on Ubuntu. Its argument
-construction is also checked on Linux, macOS and Windows.
+CI by starting headless and graphical ARM64 guests through UEFI firmware on Ubuntu. The launcher
+also starts a headless UEFI guest in CI on Windows and macOS. Its argument construction is checked
+on all three host systems.
 A test module allocated 2 MiB at the documented address in a 16 GiB guest booted directly
 into Linux. A complete hosted PureDarwin or macOS boot using the UEFI profile remains unverified.

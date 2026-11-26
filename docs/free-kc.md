@@ -41,12 +41,17 @@ kernel has; and a kext's load tag.
 
 1. `scripts/puredarwin-root.sh IMAGE root.tar.gz` archives the PureDarwin arm64 root on Linux, including x86-64.
    It requires `fdisk` (`sfdisk`), `util-linux` (loop devices and mount tools), `e2fsprogs` (`tune2fs` and `e2fsck`),
-   `python3`, `tar`, `coreutils` (`link`), and kernel support for ext4 and loop devices. Run as root or with `sudo`.
+   `python3`, `tar`, `coreutils` (`link`, `stat`, `chmod`), and kernel support for ext4 and loop devices. Run as root
+   or with `sudo`.
    The input image's ext4
    root must be clean and have no pending journal recovery; the exporter refuses filesystems that need repair. It opens
-   the source image read-only, mounts with journal replay disabled, and preserves numeric owners in the archive. The
-   output path must be new, its parent directory must exist, and that filesystem must support hard links. The archive
-   is published without replacing an existing file or symlink and has mode `0644`. Build the input image with
+   the source image read-only, mounts under its private staging directory with journal replay disabled, and preserves
+   numeric owners in the archive. The output path must be new, its parent directory must exist, and that filesystem
+   must support hard links. The archive
+   is published without replacing an existing file or symlink and has mode `0644`. The exporter refuses output paths
+   with an ancestor controlled by another account or writable by a group or other user outside a sticky directory;
+   use a private directory or a root-owned sticky shared directory such as `/tmp`.
+   Build the input image with
    `nix build 'git+https://github.com/AFK-surf/PureDarwin?submodules=1&rev=b3b4b2812fdd1c5c251dc3089b5a1a9e00d29970#image-arm64-virt-minimal'` (PureDarwin's
    binary cache, https://hydra.lab004.dev, has its toolchain and what the fork did not change; the images there are
    upstream's).

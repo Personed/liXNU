@@ -20,15 +20,24 @@ case "$output" in
   /*) ;;
   *) output=$PWD/$output ;;
 esac
-output_dir=$(dirname -- "$output" && printf '.')
-output_dir=${output_dir%.}
-output_dir=${output_dir%$'\n'}
+output_name=${output##*/}
+if [ -z "$output_name" ]; then
+  echo 'Output path must name a file.' >&2
+  exit 1
+fi
+output_dir=${output%/*}
+if [ -z "$output_dir" ]; then output_dir=/; fi
 if [ ! -d "$output_dir" ]; then
   echo "Output directory does not exist: $output_dir" >&2
   exit 1
 fi
-output_dir=$(CDPATH= cd -P -- "$output_dir" && printf '%s.' "$PWD")
-output_dir=${output_dir%.}
+resolved_output_dir=''
+if ! IFS= read -r -d '' resolved_output_dir < <(CDPATH= cd -P -- "$output_dir" && printf '%s\0' "$PWD"); then
+  echo "Could not resolve output directory: $output_dir" >&2
+  exit 1
+fi
+output_dir=$resolved_output_dir
+if [ "$output_dir" = / ]; then output=/$output_name; else output=$output_dir/$output_name; fi
 if [ -e "$output" ] || [ -L "$output" ]; then
   echo "Refusing to replace existing output path: $output" >&2
   exit 1
@@ -51,6 +60,36 @@ for tool in sfdisk python3 losetup mount mountpoint umount e2fsck tune2fs tar mk
   fi
 done
 
+# Keep export temporary files out of paths another local account can change.
+# Sticky shared directories such as /tmp remain safe for entries owned by this
+# process; writable non-sticky parents and foreign-owned directories do not.
+export_path_is_safe() {
+  local path=$1 owner_mode owner mode mode_bits trusted_uid parent
+  trusted_uid=$EUID
+  if [ "$EUID" -eq 0 ] && [[ "${SUDO_UID:-}" =~ ^[0-9]+$ ]]; then
+    trusted_uid=$((10#$SUDO_UID))
+  fi
+  while :; do
+    owner_mode=$(stat -c '%u:%a' -- "$path" 2>/dev/null) || return 1
+    owner=${owner_mode%%:*}
+    mode=${owner_mode#*:}
+    mode_bits=$((8#$mode))
+    if (( (mode_bits & 0022) != 0 && (mode_bits & 01000) == 0 )); then
+      return 1
+    fi
+    if [ "$owner" != "$EUID" ] && [ "$owner" != "$trusted_uid" ] && [ "$owner" != 0 ]; then
+      return 1
+    fi
+    [ "$path" = / ] && return 0
+    parent=${path%/*}
+    if [ -z "$parent" ]; then path=/; else path=$parent; fi
+  done
+}
+if ! export_path_is_safe "$output_dir"; then
+  echo "Refusing an output directory that another local account can change: $output_dir" >&2
+  exit 1
+fi
+
 partition_table=$(sfdisk --json -- "$image")
 partition=$(python3 -c '
 import json
@@ -72,8 +111,9 @@ print(offset, length)
 ' "$image" <<< "$partition_table")
 read -r offset length <<< "$partition"
 
-mount_dir='' archive_dir='' archive_identity='' archive='' loop='' check_log=''
+mount_dir='' mount_identity='' archive_dir='' archive_identity='' archive='' loop='' check_log=''
 cleanup() {
+  local cleanup_mount_identity cleanup_mount_owner_mode
   trap '' INT TERM
   if [ -n "$mount_dir" ]; then
     if mountpoint -q -- "$mount_dir"; then
@@ -96,51 +136,76 @@ cleanup() {
       return 1
     fi
   fi
-  if [ -n "$mount_dir" ]; then rmdir -- "$mount_dir" || return 1; mount_dir=''; fi
-  if [ -n "$archive" ]; then rm -f -- "$archive" || return 1; archive=''; fi
-  if [ -n "$check_log" ]; then rm -f -- "$check_log" || return 1; check_log=''; fi
-  if [ -n "$archive_dir" ]; then
-    CDPATH= cd -P -- "$output_dir" || return 1
-    staging_owner=$(stat -c '%u' -- "$archive_dir" 2>/dev/null || true)
-    staging_mode=$(stat -c '%a' -- "$archive_dir" 2>/dev/null || true)
-    staging_identity=$(stat -c '%d:%i' -- "$archive_dir" 2>/dev/null || true)
-    if [ -d "$archive_dir" ] && [ ! -L "$archive_dir" ] &&
-       [ "$staging_owner" = "$EUID" ] &&
-       { [ "$staging_mode" = 700 ] || [ "$staging_mode" = 2700 ]; } &&
-       { [ -z "$archive_identity" ] || [ "$staging_identity" = "$archive_identity" ]; }; then
-      rmdir -- "$archive_dir" || return 1
+  if [ -n "$archive_dir" ] && [ -n "$archive_identity" ]; then
+    if [ "$(stat -c '%d:%i' -- . 2>/dev/null || true)" = "$archive_identity" ]; then
+      if [ -n "$mount_dir" ]; then
+        cleanup_mount_identity=$(stat -c '%d:%i' -- "$mount_dir" 2>/dev/null || true)
+        cleanup_mount_owner_mode=$(stat -c '%u:%a' -- "$mount_dir" 2>/dev/null || true)
+        if [ ! -L "$mount_dir" ] &&
+           [ -n "$cleanup_mount_identity" ] &&
+           [ "$cleanup_mount_owner_mode" = "$EUID:700" ] &&
+           { [ -z "$mount_identity" ] || [ "$cleanup_mount_identity" = "$mount_identity" ]; }; then
+          rmdir -- "$mount_dir" || return 1
+        else
+          echo "Mount staging path changed during export; leaving it untouched: $mount_dir" >&2
+          return 1
+        fi
+        mount_dir=''
+      fi
+      if [ -n "$archive" ]; then rm -f -- "$archive" || return 1; archive=''; fi
+      if [ -n "$check_log" ]; then rm -f -- "$check_log" || return 1; check_log=''; fi
+      CDPATH= cd -P -- "$output_dir" || return 1
+      if [ ! -L "$archive_dir" ] &&
+         [ "$(stat -c '%d:%i' -- "$archive_dir" 2>/dev/null || true)" = "$archive_identity" ] &&
+         [ "$(stat -c '%u' -- "$archive_dir" 2>/dev/null || true)" = "$EUID" ] &&
+         { [ "$(stat -c '%a' -- "$archive_dir" 2>/dev/null || true)" = 700 ] ||
+           [ "$(stat -c '%a' -- "$archive_dir" 2>/dev/null || true)" = 2700 ]; } &&
+         export_path_is_safe "$output_dir"; then
+        rmdir -- "$archive_dir" || return 1
+      else
+        echo "Staging path changed during export; leaving it untouched: $archive_dir" >&2
+      fi
     else
-      echo "Staging path changed during export; leaving it untouched: $archive_dir" >&2
+      echo 'Exporter is no longer in its private staging directory; leaving temporary files for recovery.' >&2
+      return 1
     fi
-    archive_dir='' archive_identity=''
+    archive_dir=''
   fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-if [ ! -d /tmp ] || [ ! -w /tmp ] || [ ! -k /tmp ]; then
-  echo 'PureDarwin root export requires a writable sticky /tmp for its local mount point.' >&2
+archive_dir=$(mktemp -d -- "$output_dir/.puredarwin-root.XXXXXXXX")
+if [ -L "$archive_dir" ] || ! export_path_is_safe "$archive_dir"; then
+  echo "Refusing an unsafe private staging directory: $archive_dir" >&2
   exit 1
 fi
-mount_dir=$(mktemp -d -- /tmp/.puredarwin-root-mount.XXXXXXXX)
-archive_dir=$(mktemp -d -- "$output_dir/.puredarwin-root.XXXXXXXX")
-archive_identity=$(stat -c '%d:%i' -- "$archive_dir")
+expected_archive_identity=$(stat -c '%d:%i' -- "$archive_dir")
+archive_identity=$expected_archive_identity
 CDPATH= cd -P -- "$archive_dir"
+staging_identity=$(stat -c '%d:%i' -- .)
 staging_owner=$(stat -c '%u' .)
 staging_mode=$(stat -c '%a' .)
-staging_identity=$(stat -c '%d:%i' .)
-if [ "$staging_owner" != "$EUID" ] || [ "$staging_identity" != "$archive_identity" ] ||
+if [ "$staging_identity" != "$expected_archive_identity" ] ||
+   [ "$(stat -c '%d:%i' -- "$archive_dir" 2>/dev/null || true)" != "$expected_archive_identity" ] ||
+   [ -L "$archive_dir" ] || [ "$staging_owner" != "$EUID" ] ||
    { [ "$staging_mode" != 700 ] && [ "$staging_mode" != 2700 ]; }; then
   echo "Staging directory changed before it could be opened securely: $archive_dir" >&2
   exit 1
 fi
 chmod 0700 -- .
 chmod g-s -- .
-if [ "$(stat -c '%a' .)" != 700 ]; then
+staging_identity=$(stat -c '%d:%i' -- .)
+if [ "$staging_identity" != "$expected_archive_identity" ] ||
+   [ "$(stat -c '%d:%i' -- "$archive_dir" 2>/dev/null || true)" != "$expected_archive_identity" ] ||
+   [ "$(stat -c '%a' .)" != 700 ] || [ -L "$archive_dir" ]; then
   echo "Could not make the export staging directory private: $archive_dir" >&2
   exit 1
 fi
 archive=root.tar.gz
+mount_dir=mount
+mkdir -m 0700 -- "$mount_dir"
+mount_identity=$(stat -c '%d:%i' -- "$mount_dir")
 check_log=check.log
 # Keep INT/TERM pending until losetup has returned the attached device. That
 # lets the EXIT trap detach the exact loop device if a signal arrives here.

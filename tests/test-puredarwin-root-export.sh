@@ -34,7 +34,7 @@ original_sha=$(sha256sum "$image" | cut -d ' ' -f 1)
 
 output_dir=$tmp/shared-output
 mkdir -- "$output_dir"
-chmod 2777 -- "$output_dir"
+chmod 1777 -- "$output_dir"
 chmod_bin=$tmp/chmod-bin
 mkdir -- "$chmod_bin"
 real_chmod=$(command -v chmod)

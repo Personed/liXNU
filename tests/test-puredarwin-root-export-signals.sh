@@ -5,19 +5,20 @@ set -euo pipefail
 script=$(cd -- "$(dirname -- "$0")/.." && pwd)/scripts/puredarwin-root.sh
 real_mktemp=$(command -v mktemp)
 real_chmod=$(command -v chmod)
-real_stat=$(command -v stat)
+real_mkdir=$(command -v mkdir)
+real_sudo=$(command -v sudo || true)
+unset TMPDIR
 tmp=$(mktemp -d)
+case "$tmp" in /*) ;; *) tmp=$PWD/$tmp ;; esac
 trap 'rm -rf -- "$tmp"' EXIT
 bin=$tmp/bin
 state=$tmp/state
-shared_output=$tmp/shared-output
-mkdir -- "$bin" "$state" "$shared_output"
-chmod 2777 -- "$shared_output"
+mkdir -- "$bin" "$state"
 export TEST_STATE=$state
 export FAKE_LOOP=/dev/loop-codex-test
 export REAL_MKTEMP=$real_mktemp
 export REAL_CHMOD=$real_chmod
-export REAL_STAT=$real_stat
+export REAL_MKDIR=$real_mkdir
 export PATH="$bin:$PATH"
 
 cat >"$bin/sfdisk" <<'WRAPPER'
@@ -52,6 +53,7 @@ WRAPPER
 cat >"$bin/mountpoint" <<'WRAPPER'
 #!/bin/sh
 case "$3" in /*) mount_dir=$3 ;; *) mount_dir=$PWD/$3 ;; esac
+if [ ! -s "$TEST_STATE/mount-dir" ]; then printf '%s\n' "$mount_dir" >"$TEST_STATE/mount-dir"; fi
 if [ -e "$TEST_STATE/mounted" ]; then exit 0; fi
 if [ -d "$3" ]; then exit 32; fi
 exit 1
@@ -59,13 +61,30 @@ WRAPPER
 cat >"$bin/mount" <<'WRAPPER'
 #!/bin/sh
 : >"$TEST_STATE/mounted"
-printf '%s\n' "$7" >"$TEST_STATE/mount-dir"
+mount_dir=''
+for arg do mount_dir=$arg; done
+case "$mount_dir" in /*) ;; *) mount_dir=$PWD/$mount_dir ;; esac
+printf '%s\n' "$mount_dir" >"$TEST_STATE/mount-dir"
+printf 'signal test root\n' >"$mount_dir/hello.txt"
 printf '%s\n' mounted >>"$TEST_STATE/events"
-kill -TERM "$PPID"
+case "${RACE_STAGING:-}" in
+  symlink)
+    stage_dir=$(cat "$TEST_STATE/archive-dir")
+    mv -- "$stage_dir" "$stage_dir.moved"
+    ln -s -- "$ATTACKER_DIR" "$stage_dir"
+    ;;
+  same-owner-directory)
+    stage_dir=$(cat "$TEST_STATE/archive-dir")
+    mv -- "$stage_dir" "$stage_dir.moved"
+    mkdir -m 0700 -- "$stage_dir"
+    ;;
+esac
+if [ "${SIGNAL_AFTER_MOUNT:-0}" = 1 ]; then kill -TERM "$PPID"; fi
 WRAPPER
 cat >"$bin/umount" <<'WRAPPER'
 #!/bin/sh
 rm -f -- "$TEST_STATE/mounted"
+rm -f -- mount/hello.txt
 printf '%s\n' unmounted >>"$TEST_STATE/events"
 WRAPPER
 cat >"$bin/tune2fs" <<'WRAPPER'
@@ -91,22 +110,7 @@ if [ "$1" = '-d' ]; then
         printf '%s\n' "$result.original" >"$TEST_STATE/replaced-stage"
       fi
       ;;
-    *) printf '%s\n' "$result" >"$TEST_STATE/mount-dir" ;;
   esac
-fi
-printf '%s\n' "$result"
-WRAPPER
-cat >"$bin/stat" <<'WRAPPER'
-#!/bin/sh
-result=$("$REAL_STAT" "$@") || exit
-if [ "${REPLACE_AFTER_IDENTITY:-0}" = 1 ] &&
-   [ "$#" -eq 4 ] && [ "$1" = '-c' ] && [ "$2" = '%d:%i' ] && [ "$3" = '--' ] &&
-   [ "$4" = "$(cat "$TEST_STATE/archive-dir")" ] &&
-   [ ! -e "$TEST_STATE/identity-replaced" ]; then
-  mv -- "$4" "$4.original"
-  ln -s -- "$ATTACKER_DIR" "$4"
-  printf '%s\n' "$4.original" >"$TEST_STATE/replaced-stage"
-  : >"$TEST_STATE/identity-replaced"
 fi
 printf '%s\n' "$result"
 WRAPPER
@@ -120,12 +124,24 @@ fi
 exec "$REAL_CHMOD" "$@"
 WRAPPER
 chmod +x "$bin/chmod"
+cat >"$bin/mkdir" <<'WRAPPER'
+#!/bin/sh
+"$REAL_MKDIR" "$@" || exit
+last=''
+for arg do last=$arg; done
+if [ "${SIGNAL_AFTER_MOUNT_DIR_MKDIR:-0}" = 1 ] && [ "$last" = mount ]; then
+  kill -TERM "$PPID"
+fi
+WRAPPER
+chmod +x "$bin/mkdir"
 
 image=$tmp/fake.img
 truncate -s 4194304 "$image"
-output=$shared_output/must-not-exist.tar.gz
+output=$tmp/must-not-exist.tar.gz
+rm -f -- "$state/archive-dir" "$state/mount-dir"
+export SIGNAL_AFTER_MOUNT=1
 set +e
-"$script" "$image" "$output" >/dev/null 2>&1
+TMPDIR=. "$script" "$image" "$output" >/dev/null 2>&1
 status=$?
 set -e
 [ "$status" -eq 143 ] || { echo "Expected SIGTERM exit 143; got $status" >&2; exit 1; }
@@ -137,10 +153,19 @@ set -e
 unmount_line=$(grep -n '^unmounted$' "$state/events" | cut -d: -f1)
 detach_line=$(grep -n '^detached$' "$state/events" | cut -d: -f1)
 [ "$unmount_line" -lt "$detach_line" ]
+if [ ! -s "$state/archive-dir" ]; then
+  echo 'Exporter did not record the new signal-test staging directory.' >&2
+  exit 1
+fi
+archive_dir=$(cat "$state/archive-dir")
 mount_dir=$(cat "$state/mount-dir")
-[ "${mount_dir#/tmp/.puredarwin-root-mount.}" != "$mount_dir" ]
+[ "$mount_dir" = "$archive_dir/mount" ]
 [ ! -e "$mount_dir" ]
-[ -z "$(find "$shared_output" -mindepth 1 -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
+if [ -z "$archive_dir" ] || [ -e "$archive_dir" ] || [ -L "$archive_dir" ]; then
+  echo "Exporter did not remove its signal-test staging directory: $archive_dir" >&2
+  exit 1
+fi
+[ -z "$(find "$tmp" -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
 first_check_log=$(cat "$state/check-log")
 [ -n "$first_check_log" ]
 [ ! -e "$first_check_log" ]
@@ -150,11 +175,11 @@ echo 'PureDarwin root exporter signal cleanup test passed.'
 # Also interrupt after loop setup and filesystem validation but before mount.
 # util-linux mountpoint returns 32 for the existing, unmounted directory;
 # cleanup must accept that state and still detach the loop and remove temps.
-rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/mount-dir"
-rm -f -- "$state/check-log"
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted"
+rm -f -- "$state/archive-dir" "$state/mount-dir" "$state/check-log"
 export SIGNAL_BEFORE_MOUNT=1
 set +e
-"$script" "$image" "$output" >/dev/null 2>&1
+TMPDIR=. "$script" "$image" "$output" >/dev/null 2>&1
 status=$?
 set -e
 [ "$status" -eq 143 ] || { echo "Expected pre-mount SIGTERM exit 143; got $status" >&2; exit 1; }
@@ -166,10 +191,19 @@ if grep -q '^unmounted$' "$state/events"; then
   echo 'pre-mount cleanup attempted to unmount an unmounted directory' >&2
   exit 1
 fi
+if [ ! -s "$state/archive-dir" ]; then
+  echo 'Exporter did not record the new pre-mount staging directory.' >&2
+  exit 1
+fi
+archive_dir=$(cat "$state/archive-dir")
 mount_dir=$(cat "$state/mount-dir")
-[ "${mount_dir#/tmp/.puredarwin-root-mount.}" != "$mount_dir" ]
+[ "$mount_dir" = "$archive_dir/mount" ]
 [ ! -e "$mount_dir" ]
-[ -z "$(find "$shared_output" -mindepth 1 -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
+if [ -z "$archive_dir" ] || [ -e "$archive_dir" ] || [ -L "$archive_dir" ]; then
+  echo "Exporter did not remove its pre-mount staging directory: $archive_dir" >&2
+  exit 1
+fi
+[ -z "$(find "$tmp" -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
 second_check_log=$(cat "$state/check-log")
 [ -n "$second_check_log" ]
 [ "$second_check_log" != "$first_check_log" ]
@@ -179,86 +213,216 @@ echo 'PureDarwin root exporter pre-mount signal cleanup test passed.'
 
 # A signal after mktemp but before clearing setgid must still remove the empty
 # 2700 staging directory using its recorded inode identity.
+early_setgid_dir=$tmp/early-setgid
+mkdir -- "$early_setgid_dir"
+chmod 2700 "$early_setgid_dir"
+early_output=$early_setgid_dir/root.tar.gz
 rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/mount-dir" "$state/check-log"
-unset SIGNAL_BEFORE_MOUNT
 set +e
-SIGNAL_BEFORE_STAGING_CHMOD=1 "$script" "$image" "$output" >/dev/null 2>&1
+SIGNAL_BEFORE_STAGING_CHMOD=1 "$script" "$image" "$early_output" >/dev/null 2>&1
 status=$?
 set -e
 [ "$status" -eq 143 ] || { echo "Expected early SIGTERM exit 143; got $status" >&2; exit 1; }
 staging_dir=$(cat "$state/archive-dir")
 [ ! -e "$staging_dir" ]
-mount_dir=$(cat "$state/mount-dir")
-[ "${mount_dir#/tmp/.puredarwin-root-mount.}" != "$mount_dir" ]
-[ ! -e "$mount_dir" ]
-[ ! -e "$state/check-log" ]
-[ -z "$(find "$shared_output" -mindepth 1 -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
+[ ! -e "$state/mount-dir" ]
+[ -z "$(find "$early_setgid_dir" -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
 
 echo 'PureDarwin root exporter early staging signal cleanup test passed.'
 
-# Replace the recorded inode with a same-owner private directory after its
-# identity has been captured. The exporter must detect the mismatch before
-# invoking e2fsck or writing into the replacement.
-private_attacker_dir=$tmp/attacker-private
-mkdir -- "$private_attacker_dir"
-chmod 0700 "$private_attacker_dir"
-printf 'private sentinel\n' >"$private_attacker_dir/root.tar.gz"
-rm -f -- "$state/check-log" "$state/identity-replaced" "$state/replaced-stage"
+# A signal between mount-directory creation and inode recording must not leave
+# the empty mount directory or its private staging parent behind.
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/mount-dir" "$state/check-log"
 set +e
-REPLACE_AFTER_IDENTITY=1 ATTACKER_DIR=$private_attacker_dir \
-  "$script" "$image" "$output" >/dev/null 2>&1
+SIGNAL_AFTER_MOUNT_DIR_MKDIR=1 "$script" "$image" "$output" >/dev/null 2>&1
 status=$?
 set -e
-[ "$status" -ne 0 ] || { echo 'Exporter accepted a same-owner staging inode replacement' >&2; exit 1; }
-[ "$(cat "$private_attacker_dir/root.tar.gz")" = 'private sentinel' ]
-[ ! -e "$output" ]
-[ ! -e "$state/check-log" ] || { echo 'Exporter started filesystem validation through a replaced staging inode' >&2; exit 1; }
-replaced_stage=$(cat "$state/replaced-stage")
-[ -d "$replaced_stage" ]
-[ -L "$(cat "$state/archive-dir")" ]
-rm -rf -- "$replaced_stage"
-rm -f -- "$(cat "$state/archive-dir")"
+[ "$status" -eq 143 ] || { echo "Expected mount-dir SIGTERM exit 143; got $status" >&2; exit 1; }
+archive_dir=$(cat "$state/archive-dir")
+mount_dir=$(cat "$state/mount-dir")
+[ "$mount_dir" = "$archive_dir/mount" ]
+[ ! -e "$mount_dir" ]
+[ ! -e "$archive_dir" ]
+[ ! -e "$state/loop-attached" ]
+[ ! -e "$state/check-log" ]
 
-echo 'PureDarwin root exporter same-owner inode replacement test passed.'
+echo 'PureDarwin root exporter mount-directory signal cleanup test passed.'
 
-# An attacker-controlled replacement directory in the shared output parent
-# must be rejected before the exporter writes its archive or e2fsck log.
-attacker_dir=$tmp/attacker-owned
+# A replacement symlink created immediately after mktemp must be rejected
+# before the exporter enters the directory or starts e2fsck.
+attacker_dir=$tmp/attacker
 mkdir -- "$attacker_dir"
-chmod 0755 "$attacker_dir"
 printf 'private sentinel\n' >"$attacker_dir/root.tar.gz"
-rm -f -- "$state/check-log"
-set +e
-REPLACE_ARCHIVE_DIR=1 ATTACKER_DIR=$attacker_dir \
-  "$script" "$image" "$output" >/dev/null 2>&1
-status=$?
-set -e
-[ "$status" -ne 0 ] || { echo 'Exporter accepted a replaced staging directory' >&2; exit 1; }
-[ "$(cat "$attacker_dir/root.tar.gz")" = 'private sentinel' ]
+sentinel_sha=$(sha256sum "$attacker_dir/root.tar.gz" | cut -d ' ' -f 1)
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/mount-dir" "$state/replaced-stage" "$state/check-log"
+if TMPDIR=. REPLACE_ARCHIVE_DIR=1 ATTACKER_DIR="$attacker_dir" "$script" "$image" "$output" >/dev/null 2>"$tmp/pre-cd-race.log"; then
+  echo 'Exporter accepted a staging path replaced before cd.' >&2
+  exit 1
+fi
+archive_dir=$(cat "$state/archive-dir")
+[ -L "$archive_dir" ]
+[ "$(readlink -- "$archive_dir")" = "$attacker_dir" ]
+[ "$(sha256sum "$attacker_dir/root.tar.gz" | cut -d ' ' -f 1)" = "$sentinel_sha" ]
 [ ! -e "$output" ]
-check_log=$(cat "$state/check-log" 2>/dev/null || true)
-[ -z "$check_log" ] || { echo 'Exporter started filesystem validation through a replaced staging path' >&2; exit 1; }
+[ ! -e "$state/check-log" ]
+[ ! -e "$state/mount-dir" ]
 replaced_stage=$(cat "$state/replaced-stage")
 [ -d "$replaced_stage" ]
-rm -rf -- "$replaced_stage" "$(cat "$state/archive-dir")"
+rm -rf -- "$replaced_stage" "$archive_dir"
+echo 'PureDarwin root exporter pre-cd staging replacement test passed.'
 
-echo 'PureDarwin root exporter staging replacement test passed.'
+# Rename the private staging directory after the exporter has entered it, then
+# replace its old pathname with a symlink to an attacker-controlled directory.
+# Relative archive and log writes must stay pinned to the original directory.
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/mount-dir" "$state/check-log"
+printf 'do not overwrite\n' >"$attacker_dir/root.tar.gz"
+sentinel_sha=$(sha256sum "$attacker_dir/root.tar.gz" | cut -d ' ' -f 1)
+export ATTACKER_DIR=$attacker_dir
+export RACE_STAGING=symlink
+unset SIGNAL_AFTER_MOUNT SIGNAL_BEFORE_MOUNT
+race_output=$tmp/race-output.tar.gz
+TMPDIR=. "$script" "$image" "$race_output" >/dev/null
+if [ ! -s "$state/archive-dir" ]; then
+  echo 'Exporter did not record the new race-test staging directory.' >&2
+  exit 1
+fi
+archive_dir=$(cat "$state/archive-dir")
+[ -n "$archive_dir" ]
+[ -L "$archive_dir" ]
+[ "$(readlink -- "$archive_dir")" = "$attacker_dir" ]
+[ "$(sha256sum "$attacker_dir/root.tar.gz" | cut -d ' ' -f 1)" = "$sentinel_sha" ]
+[ -d "$archive_dir.moved" ]
+[ -z "$(find "$archive_dir.moved" -mindepth 1 -print -quit)" ]
+[ "$(tar -xOzf "$race_output" ./hello.txt)" = 'signal test root' ]
+[ ! -e "$(cat "$state/mount-dir")" ]
+rm -- "$archive_dir"
+[ -n "$(find "$tmp" -maxdepth 1 -name '.puredarwin-root.*.moved' -print -quit)" ]
+rmdir -- "$archive_dir.moved"
+[ -z "$(find "$tmp" -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
 
-# A directory name ending in a newline must survive output-directory
-# canonicalization and keep the temporary staging path in that directory.
-newline_dir=$tmp/$'newline-tail\n'
+echo 'PureDarwin root exporter staging race test passed.'
+
+# Replacing the staging path with a different empty directory that has the
+# same owner and mode must still be detected by the inode comparison.
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/mount-dir" "$state/check-log"
+same_owner_output=$tmp/same-owner-race.tar.gz
+RACE_STAGING=same-owner-directory TMPDIR=. "$script" "$image" "$same_owner_output" >/dev/null 2>"$tmp/same-owner-race.log"
+same_owner_stage=$(cat "$state/archive-dir")
+[ -d "$same_owner_stage" ]
+[ ! -L "$same_owner_stage" ]
+[ "$(stat -c '%u' -- "$same_owner_stage")" = "$EUID" ]
+[ "$(stat -c '%a' -- "$same_owner_stage")" = 700 ]
+[ -z "$(find "$same_owner_stage" -mindepth 1 -print -quit)" ]
+[ -d "$same_owner_stage.moved" ]
+[ -z "$(find "$same_owner_stage.moved" -mindepth 1 -print -quit)" ]
+grep -F 'Staging path changed during export; leaving it untouched' "$tmp/same-owner-race.log" >/dev/null
+[ "$(tar -xOzf "$same_owner_output" ./hello.txt)" = 'signal test root' ]
+[ ! -e "$(cat "$state/mount-dir")" ]
+[ ! -e "$state/loop-attached" ]
+rm -rf -- "$same_owner_stage" "$same_owner_stage.moved"
+echo 'PureDarwin root exporter same-owner inode check test passed.'
+
+# Refuse a group/world-writable non-sticky output directory before creating any
+# root-owned temporary paths there.
+shared_dir=$tmp/shared
+mkdir -- "$shared_dir"
+chmod 0777 "$shared_dir"
+shared_output=$shared_dir/root.tar.gz
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/mount-dir"
+if TMPDIR=. "$script" "$image" "$shared_output" >/dev/null 2>"$tmp/shared-export.log"; then
+  echo 'Exporter unexpectedly accepted a shared writable output directory.' >&2
+  exit 1
+fi
+grep -F 'Refusing an output directory that another local account can change' "$tmp/shared-export.log" >/dev/null
+[ ! -e "$shared_output" ]
+[ ! -e "$state/loop-attached" ]
+[ ! -e "$state/archive-dir" ]
+[ ! -e "$state/mount-dir" ]
+[ "$(sha256sum "$attacker_dir/root.tar.gz" | cut -d ' ' -f 1)" = "$sentinel_sha" ]
+
+echo 'PureDarwin root exporter shared-directory rejection test passed.'
+
+# A setgid destination gives its private child a 2700 mode; that remains safe
+# and must not make the exporter reject it.
+unset RACE_STAGING
+setgid_dir=$tmp/setgid-output
+mkdir -- "$setgid_dir"
+chmod 2700 "$setgid_dir"
+setgid_output=$setgid_dir/root.tar.gz
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/mount-dir"
+TMPDIR=. "$script" "$image" "$setgid_output" >/dev/null
+gzip -t "$setgid_output"
+[ ! -e "$(cat "$state/mount-dir")" ]
+if [ ! -s "$state/archive-dir" ]; then
+  echo 'Exporter did not record the new setgid staging directory.' >&2
+  exit 1
+fi
+archive_dir=$(cat "$state/archive-dir")
+if [ -z "$archive_dir" ] || [ -e "$archive_dir" ] || [ -L "$archive_dir" ]; then
+  echo "Exporter did not remove its setgid staging directory: $archive_dir" >&2
+  exit 1
+fi
+[ -z "$(find "$setgid_dir" -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
+
+echo 'PureDarwin root exporter setgid staging test passed.'
+
+# A root exporter must reject a destination controlled by a different account
+# even when the directory mode is not group/world writable: its owner can
+# change the mode while export is in progress.
+root_runner=()
+if [ "$EUID" -ne 0 ] && [ -n "$real_sudo" ] && "$real_sudo" -n true 2>/dev/null; then
+  root_runner=("$real_sudo" -n)
+fi
+if [ "$EUID" -eq 0 ] || [ "${#root_runner[@]}" -gt 0 ]; then
+  foreign_dir=$tmp/foreign-owned
+  mkdir -- "$foreign_dir"
+  chmod 0755 "$foreign_dir"
+  if [ "$EUID" -eq 0 ]; then
+    chown 65534:65534 "$foreign_dir"
+  else
+    "$real_sudo" -n chown 65534:65534 "$foreign_dir"
+  fi
+  foreign_output=$foreign_dir/root.tar.gz
+  rm -f -- "$state/archive-dir" "$state/mount-dir" "$state/loop-attached"
+  if "${root_runner[@]}" env PATH="$PATH" TEST_STATE="$state" FAKE_LOOP="$FAKE_LOOP" REAL_MKTEMP="$REAL_MKTEMP" TMPDIR=. "$script" "$image" "$foreign_output" >/dev/null 2>"$tmp/foreign-export.log"; then
+    echo 'Exporter unexpectedly accepted a directory controlled by another account.' >&2
+    exit 1
+  fi
+  grep -F 'Refusing an output directory that another local account can change' "$tmp/foreign-export.log" >/dev/null
+  [ ! -e "$foreign_output" ]
+  [ ! -e "$state/loop-attached" ]
+  [ ! -e "$state/archive-dir" ]
+  [ ! -e "$state/mount-dir" ]
+  echo 'PureDarwin root exporter foreign-owner rejection test passed.'
+else
+  echo 'PureDarwin root exporter foreign-owner rejection test skipped (root or passwordless sudo unavailable).'
+fi
+
+# Paths that traverse a symlink and then `..` are canonicalized before staging,
+# so the temporary archive and published output use the same physical parent.
+physical_parent=$tmp/physical
+mkdir -p -- "$physical_parent/branch" "$physical_parent/branch2"
+ln -s -- "$physical_parent/branch" "$tmp/parent-link"
+physical_output_dir=$tmp/parent-link/../branch2
+physical_output=$physical_output_dir/path-resolution.tar.gz
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/mount-dir"
+TMPDIR=. "$script" "$image" "$physical_output" >/dev/null
+[ -f "$physical_parent/branch2/path-resolution.tar.gz" ]
+[ ! -e "$state/loop-attached" ]
+[ ! -e "$(cat "$state/mount-dir")" ]
+[ -z "$(find "$physical_parent/branch2" -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
+echo 'PureDarwin root exporter physical-path resolution test passed.'
+
+# pwd output ending in a newline must not be truncated while resolving a
+# symlink to a directory whose physical name ends in a newline.
+newline_dir=$tmp/$'physical-name\n'
 mkdir -- "$newline_dir"
-rm -f -- "$state/check-log"
-set +e
-REPLACE_ARCHIVE_DIR=1 ATTACKER_DIR=$attacker_dir \
-  "$script" "$image" "$newline_dir/must-not-exist.tar.gz" >/dev/null 2>&1
-status=$?
-set -e
-[ "$status" -ne 0 ] || { echo 'Exporter accepted a replaced staging directory in a newline path' >&2; exit 1; }
-newline_stage=$(cat "$state/archive-dir")
-[[ "$newline_stage" == "$newline_dir"/* ]]
-[ "$(cat "$attacker_dir/root.tar.gz")" = 'private sentinel' ]
-replaced_stage=$(cat "$state/replaced-stage")
-rm -rf -- "$replaced_stage" "$newline_stage"
-
-echo 'PureDarwin root exporter newline path check passed.'
+ln -s -- "$newline_dir" "$tmp/newline-link"
+newline_output=$tmp/newline-link/newline-name.tar.gz
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/mount-dir" "$state/check-log"
+TMPDIR=. "$script" "$image" "$newline_output" >/dev/null
+[ -f "$newline_dir/newline-name.tar.gz" ]
+[ ! -e "$state/loop-attached" ]
+[ ! -e "$(cat "$state/mount-dir")" ]
+[ -z "$(find "$newline_dir" -maxdepth 1 -name '.puredarwin-root.*' -print -quit)" ]
+echo 'PureDarwin root exporter newline-path resolution test passed.'

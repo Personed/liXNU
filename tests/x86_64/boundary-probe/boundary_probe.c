@@ -4,6 +4,7 @@
 #include <linux/build_bug.h>
 #include <linux/errno.h>
 #include <linux/fs.h>
+#include <linux/irqflags.h>
 #include <linux/miscdevice.h>
 #include <linux/mm.h>
 #include <linux/module.h>
@@ -13,6 +14,7 @@
 #include <linux/smp.h>
 #include <linux/uaccess.h>
 #include <linux/workqueue.h>
+#include <asm/cpufeature.h>
 #include <asm/fpu/api.h>
 #include <asm/msr-index.h>
 #include <asm/msr.h>
@@ -25,6 +27,9 @@
 
 #define BP_STACK_ORDER 2
 #define BP_STACK_SIZE (PAGE_SIZE << BP_STACK_ORDER)
+#define BP_STACK_GUARD_BYTES sizeof(u64)
+#define BP_STACK_LOW_CANARY  0x4c4f5743414e4152ULL
+#define BP_STACK_HIGH_CANARY 0x4849474843414e52ULL
 #define BP_RFLAGS_CONTROL (X86_EFLAGS_IF | X86_EFLAGS_DF | X86_EFLAGS_IOPL | \
 			   X86_EFLAGS_NT | X86_EFLAGS_RF | X86_EFLAGS_VM | \
 			   X86_EFLAGS_AC | X86_EFLAGS_VIF | X86_EFLAGS_VIP)
@@ -33,7 +38,7 @@ struct bp_asm_result {
 	unsigned long host_entry_rsp;
 	unsigned long host_return_rsp;
 	unsigned long alt_switch_rsp;
-	unsigned long alt_inner_rsp;
+	unsigned long alt_entry_rsp;
 	unsigned long alt_return_rsp;
 	unsigned long rflags_entry;
 	unsigned long rflags_during;
@@ -49,12 +54,16 @@ struct bp_host_snapshot {
 	int cpu;
 	struct task_struct *task;
 	unsigned long stack_page;
+	unsigned long stack_end;
 	unsigned long rsp;
 	unsigned long rflags;
 	unsigned long cr3;
 	u64 fs_base;
 	u64 gs_base;
 	u64 kernel_gs_base;
+	u64 xcr0;
+	unsigned int preempt_count;
+	bool irq_disabled;
 };
 
 struct bp_work {
@@ -72,18 +81,40 @@ void x86_boundary_probe_switch_stack(void *stack_top, struct bp_asm_result *resu
 				     unsigned int mode);
 void x86_boundary_probe_clobber_xstate(void);
 
+static int bp_read_xcr0(u64 *xcr0)
+{
+	u32 low, high;
+
+	if (!boot_cpu_has(X86_FEATURE_XSAVE) ||
+	    !boot_cpu_has(X86_FEATURE_OSXSAVE) ||
+	    !boot_cpu_has(X86_FEATURE_AVX))
+		return -EOPNOTSUPP;
+	asm volatile("xgetbv" : "=a"(low), "=d"(high) : "c"(0));
+	*xcr0 = ((u64)high << 32) | low;
+	if ((*xcr0 & 0x6) != 0x6)
+		return -EOPNOTSUPP;
+	return 0;
+}
+
 static noinline int bp_snapshot(struct bp_host_snapshot *snapshot)
 {
 	unsigned long flags;
 	u32 low, high;
+	int err;
 
 	snapshot->cpu = raw_smp_processor_id();
 	snapshot->task = current;
 	snapshot->stack_page = (unsigned long)task_stack_page(current);
+	snapshot->stack_end = snapshot->stack_page + THREAD_SIZE;
 	asm volatile("mov %%rsp, %0\n\tpushfq\n\tpopq %1"
 		     : "=r"(snapshot->rsp), "=r"(flags) :: "memory");
 	snapshot->rflags = flags;
+	snapshot->preempt_count = preempt_count();
+	snapshot->irq_disabled = irqs_disabled();
 	snapshot->cr3 = __read_cr3();
+	err = bp_read_xcr0(&snapshot->xcr0);
+	if (err)
+		return err;
 	if (rdmsr_safe(MSR_FS_BASE, &low, &high))
 		return -EIO;
 	snapshot->fs_base = ((u64)high << 32) | low;
@@ -103,7 +134,11 @@ static bool bp_snapshots_match(const struct bp_host_snapshot *before,
 	const unsigned long pcid_mask = (1UL << 12) - 1;
 
 	return before->cpu == after->cpu && before->task == after->task &&
-	       before->stack_page == after->stack_page && before->rsp == after->rsp &&
+	       before->stack_page == after->stack_page &&
+	       before->stack_end == after->stack_end && before->rsp == after->rsp &&
+	       before->preempt_count == after->preempt_count &&
+	       before->irq_disabled == after->irq_disabled &&
+	       before->xcr0 == after->xcr0 &&
 	       ((before->rflags ^ after->rflags) & BP_RFLAGS_CONTROL) == 0 &&
 	       before->cr3 == after->cr3 &&
 	       (before->cr3 & page_table_address_mask) ==
@@ -141,8 +176,10 @@ static long bp_run_on_cpu(void *arg)
 	struct bp_host_snapshot before, after;
 	struct bp_asm_result result = {};
 	unsigned long irq_flags;
+	unsigned long stack_base, stack_limit;
 	struct page *stack_page;
 	unsigned long stack_top;
+	u64 *low_canary, *high_canary;
 	long ret = 0;
 
 	if (fki_caps() != 0)
@@ -151,7 +188,13 @@ static long bp_run_on_cpu(void *arg)
 	stack_page = alloc_pages(GFP_KERNEL | __GFP_ZERO, BP_STACK_ORDER);
 	if (!stack_page)
 		return -ENOMEM;
-	stack_top = (unsigned long)page_address(stack_page) + BP_STACK_SIZE;
+	stack_base = (unsigned long)page_address(stack_page);
+	stack_limit = stack_base + BP_STACK_SIZE;
+	low_canary = (u64 *)stack_base;
+	high_canary = (u64 *)(stack_limit - BP_STACK_GUARD_BYTES);
+	WRITE_ONCE(*low_canary, BP_STACK_LOW_CANARY);
+	WRITE_ONCE(*high_canary, BP_STACK_HIGH_CANARY);
+	stack_top = (unsigned long)high_canary;
 
 	preempt_disable();
 	local_irq_save(irq_flags);
@@ -162,6 +205,17 @@ static long bp_run_on_cpu(void *arg)
 	ret = bp_snapshot(&before);
 	if (ret)
 		goto out_restore;
+	if (!before.irq_disabled ||
+	    before.rsp < before.stack_page || before.rsp >= before.stack_end) {
+		ret = -EUCLEAN;
+		goto out_restore;
+	}
+#ifdef CONFIG_PREEMPT_COUNT
+	if (!before.preempt_count) {
+		ret = -EUCLEAN;
+		goto out_restore;
+	}
+#endif
 	x86_boundary_probe_switch_stack((void *)stack_top, &result,
 					work->request.mode);
 	ret = bp_snapshot(&after);
@@ -170,12 +224,19 @@ static long bp_run_on_cpu(void *arg)
 
 	if (!bp_snapshots_match(&before, &after) ||
 	    result.host_entry_rsp != result.host_return_rsp ||
-	    result.alt_switch_rsp < (unsigned long)page_address(stack_page) ||
+	    result.host_entry_rsp < before.stack_page ||
+	    result.host_entry_rsp >= before.stack_end ||
+	    (result.host_entry_rsp & 0x7) != 0 ||
+	    result.alt_switch_rsp < stack_base + BP_STACK_GUARD_BYTES ||
 	    result.alt_switch_rsp >= stack_top ||
-	    result.alt_inner_rsp < (unsigned long)page_address(stack_page) ||
-	    result.alt_inner_rsp >= stack_top ||
-	    result.alt_return_rsp < (unsigned long)page_address(stack_page) ||
+	    result.alt_entry_rsp < stack_base + BP_STACK_GUARD_BYTES ||
+	    result.alt_entry_rsp >= stack_top ||
+	    (result.alt_entry_rsp & 0xf) != 8 ||
+	    (result.alt_switch_rsp & 0xf) != 0 ||
+	    result.alt_return_rsp < stack_base + BP_STACK_GUARD_BYTES ||
 	    result.alt_return_rsp >= stack_top ||
+	    READ_ONCE(*low_canary) != BP_STACK_LOW_CANARY ||
+	    READ_ONCE(*high_canary) != BP_STACK_HIGH_CANARY ||
 	    result.rflags_entry != result.rflags_return ||
 	    ((result.rflags_entry ^ result.rflags_inner_return) &
 	     (X86_EFLAGS_DF | X86_EFLAGS_CF)) != (X86_EFLAGS_DF | X86_EFLAGS_CF) ||
@@ -199,8 +260,12 @@ out_restore:
 	__free_pages(stack_page, BP_STACK_ORDER);
 	if (ret)
 		return ret;
-	pr_info("x86-boundary-probe: cpu %u mode %u restored host state\n",
-		work->request.cpu, work->request.mode);
+	pr_info("x86-boundary-probe: cpu %u mode %u restored host state "
+		"shim_entry_rsp_mod16=%lu preempt_count=%u "
+		"irqs_disabled=%u xcr0=%#llx stack_canaries=ok\n",
+		work->request.cpu, work->request.mode, result.alt_entry_rsp & 0xf,
+		before.preempt_count, before.irq_disabled,
+		(unsigned long long)before.xcr0);
 	return result.status;
 }
 
@@ -245,10 +310,20 @@ static struct miscdevice bp_device = {
 
 static int __init bp_init(void)
 {
+	u64 xcr0;
+	int err;
+
 	if (fki_caps() != 0) {
 		pr_err("x86-boundary-probe: refusing nonzero FKI capabilities\n");
 		return -EOPNOTSUPP;
 	}
+	err = bp_read_xcr0(&xcr0);
+	if (err) {
+		pr_err("x86-boundary-probe: XSAVE/OSXSAVE/AVX and XMM/YMM XCR0 state are required\n");
+		return err;
+	}
+	pr_info("x86-boundary-probe: test-only xcr0=%#llx; fki_caps=0\n",
+		(unsigned long long)xcr0);
 	return misc_register(&bp_device);
 }
 

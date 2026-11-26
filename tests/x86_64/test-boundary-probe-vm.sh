@@ -26,7 +26,8 @@ cp -a "$REPO/fki-ko/." "$STAGE/build/fki-ko/"
 cp -a "$REPO/tests/x86_64/boundary-probe/." "$STAGE/build/tests/x86_64/boundary-probe/"
 make -C "$KDIR" ARCH=x86_64 M="$STAGE/build/fki-ko" CONFIG_DEBUG_INFO_BTF_MODULES= modules
 make -C "$KDIR" ARCH=x86_64 M="$STAGE/build/tests/x86_64/boundary-probe" \
-  KBUILD_EXTRA_SYMBOLS="$STAGE/build/fki-ko/Module.symvers" modules
+	KBUILD_EXTRA_SYMBOLS="$STAGE/build/fki-ko/Module.symvers" \
+	CONFIG_DEBUG_INFO_BTF_MODULES= modules
 gcc -O2 -Wall -Wextra -Werror -mavx -mxsave -static \
   -I"$REPO/tests/x86_64/boundary-probe" \
   -o "$STAGE/build/boundary-probe-test" "$REPO/tests/x86_64/boundary-probe/user_test.c"

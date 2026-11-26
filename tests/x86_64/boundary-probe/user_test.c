@@ -29,59 +29,77 @@ static const uint32_t vectors[8][8] __attribute__((aligned(32))) = {
 	{0x00000000, 0xffffffff, 0x00000000, 0xffffffff, 0x00000000, 0xffffffff, 0x00000000, 0xffffffff},
 };
 
+struct xsave_config {
+	size_t size;
+	uint64_t mask;
+};
+
 _Static_assert(X86_BOUNDARY_PROBE_RUN == _IOW(0xb7, 1, struct x86_boundary_probe_request),
 	       "userspace ioctl number disagrees with kernel UAPI");
 
 static long invoke_with_xstate(int fd, const struct x86_boundary_probe_request *request,
-			       uint32_t after[8][8])
+			       uint32_t after[8][8], void *xstate_before,
+			       void *xstate_after, const struct xsave_config *config)
 {
 	register long rax __asm__("rax") = SYS_ioctl;
 	register long rdi __asm__("rdi") = fd;
 	register long rsi __asm__("rsi") = X86_BOUNDARY_PROBE_RUN;
 	register const struct x86_boundary_probe_request *rdx __asm__("rdx") = request;
+	const uint32_t mask_low = (uint32_t)config->mask;
+	const uint32_t mask_high = (uint32_t)(config->mask >> 32);
+	long syscall_result;
 
 	/* The raw syscall preserves RCX/R11 as required by the syscall ABI and lets us
-	 * inspect the live YMM registers before any userspace C code can use them. */
+	 * inspect live SIMD and XSAVE state before userspace C code can use it. */
 	__asm__ volatile(
-		"vmovdqu %[v0], %%ymm0\n\t"
-		"vmovdqu %[v1], %%ymm1\n\t"
-		"vmovdqu %[v2], %%ymm2\n\t"
-		"vmovdqu %[v3], %%ymm3\n\t"
-		"vmovdqu %[v4], %%ymm4\n\t"
-		"vmovdqu %[v5], %%ymm5\n\t"
-		"vmovdqu %[v6], %%ymm6\n\t"
-		"vmovdqu %[v7], %%ymm7\n\t"
+		"vmovdqu 0(%[vectors]), %%ymm0\n\t"
+		"vmovdqu 32(%[vectors]), %%ymm1\n\t"
+		"vmovdqu 64(%[vectors]), %%ymm2\n\t"
+		"vmovdqu 96(%[vectors]), %%ymm3\n\t"
+		"vmovdqu 128(%[vectors]), %%ymm4\n\t"
+		"vmovdqu 160(%[vectors]), %%ymm5\n\t"
+		"vmovdqu 192(%[vectors]), %%ymm6\n\t"
+		"vmovdqu 224(%[vectors]), %%ymm7\n\t"
+		"movl %[mask_low], %%eax\n\t"
+		"movl %[mask_high], %%edx\n\t"
+		"xsave64 (%[xstate_before])\n\t"
+		"mov %[request_ptr], %%rdx\n\t"
+		"mov %[syscall_nr], %%eax\n\t"
 		"syscall\n\t"
-		"vmovdqu %%ymm0, %[o0]\n\t"
-		"vmovdqu %%ymm1, %[o1]\n\t"
-		"vmovdqu %%ymm2, %[o2]\n\t"
-		"vmovdqu %%ymm3, %[o3]\n\t"
-		"vmovdqu %%ymm4, %[o4]\n\t"
-		"vmovdqu %%ymm5, %[o5]\n\t"
-		"vmovdqu %%ymm6, %[o6]\n\t"
-		"vmovdqu %%ymm7, %[o7]\n\t"
-		: "+a"(rax), "+D"(rdi), "+S"(rsi), "+d"(rdx),
-		  [o0] "=m"(after[0]), [o1] "=m"(after[1]),
-		  [o2] "=m"(after[2]), [o3] "=m"(after[3]),
-		  [o4] "=m"(after[4]), [o5] "=m"(after[5]),
-		  [o6] "=m"(after[6]), [o7] "=m"(after[7])
-		: [v0] "m"(vectors[0]), [v1] "m"(vectors[1]),
-		  [v2] "m"(vectors[2]), [v3] "m"(vectors[3]),
-		  [v4] "m"(vectors[4]), [v5] "m"(vectors[5]),
-		  [v6] "m"(vectors[6]), [v7] "m"(vectors[7])
-		: "cc", "rcx", "r11", "memory", "ymm0", "ymm1", "ymm2", "ymm3",
+		"mov %%rax, %[syscall_result]\n\t"
+		"vmovdqu %%ymm0, 0(%[after])\n\t"
+		"vmovdqu %%ymm1, 32(%[after])\n\t"
+		"vmovdqu %%ymm2, 64(%[after])\n\t"
+		"vmovdqu %%ymm3, 96(%[after])\n\t"
+		"vmovdqu %%ymm4, 128(%[after])\n\t"
+		"vmovdqu %%ymm5, 160(%[after])\n\t"
+		"vmovdqu %%ymm6, 192(%[after])\n\t"
+		"vmovdqu %%ymm7, 224(%[after])\n\t"
+		"movl %[mask_low], %%eax\n\t"
+		"movl %[mask_high], %%edx\n\t"
+		"xsave64 (%[xstate_after])\n\t"
+		: "+&a"(rax), "+&D"(rdi), "+&S"(rsi), "+&d"(rdx),
+		  [syscall_result] "=m"(syscall_result)
+		: [request_ptr] "r"(request), [syscall_nr] "i"(SYS_ioctl),
+		  [xstate_before] "r"(xstate_before), [xstate_after] "r"(xstate_after),
+		  [after] "r"(after),
+		  [mask_low] "m"(mask_low), [mask_high] "m"(mask_high),
+		  [vectors] "r"(vectors)
+		: "cc", "rcx", "r10", "r11", "memory", "ymm0", "ymm1", "ymm2", "ymm3",
 		  "ymm4", "ymm5", "ymm6", "ymm7");
-	return rax;
+	return syscall_result;
 }
 
-static int check_xsave_avx(void)
+static int get_xsave_config(struct xsave_config *config)
 {
-	unsigned int eax, ebx, ecx, edx;
+	unsigned int eax, ebx, ecx, edx, max_leaf;
 	unsigned int xcr0_low, xcr0_high;
+	uint64_t xcr0, supported;
 
-	if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx) ||
+	max_leaf = __get_cpuid_max(0, NULL);
+	if (max_leaf < 0x0d || !__get_cpuid(1, &eax, &ebx, &ecx, &edx) ||
 	    !(ecx & (1U << 26)) || !(ecx & (1U << 27)) || !(ecx & (1U << 28))) {
-		fprintf(stderr, "CPU does not expose XSAVE, OSXSAVE and AVX\n");
+		fprintf(stderr, "CPU does not expose CPUID.0D, XSAVE, OSXSAVE and AVX\n");
 		return -1;
 	}
 	__asm__ volatile("xgetbv" : "=a"(xcr0_low), "=d"(xcr0_high) : "c"(0));
@@ -90,6 +108,19 @@ static int check_xsave_avx(void)
 			xcr0_high, xcr0_low);
 		return -1;
 	}
+	__cpuid_count(0x0d, 0, eax, ebx, ecx, edx);
+	xcr0 = ((uint64_t)xcr0_high << 32) | xcr0_low;
+	supported = ((uint64_t)edx << 32) | eax;
+	if (xcr0 & ~supported) {
+		fprintf(stderr, "XCR0 includes state unsupported by CPUID.0D\n");
+		return -1;
+	}
+	if (ebx < 576 || ebx > (1U << 20)) {
+		fprintf(stderr, "unexpected enabled XSAVE image size: %u\n", ebx);
+		return -1;
+	}
+	config->size = ebx;
+	config->mask = xcr0;
 	return 0;
 }
 
@@ -106,37 +137,74 @@ static int check_linux_syscalls(pid_t expected_pid)
 	return 0;
 }
 
-static int run_probe_ioctl(int fd, pid_t pid, unsigned int cpu, unsigned int mode)
+static int run_probe_ioctl(int fd, pid_t pid, unsigned int cpu, unsigned int mode,
+			   const struct xsave_config *config)
 {
 	struct x86_boundary_probe_request request = {.cpu = cpu, .mode = mode};
 	uint32_t after[8][8] __attribute__((aligned(32)));
+	void *xstate_before = NULL, *xstate_after = NULL;
 	long result;
 	long expected = mode == X86_BOUNDARY_PROBE_MODE_RETURN ? 0 : -ECANCELED;
+	int alloc_error;
+	size_t mismatch;
 
-	if (check_linux_syscalls(pid))
+	alloc_error = posix_memalign(&xstate_before, 64, config->size);
+	if (!alloc_error)
+		alloc_error = posix_memalign(&xstate_after, 64, config->size);
+	if (alloc_error) {
+		fprintf(stderr, "could not allocate aligned XSAVE snapshots: %s\n",
+			strerror(alloc_error));
+		free(xstate_before);
+		free(xstate_after);
 		return -1;
-	result = invoke_with_xstate(fd, &request, after);
+	}
+	memset(xstate_before, 0, config->size);
+	memset(xstate_after, 0, config->size);
+	if (check_linux_syscalls(pid))
+		goto fail;
+	result = invoke_with_xstate(fd, &request, after, xstate_before,
+				    xstate_after, config);
 	if (result != expected) {
 		fprintf(stderr, "cpu %u mode %u returned %ld, expected %ld\n",
 			cpu, mode, result, expected);
-		return -1;
+		goto fail;
 	}
 	if (memcmp(vectors, after, sizeof(vectors))) {
 		fprintf(stderr, "cpu %u mode %u changed userspace XSAVE/YMM state\n", cpu, mode);
-		return -1;
+		goto fail;
+	}
+	if (memcmp(xstate_before, xstate_after, config->size)) {
+		for (mismatch = 0; mismatch < config->size; mismatch++) {
+			if (((unsigned char *)xstate_before)[mismatch] !=
+			    ((unsigned char *)xstate_after)[mismatch])
+				break;
+		}
+		fprintf(stderr,
+			"cpu %u mode %u changed enabled XSAVE state at byte %zu (size=%zu xcr0=%#llx)\n",
+			cpu, mode, mismatch, config->size,
+			(unsigned long long)config->mask);
+		goto fail;
 	}
 	if (check_linux_syscalls(pid))
-		return -1;
+		goto fail;
+	free(xstate_before);
+	free(xstate_after);
 	return 0;
+
+fail:
+	free(xstate_before);
+	free(xstate_after);
+	return -1;
 }
 
 int main(void)
 {
 	const pid_t pid = getpid();
+	struct xsave_config xsave;
 	long cpu_count;
 	int fd, cpu;
 
-	if (check_xsave_avx())
+	if (get_xsave_config(&xsave))
 		return 1;
 	cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
 	if (cpu_count < 1) {
@@ -156,15 +224,15 @@ int main(void)
 	if (check_linux_syscalls(pid))
 		return 1;
 	for (cpu = 0; cpu < cpu_count; cpu++) {
-		if (run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_RETURN) ||
-		    run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_ABORT))
+		if (run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_RETURN, &xsave) ||
+		    run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_ABORT, &xsave))
 			return 1;
 	}
 	if (close(fd)) {
 		perror("close probe device");
 		return 1;
 	}
-	printf("x86 boundary probe passed: %ld CPUs, return/abort, host state, XSAVE/YMM, Linux syscalls\n",
-	       cpu_count);
+	printf("x86 boundary probe passed: %ld CPUs, return/abort, host state, enabled XSAVE/YMM, Linux syscalls (xcr0=%#llx size=%zu)\n",
+	       cpu_count, (unsigned long long)xsave.mask, xsave.size);
 	return 0;
 }

@@ -83,7 +83,7 @@ SYM_FUNC_END(x86_boundary_probe_switch_stack)
 
 SYM_FUNC_START(x86_boundary_probe_inner)
 	movq %rsp, %rax
-	movq %rax, BP_OFF_ALT_INNER_RSP(%rdi)
+	movq %rax, BP_OFF_ALT_ENTRY_RSP(%rdi)
 
 	movabsq $0x5555666677778888, %rbp
 	movabsq $0x1111222233334444, %rbx

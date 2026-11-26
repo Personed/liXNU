@@ -170,6 +170,21 @@ static void append_unknown_optional_command(unsigned char *file)
 	append_command(file, 0x1234U, 8);
 }
 
+static void append_two_unaligned_optional_commands(unsigned char *file)
+{
+	put_u32(file + COMMANDS_END, 0x1234U);
+	put_u32(file + COMMANDS_END + 4, 12);
+	put_u32(file + COMMANDS_END + 12, 0x1235U);
+	put_u32(file + COMMANDS_END + 16, 12);
+	put_u32(file + 16, 5);
+	put_u32(file + 20, COMMAND_BYTES + 24);
+}
+
+static void append_main_command(unsigned char *file)
+{
+	append_command(file, 0x80000028U, 24);
+}
+
 static void append_unknown_required_command(unsigned char *file)
 {
 	append_command(file, 0x80001234U, 8);
@@ -254,6 +269,11 @@ static void section_file_range_outside_segment(unsigned char *f)
 {
 	put_u32(f + SECTION_OFF + 48, 0x1f8);
 }
+static void section_file_vm_offsets_mismatch(unsigned char *f)
+{
+	put_u64(f + SECTION_OFF + 32, 0x1300);
+	put_u32(f + SECTION_OFF + 48, 0x1d0);
+}
 static void section_name_mismatch(unsigned char *f) { put_name(f + SECTION_OFF + 16, "__DATA"); }
 static void section_alignment_invalid(unsigned char *f) { put_u32(f + SECTION_OFF + 52, 64); }
 static void section_reloc_range_invalid(unsigned char *f)
@@ -319,6 +339,9 @@ int main(void)
 				    FILE_BYTES, command_area_unaligned);
 	failures += expect_rejected("unclaimed load command bytes", -XNU_MACHO_X86_64_PARSE_ENOEXEC,
 				    FILE_BYTES, command_area_has_unclaimed_bytes);
+	failures += expect_rejected("two unaligned commands in aligned command area",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, append_two_unaligned_optional_commands);
 	failures += expect_rejected("command count exceeds area", -XNU_MACHO_X86_64_PARSE_ENOEXEC,
 				    FILE_BYTES, command_count_too_high);
 	failures += expect_rejected("undersized segment command", -XNU_MACHO_X86_64_PARSE_ENOEXEC,
@@ -339,6 +362,9 @@ int main(void)
 				    FILE_BYTES, section_vm_range_outside_segment);
 	failures += expect_rejected("section file range outside segment", -XNU_MACHO_X86_64_PARSE_ENOEXEC,
 				    FILE_BYTES, section_file_range_outside_segment);
+	failures += expect_rejected("section file and VM offsets disagree",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES, section_file_vm_offsets_mismatch);
 	failures += expect_rejected("section segment name mismatch", -XNU_MACHO_X86_64_PARSE_ENOEXEC,
 				    FILE_BYTES, section_name_mismatch);
 	failures += expect_rejected("invalid section alignment", -XNU_MACHO_X86_64_PARSE_ENOEXEC,
@@ -368,6 +394,9 @@ int main(void)
 	failures += expect_rejected("unknown required command",
 				    -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP,
 				    FILE_BYTES, append_unknown_required_command);
+	failures += expect_rejected("LC_MAIN is unsupported",
+				    -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP,
+				    FILE_BYTES, append_main_command);
 	failures += expect_duplicate_thread_rejected();
 	failures += expect_metadata("chained-fixup command is flagged",
 				    append_chained_fixups_valid,

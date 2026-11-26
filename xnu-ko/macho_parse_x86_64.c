@@ -266,6 +266,8 @@ static int parse_segment(const unsigned char *file, unsigned long file_size,
 			    (unsigned long)offset > file_size ||
 			    size > file_size - (unsigned long)offset)
 				return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+			if (file_delta != section_delta)
+				return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
 		}
 		if (nreloc && ((unsigned long)reloff > file_size ||
 			       (unsigned long)nreloc >
@@ -316,7 +318,7 @@ int xnu_macho_x86_64_parse(const void *input, unsigned long file_size,
 	ncmds = read_u32le(file + 16);
 	sizeofcmds = read_u32le(file + 20);
 	if (sizeofcmds > file_size - MACH_HEADER_64_SIZE ||
-	    (sizeofcmds & 3U) || ncmds > sizeofcmds / LOAD_COMMAND_SIZE)
+	    (sizeofcmds & 7U) || ncmds > sizeofcmds / LOAD_COMMAND_SIZE)
 		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
 	command_off = MACH_HEADER_64_SIZE;
 	command_end = command_off + sizeofcmds;
@@ -329,7 +331,7 @@ int xnu_macho_x86_64_parse(const void *input, unsigned long file_size,
 			return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
 		command = read_u32le(file + command_off);
 		command_size = read_u32le(file + command_off + 4);
-		if (command_size < LOAD_COMMAND_SIZE || (command_size & 3U) ||
+		if (command_size < LOAD_COMMAND_SIZE || (command_size & 7U) ||
 		    command_size > command_end - command_off)
 			return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
 

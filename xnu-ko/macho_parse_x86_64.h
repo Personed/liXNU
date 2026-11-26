@@ -24,7 +24,7 @@ struct xnu_macho_x86_64_info {
 	xnu_macho_u64 vm_high;
 	xnu_macho_u64 entry;
 	xnu_macho_u32 segment_count;
-	/* Number of validated LC_SEGMENT_64 commands with nonzero vmsize. */
+	/* Nonzero mapped segments; excludes the __PAGEZERO reservation. */
 	xnu_macho_u32 mapped_segment_count;
 	/* Metadata only: success never means the image is loadable or fixups work. */
 	xnu_macho_u32 inspection_flags;

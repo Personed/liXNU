@@ -437,10 +437,32 @@ static void append_empty_duplicate_text_without_fixups(unsigned char *file)
 
 static void append_fixups_with_duplicate_text(unsigned char *file)
 {
+	/* Keep the payload outside the duplicate command's file range. */
+	unsigned char *payload = file + 1024;
+	unsigned char *starts = payload + 28;
+	unsigned char *text_starts = starts + 16;
+
 	append_chained_fixups_valid(file);
+	memcpy(payload, file + 512, 68);
+	/* The old payload location is part of the appended segment command. */
+	memset(file + 512, 0, 68);
+	put_u32(file + COMMANDS_END + 8, 1024);
 	append_empty_duplicate_text(file, COMMANDS_END + 16);
 	put_u32(file + 16, 5);
 	put_u32(file + 20, COMMAND_BYTES + 16 + 72);
+	put_u32(file + COMMANDS_END + 12, 72);
+	put_u32(payload + 8, 72);
+	put_u32(payload + 12, 72);
+	put_u32(starts, 3); /* starts count matches PAGEZERO plus both __TEXTs */
+	put_u32(starts + 8, 16);
+	put_u32(starts + 12, 0);
+	put_u32(text_starts, 26);
+	put_u32(text_starts + 4, 0x000b1000U);
+	put_u64(text_starts + 8, 0);
+	put_u32(text_starts + 16, 0);
+	put_u32(text_starts + 20, 2);
+	put_u16(text_starts + 22, 0x10);
+	put_u16(text_starts + 24, 0xffff);
 }
 
 static void append_chained_fixups_prefix_valid(unsigned char *file)

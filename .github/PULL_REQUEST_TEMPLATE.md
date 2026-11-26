@@ -18,6 +18,6 @@
 
 - [ ] ARM64 behavior remains covered when shared module code changes.
 - [ ] No Apple system images, firmware, or local SMC OSK values are included.
-- [ ] The x86_64 macOS target is identified as Tahoe through QEMU/KVM; x86_64 TCG Linux smoke and ARM64 TCG/PureDarwin evidence are labeled as separate complementary profiles.
+- [ ] The x86-64 QEMU TCG → ARM64 Linux → PureDarwin console route is identified as the active portability target; the macOS/QEMU/KVM experiment is labeled separately.
 - [ ] Every related agent has visible scope, interface, and result updates in PR comments.
-- [ ] Required automated checks are green before merge; the owner authorized merging without waiting for human review.
+- [ ] Required automated checks are green; merge or auto-merge has explicit user authorization.

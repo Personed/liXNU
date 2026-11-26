@@ -223,6 +223,8 @@ jobs:
           done
           echo "KDIR=/usr/src/$headers" >> "$GITHUB_ENV"
           echo "Pinned ARM64 kernel release: $KERNEL_RELEASE ($KERNEL_PACKAGE_VERSION)"
+      - name: Test VirtIO module format handling
+        run: bash tests/puredarwin/test-prepare-guest-virtio-modules.sh
       - name: Build FKI and XNU against the guest kernel
         run: |
           make -s -C "$KDIR" M="$GITHUB_WORKSPACE/fki-ko" modules
@@ -235,6 +237,8 @@ jobs:
           cd "$RUNNER_TEMP/linux-packages"
           image_package="linux-image-unsigned-$KERNEL_RELEASE"
           modules_package="linux-modules-$KERNEL_RELEASE"
+          expected_image_deb_sha="fa46ed1dc9e13d1c15772122e2cf18622e8cf0aa27b280f6fcb1ccfa196d9048"
+          expected_modules_deb_sha="27cdb8fd11379b622264b224b1f59ae7ecf2b27f387b6a2d0e4a383eae9c3688"
           apt-get --snapshot="$KERNEL_APT_SNAPSHOT" download \
             "$image_package=$KERNEL_PACKAGE_VERSION" \
             "$modules_package=$KERNEL_PACKAGE_VERSION"
@@ -249,8 +253,20 @@ jobs:
             }
             digest=$(sha256sum "$package" | awk '{print $1}')
             case "$name" in
-              "$image_package") image_deb_sha=$digest ;;
-              "$modules_package") modules_deb_sha=$digest ;;
+              "$image_package")
+                test "$digest" = "$expected_image_deb_sha" || {
+                  echo "$name: expected sha256 $expected_image_deb_sha, found $digest" >&2
+                  exit 1
+                }
+                image_deb_sha=$digest
+                ;;
+              "$modules_package")
+                test "$digest" = "$expected_modules_deb_sha" || {
+                  echo "$name: expected sha256 $expected_modules_deb_sha, found $digest" >&2
+                  exit 1
+                }
+                modules_deb_sha=$digest
+                ;;
               *) echo "Unexpected kernel package: $name" >&2; exit 1 ;;
             esac
             echo "$name=$version sha256=$digest"
@@ -262,6 +278,19 @@ jobs:
           test -d "$modules"
           kernel_config="kernel/boot/config-$KERNEL_RELEASE"
           grep -q '^CONFIG_ARM64_4K_PAGES=y' "$kernel_config"
+          source "$GITHUB_WORKSPACE/tests/puredarwin/virtio-modules.sh"
+          if [ -z "$(virtio_module_path "$modules" virtio_mmio)" ]; then
+            grep -q '^CONFIG_VIRTIO_MMIO=y' "$kernel_config" || {
+              echo 'virtio_mmio has no module and is not built into the pinned kernel' >&2
+              exit 1
+            }
+          fi
+          if [ -z "$(virtio_module_path "$modules" virtio_blk)" ]; then
+            grep -q '^CONFIG_VIRTIO_BLK=y' "$kernel_config" || {
+              echo 'virtio_blk has no module and is not built into the pinned kernel' >&2
+              exit 1
+            }
+          fi
           "$GITHUB_WORKSPACE/tests/puredarwin/prepare-guest.sh" \
             "kernel/boot/vmlinuz-$KERNEL_RELEASE" \
             "$(command -v busybox)" \

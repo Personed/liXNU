@@ -14,6 +14,7 @@ for input in "$1" "$2" "$3" "$4" "$5" "$6"; do
 done
 
 kernel=$1 busybox=$2 fki=$3 xnu=$4 kc=$5 conf=$6 modules=$7 out=$8
+source "$(dirname -- "$0")/virtio-modules.sh"
 if [ ! -d "$modules" ]; then
   printf 'Cannot read kernel modules directory: %s\n' "$modules" >&2
   exit 2
@@ -58,7 +59,7 @@ cp -- "$kc" "$root/lib/firmware/xnu/kc-free.bin"
 cp -- "$conf" "$root/pd.conf"
 copy_modules=false
 for driver in virtio_mmio virtio_blk; do
-  if [ -n "$(find "$modules" -type f -name "$driver.ko*" -print -quit)" ]; then
+  if [ -n "$(virtio_module_path "$modules" "$driver")" ]; then
     copy_modules=true
     break
   fi

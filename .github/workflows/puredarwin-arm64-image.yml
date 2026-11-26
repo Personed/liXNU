@@ -447,3 +447,154 @@ jobs:
             ${{ runner.temp }}/puredarwin-tcg-host-memory.txt
           if-no-files-found: ignore
           retention-days: 30
+
+  puredarwin-tcg-memory-profile:
+    name: Experimental guest RAM profile ${{ matrix.profile }}
+    needs: [puredarwin-build, arm64-guest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - profile: 5g-linux2g
+            qemu_memory: 5G
+            linux_memory: 2G
+            fki_carve_base: "0xc0000000"
+            fki_carve_mb: 3072
+            xnu_ram_mb: 2816
+          - profile: 4g-linux2g
+            qemu_memory: 4G
+            linux_memory: 2G
+            fki_carve_base: "0xc0000000"
+            fki_carve_mb: 1792
+            xnu_ram_mb: 1536
+          - profile: 3g-linux1g
+            qemu_memory: 3G
+            linux_memory: 1G
+            fki_carve_base: "0x80000000"
+            fki_carve_mb: 1792
+            xnu_ram_mb: 1536
+          - profile: 2560m-linux512m
+            qemu_memory: 2560M
+            linux_memory: 512M
+            fki_carve_base: "0x60000000"
+            fki_carve_mb: 1536
+            xnu_ram_mb: 1280
+          - profile: 2g-linux512m
+            qemu_memory: 2G
+            linux_memory: 512M
+            fki_carve_base: "0x60000000"
+            fki_carve_mb: 1280
+            xnu_ram_mb: 1024
+    env:
+      PROFILE_ID: ${{ matrix.profile }}
+      QEMU_MEMORY: ${{ matrix.qemu_memory }}
+      LINUX_MEMORY: ${{ matrix.linux_memory }}
+      FKI_CARVE_BASE: ${{ matrix.fki_carve_base }}
+      FKI_CARVE_MB: ${{ matrix.fki_carve_mb }}
+      XNU_RAM_MB: ${{ matrix.xnu_ram_mb }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record host memory before artifact downloads
+        run: |
+          awk '/^MemTotal:|^MemAvailable:/' /proc/meminfo |
+            tee "$RUNNER_TEMP/puredarwin-tcg-memory-host.txt"
+      - name: Download the ARM64 Linux guest inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: puredarwin-e2e-guest
+          path: ${{ runner.temp }}/puredarwin-e2e-guest
+      - name: Download the PureDarwin system disk
+        uses: actions/download-artifact@v4
+        with:
+          name: puredarwin-e2e-disk
+          path: ${{ runner.temp }}/puredarwin-e2e-disk
+      - name: Install QEMU ARM system emulation
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-arm
+      - name: Test exact QEMU RSS measurement
+        run: python3 tests/puredarwin/test-run-tcg-e2e-rss.py
+      - name: Make a disposable disk copy for this profile
+        run: |
+          cp --reflink=auto \
+            "$RUNNER_TEMP/puredarwin-e2e-disk/pd.img" \
+            "$RUNNER_TEMP/puredarwin-${PROFILE_ID}.img"
+      - name: Boot experimental profile and require full guest shutdown
+        id: boot
+        run: |
+          set +e
+          set -o pipefail
+          python3 tests/puredarwin/run-tcg-e2e.py \
+            --timeout-seconds 5400 \
+            --qemu-memory "$QEMU_MEMORY" \
+            --linux-memory "$LINUX_MEMORY" \
+            --fki-carve-base "$FKI_CARVE_BASE" \
+            --fki-carve-mb "$FKI_CARVE_MB" \
+            --xnu-ram-mb "$XNU_RAM_MB" \
+            "$RUNNER_TEMP/puredarwin-e2e-guest/Image" \
+            "$RUNNER_TEMP/puredarwin-e2e-guest/initramfs.cpio.gz" \
+            "$RUNNER_TEMP/puredarwin-${PROFILE_ID}.img" \
+            "$RUNNER_TEMP/puredarwin-tcg-${PROFILE_ID}-serial.log" 2>&1 |
+            tee "$RUNNER_TEMP/puredarwin-tcg-${PROFILE_ID}-output.log"
+          boot_status=${PIPESTATUS[0]}
+          echo "script_exit_code=$boot_status" >> "$GITHUB_OUTPUT"
+          exit "$boot_status"
+      - name: Record profile result and memory evidence
+        if: always()
+        env:
+          BOOT_OUTCOME: ${{ steps.boot.outcome }}
+          SCRIPT_EXIT_CODE: ${{ steps.boot.outputs.script_exit_code }}
+        run: |
+          output="$RUNNER_TEMP/puredarwin-tcg-${PROFILE_ID}-output.log"
+          host_memory="$RUNNER_TEMP/puredarwin-tcg-memory-host.txt"
+          qemu_rss='not measured'
+          qemu_exit='not reported (boot script did not confirm success)'
+          if [ -f "$output" ]; then
+            measured_rss=$(awk '/^QEMU peak RSS:/ {print; exit}' "$output")
+            if [ -n "$measured_rss" ]; then qemu_rss=$measured_rss; fi
+            measured_exit=$(awk -F': ' '/^QEMU exit status:/ {print $2; exit}' "$output")
+            if [ -n "$measured_exit" ]; then qemu_exit=$measured_exit; fi
+          fi
+          if [ "$BOOT_OUTCOME" = success ]; then
+            result='PASS'
+            qemu_exit='0 (required by the successful end-to-end boot script)'
+          else
+            result='FAIL'
+          fi
+          {
+            echo "## Experimental TCG RAM profile: ${PROFILE_ID}"
+            echo
+            echo "- Profile verdict: ${result}"
+            printf -- '- Guest RAM: `%s`; Linux `mem=%s`; FKI `%s MiB at %s`; XNU RAM `%s MiB`.\n' \
+              "$QEMU_MEMORY" "$LINUX_MEMORY" "$FKI_CARVE_MB" "$FKI_CARVE_BASE" "$XNU_RAM_MB"
+            printf -- '- End-to-end boot script outcome: `%s` (exit %s).\n' \
+              "${BOOT_OUTCOME:-unknown}" "${SCRIPT_EXIT_CODE:-unknown}"
+            echo "- QEMU exit status: ${qemu_exit}"
+            echo "- QEMU peak RSS: ${qemu_rss}"
+            echo '- Host memory before artifact downloads:'
+            if [ -s "$host_memory" ]; then sed 's/^/  - /' "$host_memory"; else echo '  - Not recorded'; fi
+            echo '- A pass requires the Darwin console command, guest halt, XNU/FKI unload, Linux power-off and QEMU exit 0.'
+            echo '- This experimental profile is not a support claim. Compare it with the required 6 GiB job and repeat passes before setting a floor.'
+            if [ -s "$output" ]; then
+              echo
+              echo '### Boot diagnostics'
+              echo '```text'
+              tail -n 100 "$output"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain experimental profile logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puredarwin-tcg-memory-${{ matrix.profile }}
+          path: |
+            ${{ runner.temp }}/puredarwin-tcg-memory-host.txt
+            ${{ runner.temp }}/puredarwin-tcg-${{ matrix.profile }}-serial.log
+            ${{ runner.temp }}/puredarwin-tcg-${{ matrix.profile }}-output.log
+          if-no-files-found: ignore
+          retention-days: 30

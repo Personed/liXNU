@@ -101,15 +101,18 @@ PureDarwin ARM64 input, exports the real userland into an HFS+ disk, builds a ma
 source XNU collection, pins the ARM64 Linux kernel packages, compiles FKI/XNU for that
 guest, and prepares a direct-boot `Image` and initramfs. Do not mix artifacts across runs.
 
-In a checkout of the pinned-kernel branch, use the guest `Image` and
-`initramfs.cpio.gz` from `puredarwin-e2e-guest` and `pd.img` from
-`puredarwin-e2e-disk`. Replace each `/path/to/...` placeholder below with the actual
-downloaded file path. Make a writable copy of the disk for every run:
+In a checkout of the pinned-kernel branch, use the guest `Image`,
+`initramfs.cpio.gz`, `guest-manifest.txt`, and `build-manifest.txt`
+from `puredarwin-e2e-guest`, plus `pd.img` from
+`puredarwin-e2e-disk`; keep all files from the same workflow run. The build manifest
+records the disk hash from the paired disk build. Replace each `/path/to/...`
+placeholder below with the actual downloaded file path. Make a writable copy of the disk
+for every run:
 
 ```sh
 (
   set +e
-  for program in qemu-system-aarch64 python3 timeout sha256sum lscpu; do
+  for program in qemu-system-aarch64 python3 timeout sha256sum lscpu awk; do
     command -v "$program" >/dev/null 2>&1 || {
       echo "$program is not available on PATH; install the required host packages first." >&2
       exit 1
@@ -117,11 +120,16 @@ downloaded file path. Make a writable copy of the disk for every run:
   done
   input_hashes=$(mktemp) || exit 1
   trap 'rm -f "$input_hashes"' EXIT
-  cat > "$input_hashes" <<'SHA256'
-02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6  /path/to/Image
-431c6a2dcdbb77fc1131a8359149a59ad5f4aa5867eff3cf182175cf8a24e322  /path/to/initramfs.cpio.gz
-84fc7065d5a9bfb87a8db4fe1c3e7c5f485a0c1b23cdcb7beccdd426f03528a1  /path/to/pd.img
-SHA256
+  image_sha=$(awk -F= '$1 == "arm64_guest_image_sha256" {print $2; exit}' /path/to/guest-manifest.txt)
+  initramfs_sha=$(awk -F= '$1 == "arm64_guest_initramfs_sha256" {print $2; exit}' /path/to/guest-manifest.txt)
+  disk_sha=$(awk -F= '$1 == "puredarwin_disk_sha256" {print $2; exit}' /path/to/build-manifest.txt)
+  test -n "$image_sha" && test -n "$initramfs_sha" && test -n "$disk_sha" || {
+    echo "could not read Image, initramfs, and disk hashes from the paired manifests" >&2
+    exit 1
+  }
+  printf '%s  %s\n' "$image_sha" /path/to/Image \
+    "$initramfs_sha" /path/to/initramfs.cpio.gz \
+    "$disk_sha" /path/to/pd.img > "$input_hashes" || exit 1
   sha256sum --check "$input_hashes" || exit 1
   cp /path/to/pd.img /path/to/pd-tcg-test.img || exit 1
   python3 tests/puredarwin/run-tcg-e2e.py \
@@ -144,10 +152,11 @@ SHA256
 ```
 
 The guest writes to the HFS+ disk. Keep the downloaded `pd.img` as the pristine input;
-the checksum preflight confirms the Image, initramfs, and disk match run #140 before QEMU
-starts, and the final command confirms none of those original inputs changed. The plain
-`cp` makes a full disk copy rather than relying on GNU reflink support, so reserve free
-space at least as large as `pd.img`.
+the checksum preflight confirms the Image, initramfs, and disk match their paired manifests
+before QEMU starts, and the final command confirms none of those original inputs changed.
+The plain `cp` works with BusyBox and GNU coreutils without the nonportable
+`--reflink` option. Reserve the logical size of `pd.img` as a conservative
+space budget; sparse-file or reflink behavior may make the actual allocated copy smaller.
 
 The command uses ARM64 `virt`, multi-threaded TCG, 2 guest CPUs, and the reduced 6 GiB profile.
 It records host and QEMU facts, captures the serial console, sends the required Darwin
@@ -178,8 +187,9 @@ artifact archive digests `sha256:d7f7d21c025249655ab206ab79d208d3354866a1d21bfba
 for `puredarwin-e2e-guest` and
 `sha256:936add32c29fab498bba74181ede349431e7c84afb4be859cfd4eefa88183dfa` for
 `puredarwin-e2e-disk`. Both artifacts expire on 2026-11-29; regenerate the set from the
-pinned workflow after expiry. The hashes identify this tested input set, not a permanent
-download mirror.
+pinned workflow after expiry. The reproducer reads hashes from the manifests downloaded
+with that same run, so a regenerated disk with new GPT identifiers is checked against its
+own input hash. The table identifies the #140 input set, not a permanent download mirror.
 
 Report the profile alongside the stage:
 

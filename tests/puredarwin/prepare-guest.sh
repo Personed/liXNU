@@ -56,14 +56,23 @@ cp -- "$fki" "$root/fki.ko"
 cp -- "$xnu" "$root/xnu.ko"
 cp -- "$kc" "$root/lib/firmware/xnu/kc-free.bin"
 cp -- "$conf" "$root/pd.conf"
-cp -a -- "$modules" "$root/lib/modules/"
+copy_modules=false
+for driver in virtio_mmio virtio_blk; do
+  if find "$modules" -type f -name "$driver.ko*" | grep -q .; then
+    copy_modules=true
+    break
+  fi
+done
 cp -- "$(dirname -- "$0")/init" "$root/init"
 chmod 0755 "$root/bin/busybox" "$root/init"
-find "$root/lib/modules" -type f -name '*.ko.zst' -print0 |
-  while IFS= read -r -d '' module; do zstd --decompress --rm "$module"; done
-find "$root/lib/modules" -type f -name '*.ko.xz' -print0 |
-  while IFS= read -r -d '' module; do xz --decompress -- "$module"; done
-depmod -b "$root" "$(basename -- "$modules")"
+if [ "$copy_modules" = true ]; then
+  cp -a -- "$modules" "$root/lib/modules/"
+  find "$root/lib/modules" -type f -name '*.ko.zst' -print0 |
+    while IFS= read -r -d '' module; do zstd --decompress --rm "$module"; done
+  find "$root/lib/modules" -type f -name '*.ko.xz' -print0 |
+    while IFS= read -r -d '' module; do xz --decompress -- "$module"; done
+  depmod -b "$root" "$(basename -- "$modules")"
+fi
 
 (cd "$root" && find . -print0 | cpio --quiet --null -o -H newc --owner=0:0) |
   gzip -1 > "$out/initramfs.cpio.gz"

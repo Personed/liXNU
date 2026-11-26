@@ -153,9 +153,10 @@ class UefiLaunchTest(unittest.TestCase):
                 "--memory", "1024",
                 "--cpus", "1",
             ]
-            window_title = "xnulinux-uefi-window-test"
+            guest_name = "xnulinux-uefi-window-test"
+            window_title = f"QEMU ({guest_name})"
             if graphical:
-                command += ["--graphical", "--window-title", window_title]
+                command += ["--graphical", "--window-title", guest_name]
             qemu = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             window_found = False
             window_output = ""

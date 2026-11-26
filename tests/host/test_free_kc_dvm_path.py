@@ -14,7 +14,7 @@ SCRIPT = ROOT / "scripts/free-kc/build.sh"
 
 
 class FreeKernelCollectionPathTest(unittest.TestCase):
-    def test_relative_dvm_is_canonicalized_before_build_commands(self):
+    def test_relative_and_space_paths_reach_final_kernel_collection_copy(self):
         source = SCRIPT.read_text(encoding="utf-8")
         pd_revision = re.search(r"\bPD_REV=([0-9a-f]+)", source).group(1)
         mbedtls_revision = re.search(
@@ -25,26 +25,57 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            launch = root / "launch"
-            vm = root / "vm"
+            launch = root / "launch with spaces"
+            vm = root / "vm with spaces"
             fake_bin = root / "bin"
             poc_target = root / "repo with spaces"
-            poc_link = root / "poc"
+            poc_link = root / "poc with spaces"
+            work = launch / "relative work"
             launch.mkdir()
             fake_bin.mkdir()
-            (poc_target / "kexts/free/corecrypto").mkdir(parents=True)
-            (poc_target / "scripts/free-kc").mkdir(parents=True)
+            for relative in (
+                "build/netinc",
+                "kexts/free/corecrypto",
+                "kexts/free/compat",
+                "kexts/XnuCPU",
+                "kexts/XnuDisk",
+                "kexts/XnuDrm",
+                "scripts/free-kc",
+                "scripts/kclink",
+            ):
+                (poc_target / relative).mkdir(parents=True, exist_ok=True)
             (poc_target / "kexts/free/corecrypto/mbedtls.rev").write_text(
                 (ROOT / "kexts/free/corecrypto/mbedtls.rev").read_text(encoding="utf-8"),
                 encoding="utf-8",
             )
-            (poc_target / "scripts/free-kc/kcc.py").touch()
+            for relative in (
+                "scripts/free-kc/kcc.py",
+                "scripts/free-kc/genspec.py",
+                "scripts/free-kc/mk-template.py",
+                "scripts/free-kc/layout.json",
+                "scripts/kclink/kclink.py",
+            ):
+                (poc_target / relative).touch()
             poc_link.symlink_to(poc_target, target_is_directory=True)
             kernel_framework = (
                 vm
                 / "out/x12377/build/xnu/k27h-dst/System/Library/Frameworks/Kernel.framework/Versions/A"
             )
             (kernel_framework / "PrivateHeaders").mkdir(parents=True)
+            (vm / "out/k27/xnu").mkdir(parents=True)
+
+            extensions = work / "src/pd/src/Kernel/Extensions"
+            for relative in (
+                "amfi",
+                "pthread",
+                "IOStorageFamily",
+                "HFSEncodings",
+                "hfs/core",
+                "hfs/shim",
+                "hfs/hfs_encodings",
+            ):
+                (extensions / relative).mkdir(parents=True)
+            (extensions / "hfs/core/kext-config.h").write_text("/* fixture */\n", encoding="utf-8")
 
             git = fake_bin / "git"
             git.write_text(
@@ -63,23 +94,48 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             python = fake_bin / "python3"
             python.write_text(
                 "#!/bin/sh\n"
-                "printf '%s\\n%s\\n' \"$DVM\" \"$1\" > \"$DVM_CAPTURE\"\n"
-                "exit 73\n",
+                "printf 'CALL\\0' >> \"$PYTHON_CAPTURE\"\n"
+                "printf '%s\\0' \"$@\" >> \"$PYTHON_CAPTURE\"\n"
+                "case \"$1\" in\n"
+                "  */kclink.py)\n"
+                "    pwd -P > \"$KCLINK_CWD_CAPTURE\"\n"
+                "    mkdir -p -- \"$(dirname -- \"$4\")\"\n"
+                "    printf 'fake kernel collection\\n' > \"$4\"\n"
+                "    printf 'wrote %s\\n' \"$4\"\n"
+                "    ;;\n"
+                "esac\n",
                 encoding="utf-8",
             )
             python.chmod(0o755)
 
-            capture = root / "dvm-value.txt"
+            strings = fake_bin / "strings"
+            strings.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\0' \"$@\" > \"$STRINGS_CAPTURE\"\n"
+                "printf 'Darwin Kernel Version 27.0.0: fixture\\n'\n",
+                encoding="utf-8",
+            )
+            strings.chmod(0o755)
+
+            sudo = fake_bin / "sudo"
+            sudo.write_text("#!/bin/sh\nexec \"$@\"\n", encoding="utf-8")
+            sudo.chmod(0o755)
+
+            python_capture = root / "python-call-log.bin"
+            strings_capture = root / "strings-args.bin"
+            output = root / "kc free.bin"
             env = os.environ.copy()
             env.update(
                 {
-                    "DVM": "../vm",
-                    "DVM_CAPTURE": str(capture),
+                    "DVM": "../vm with spaces",
+                    "KCLINK_CWD_CAPTURE": str(root / "kclink-cwd.txt"),
+                    "PYTHON_CAPTURE": str(python_capture),
+                    "STRINGS_CAPTURE": str(strings_capture),
                     "FAKE_PD_REV": pd_revision,
                     "FAKE_MBEDTLS_REV": mbedtls_revision,
-                    "FREE_KC_WORK": str(root / "free-kc-work"),
-                    "OUT": str(root / "kc-free.bin"),
-                    "POC": "../poc",
+                    "FREE_KC_WORK": "relative work",
+                    "OUT": str(output),
+                    "POC": "../poc with spaces",
                     "PATH": str(fake_bin) + os.pathsep + env["PATH"],
                 }
             )
@@ -93,11 +149,40 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                 check=False,
             )
 
-            self.assertEqual(result.returncode, 73, result.stdout)
-            self.assertEqual(
-                capture.read_text(encoding="utf-8").splitlines(),
-                [str(vm.resolve()), str(poc_link.absolute() / "scripts/free-kc/kcc.py")],
-            )
+            self.assertEqual(result.returncode, 0, result.stdout)
+            calls = [
+                [value.decode() for value in record.split(b"\0") if value]
+                for record in python_capture.read_bytes().split(b"CALL\0")[1:]
+            ]
+            kcc_calls = [arguments for arguments in calls if arguments[0].endswith("/kcc.py")]
+            self.assertGreater(len(kcc_calls), 1)
+
+            corecrypto = kcc_calls[0]
+            self.assertEqual(corecrypto[0], str(poc_link.absolute() / "scripts/free-kc/kcc.py"))
+            self.assertNotIn("--macos", corecrypto)
+            self.assertEqual(corecrypto[1], str(work.resolve() / "obj/corecrypto"))
+            self.assertEqual(corecrypto[2:4], ["-I", str(poc_link.absolute() / "kexts/free/corecrypto")])
+            self.assertEqual(corecrypto[4:6], ["-I", str(work.resolve() / "src/mbedtls/include")])
+            source_list = re.search(
+                r"^MBEDTLS_SOURCES=(.+)$",
+                (ROOT / "kexts/free/corecrypto/mbedtls.rev").read_text(encoding="utf-8"),
+                re.MULTILINE,
+            ).group(1)
+            for relative in source_list.split():
+                self.assertIn(str(work.resolve() / "src/mbedtls/library" / relative), corecrypto)
+            self.assertTrue(all("--macos" in arguments for arguments in kcc_calls[1:]))
+
+            strings_arguments = [
+                value.decode() for value in strings_capture.read_bytes().split(b"\0") if value
+            ]
+            self.assertEqual(strings_arguments, [str(vm.resolve() / "out/k27/kernel-k27.macho")])
+            kclink = next(arguments for arguments in calls if arguments[0].endswith("/kclink.py"))
+            self.assertEqual((root / "kclink-cwd.txt").read_text().strip(), str(vm.resolve()))
+            self.assertEqual(kclink[1], str(work.resolve() / "kc-template.bin"))
+            self.assertEqual(kclink[3], str(work.resolve() / "kc-free.bin"))
+            self.assertEqual(kclink[4], "--native")
+            self.assertIn(str(poc_link.absolute() / "kexts/XnuCPU/XnuCPU.json"), kclink)
+            self.assertEqual(output.read_text(encoding="utf-8"), "fake kernel collection\n")
 
     def test_default_poc_ignores_competing_cdpath_checkout(self):
         source = SCRIPT.read_text(encoding="utf-8")

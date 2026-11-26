@@ -364,9 +364,10 @@ unset SIGNAL_AFTER_MOUNT SIGNAL_BEFORE_MOUNT
 # exporter records its inode, then interrupt the entire process group. Cleanup
 # must leave both the original and the replacement untouched.
 early_output=$tmp/early-mkdir-signal.tar.gz
-rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/archive-mkdir-ready" "$state/archive-mkdir-release" "$state/archive-export-pgid" "$state/check-log" "$state/replaced-stage"
+early_export_log=$state/early-export.log
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/archive-mkdir-ready" "$state/archive-mkdir-release" "$state/archive-export-pgid" "$state/check-log" "$state/replaced-stage" "$early_export_log"
 REPLACE_ARCHIVE_AFTER_MKDIR=1 PAUSE_AFTER_ARCHIVE_MKDIR=1 setsid --wait bash -c 'printf "%s\\n" "$$" >"$TEST_STATE/archive-export-pgid"; exec "$@"' _ \
-  "$script" "$image" "$early_output" >/dev/null 2>&1 &
+  "$script" "$image" "$early_output" >"$early_export_log" 2>&1 &
 early_export_pid=$!
 for attempt in {1..500}; do
   [ -e "$state/archive-mkdir-ready" ] && break
@@ -396,6 +397,11 @@ early_original=$(cat "$state/replaced-stage")
 [ "$(stat -c '%a' -- "$early_archive_dir")" = 700 ]
 [ ! -e "$early_output" ]
 [ ! -e "$state/loop-attached" ]
+if ! grep -F "Staging path identity was not recorded before cleanup; leaving it untouched: $early_archive_dir" "$early_export_log" >/dev/null; then
+  cat "$early_export_log" >&2
+  echo 'SIGTERM test did not observe the unverified-staging cleanup trap.' >&2
+  exit 1
+fi
 rm -rf -- "$early_original" "$early_archive_dir"
 echo 'PureDarwin root exporter process-group archive-mkdir replacement signal test passed.'
 

@@ -53,6 +53,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes qemu-system-arm qemu-efi-aarch64 qemu-utils qemu-system-gui xvfb x11-utils
+      - name: Start the graphical ARM64 guest through GTK
+        env:
+          QEMU_TEST_REQUIRED: "1"
+          QEMU_TEST_GRAPHICAL: "1"
+          QEMU_TEST_DISPLAY_BACKEND: gtk
+        run: xvfb-run -a python tests/qemu/test_uefi_launch.py UefiLaunchTest.test_launcher_starts_graphical_uefi_guest
       - name: Start the graphical ARM64 guest through SDL
         env:
           QEMU_TEST_REQUIRED: "1"

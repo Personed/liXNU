@@ -60,6 +60,16 @@ class UefiLaunchTest(unittest.TestCase):
         run.assert_called_once()
         qemu.kill.assert_called_once_with()
 
+    def test_sdl_keyboard_grab_suffix_matches_qemu_window(self):
+        expected = {"QEMU (xnulinux-uefi,window=Test-0)"}
+        actual = "QEMU (xnulinux-uefi,window=Test-0) - Press Ctrl-Alt-G to exit grab"
+        self.assertTrue(UefiLaunchTest._matches_window_title(actual, expected))
+        self.assertFalse(
+            UefiLaunchTest._matches_window_title(
+                "QEMU (other-vm) - Press Ctrl-Alt-G to exit grab", expected
+            )
+        )
+
     def firmware_pair(self):
         code_override = os.environ.get("QEMU_FIRMWARE_CODE")
         vars_override = os.environ.get("QEMU_FIRMWARE_VARS")
@@ -113,7 +123,9 @@ class UefiLaunchTest(unittest.TestCase):
                 tree_output = tree.stdout or ""
                 for line in tree_output.splitlines():
                     match = title_pattern.match(line)
-                    if not match or match.group(2) not in expected_titles:
+                    if not match or not self._matches_window_title(
+                        match.group(2), expected_titles
+                    ):
                         continue
                     detail = subprocess.run(
                         ["xwininfo", "-id", match.group(1)],
@@ -137,6 +149,13 @@ class UefiLaunchTest(unittest.TestCase):
                 tree_output = f"{tree_output}\nxwininfo failed: {error}"
             time.sleep(0.25)
         return False, tree_output
+
+    @staticmethod
+    def _matches_window_title(actual_title, expected_titles):
+        # SDL can append its keyboard-grab hint to the QEMU window title.
+        return actual_title in expected_titles or any(
+            actual_title.startswith(f"{expected} - ") for expected in expected_titles
+        )
 
     @staticmethod
     def _window_dimension(output, name):

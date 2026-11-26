@@ -132,15 +132,20 @@ def main() -> int:
 
     monitor = threading.Thread(target=monitor_qemu_rss, daemon=True)
     monitor.start()
+    boot_error = None
     try:
         try:
             result = subprocess.run(timeout_cmd, check=False, timeout=args.timeout_seconds + 45)
         except (OSError, subprocess.TimeoutExpired) as error:
-            print(f"TCG boot could not complete: {error}", file=sys.stderr)
-            return 1
+            boot_error = error
     finally:
         stop_monitor.set()
         monitor.join()
+
+    print(f"QEMU peak RSS: {peak_rss_kib} KiB ({peak_rss_kib / 1048576:.2f} GiB)", flush=True)
+    if boot_error is not None:
+        print(f"TCG boot could not complete: {boot_error}", file=sys.stderr)
+        return 1
 
     log = args.serial_log.read_text(encoding="utf-8", errors="replace") if args.serial_log.exists() else ""
     kmsg_prefix = re.compile(r"^\d+,\d+,\d+,[^;]*;(.*)$")
@@ -166,7 +171,6 @@ def main() -> int:
     for line in messages:
         if line == darwin_line or any(marker in line for marker in required):
             print(line)
-    print(f"QEMU peak RSS: {peak_rss_kib} KiB ({peak_rss_kib / 1048576:.2f} GiB)")
     if args.max_rss_mib is not None:
         if peak_rss_kib == 0:
             print("QEMU RSS was not measured", file=sys.stderr)

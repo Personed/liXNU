@@ -364,6 +364,10 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+      - name: Record host memory before artifact downloads
+        run: |
+          awk '/^MemTotal:|^MemAvailable:/' /proc/meminfo |
+            tee "$RUNNER_TEMP/puredarwin-lowmem-host-memory.txt"
       - name: Download the ARM64 Linux guest inputs
         uses: actions/download-artifact@v4
         with:
@@ -405,6 +409,8 @@ jobs:
             cat "$RUNNER_TEMP/puredarwin-e2e-guest/guest-manifest.txt"
             cat "$RUNNER_TEMP/puredarwin-e2e-guest/build-manifest.txt"
             echo '- Accelerator: QEMU TCG; hardware virtualization is not required.'
+            echo '- Host memory before guest/disk downloads:'
+            sed 's/^/  - /' "$RUNNER_TEMP/puredarwin-lowmem-host-memory.txt"
             echo '- Reduced guest profile: ARM64 Linux, 4 KiB pages, PAC, EL1, 6 GiB QEMU RAM; Linux `mem=2G`; FKI carve-out at `0xc0000000` (3072 MiB); XNU RAM 2816 MiB.'
             echo "- ${qemu_rss:-QEMU peak RSS: not measured}"
             echo '- Required evidence: real PureDarwin console command output, guest-requested `halt`, XNU module unload, Linux guest power-off, and QEMU RSS below 6144 MiB.'
@@ -418,5 +424,6 @@ jobs:
           path: |
             ${{ runner.temp }}/puredarwin-tcg-lowmem-serial.log
             ${{ runner.temp }}/puredarwin-tcg-lowmem-output.log
+            ${{ runner.temp }}/puredarwin-lowmem-host-memory.txt
           if-no-files-found: ignore
           retention-days: 30

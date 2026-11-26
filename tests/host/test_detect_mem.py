@@ -79,6 +79,10 @@ class TestDetectMem(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "lower LINUX_MEM or move CARVE_BASE higher"):
             detect_mem.validate_layout(ranges, "8G", "0x200000000", "8156")
 
+    def test_reject_linux_mem_with_leading_zero(self):
+        with self.assertRaisesRegex(ValueError, "leading zeroes are not supported"):
+            detect_mem.parse_mem_size("08G")
+
     def test_validate_explicit_carve_and_linux_overrides(self):
         ranges = detect_mem.parse_iomem("40000000-43fffffff : System RAM\n")
         detect_mem.validate_layout(ranges, "8G", "0x240000000", "2048", "1800")
@@ -87,6 +91,24 @@ class TestDetectMem(unittest.TestCase):
         ranges = detect_mem.parse_iomem("40000000-43fffffff : System RAM\n")
         with self.assertRaisesRegex(ValueError, "supported limit of 1920 MiB"):
             detect_mem.validate_layout(ranges, "8G", "0x240000000", "2048", "1921")
+
+    def test_explicit_ram_mb_can_exceed_automatic_cap_when_carve_allows_it(self):
+        ranges = detect_mem.parse_iomem("00000000-7ffffffff : System RAM\n")
+        detect_mem.validate_layout(ranges, "15G", "0x400000000", "9000", "8192")
+
+    def test_reject_ram_mb_with_leading_zero(self):
+        ranges = detect_mem.parse_iomem("00000000-7ffffffff : System RAM\n")
+        with self.assertRaisesRegex(ValueError, "RAM_MB.*leading zeroes"):
+            detect_mem.validate_layout(ranges, "15G", "0x400000000", "9000", "08192")
+
+    def test_reject_ram_mb_above_xnu_module_limit(self):
+        ranges = [(0, 76000 * detect_mem.MIB)]
+        with self.assertRaisesRegex(ValueError, "supported limit of 65536 MiB"):
+            detect_mem.validate_layout(ranges, "1G", "0x40000000", "70000", "65537")
+
+    def test_accept_ram_mb_at_xnu_module_limit_when_carve_allows_it(self):
+        ranges = [(0, 76000 * detect_mem.MIB)]
+        detect_mem.validate_layout(ranges, "1G", "0x40000000", "70000", "65536")
 
     def test_masked_iomem_raises(self):
         iomem = "00000000-00000000 : System RAM\n00000000-00000000 : System RAM\n"

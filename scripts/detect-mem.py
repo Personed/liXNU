@@ -10,6 +10,7 @@ import sys
 MIB = 1024 * 1024
 GIB = 1024 * MIB
 ALIGN_2M = 2 * MIB
+MAX_XNU_RAM_MB = 65536
 
 
 def memory_headroom(total_bytes):
@@ -26,7 +27,10 @@ def parse_mem_size(value):
     match = re.fullmatch(r"([0-9]+)([KMGTP]?)", value.strip(), re.IGNORECASE)
     if not match:
         raise ValueError(f"invalid LINUX_MEM value {value!r} (expected e.g. 7G or 7168M)")
-    amount = int(match.group(1))
+    amount_text = match.group(1)
+    if len(amount_text) > 1 and amount_text.startswith("0"):
+        raise ValueError(f"invalid LINUX_MEM value {value!r} (leading zeroes are not supported)")
+    amount = int(amount_text)
     suffix = match.group(2).upper()
     power = {"": 0, "K": 1, "M": 2, "G": 3, "T": 4, "P": 5}[suffix]
     size = amount * (1024 ** power)
@@ -82,12 +86,16 @@ def validate_layout(ranges, linux_mem, carve_base, carve_mb, ram_mb=None):
         )
 
     if ram_mb is not None:
+        if not re.fullmatch(r"[0-9]+", ram_mb):
+            raise ValueError(f"invalid RAM_MB value {ram_mb!r} (expected a positive integer)")
+        if len(ram_mb) > 1 and ram_mb.startswith("0"):
+            raise ValueError(f"invalid RAM_MB value {ram_mb!r} (leading zeroes are not supported)")
         try:
             requested_ram_mb = int(ram_mb, 10)
         except ValueError as exc:
             raise ValueError(f"invalid RAM_MB value {ram_mb!r} (expected a positive integer)") from exc
         overhead_mb = 256 if size_mb >= 4096 else 128
-        max_ram_mb = min(7900, size_mb - overhead_mb)
+        max_ram_mb = min(size_mb - overhead_mb, MAX_XNU_RAM_MB)
         if requested_ram_mb <= 0 or requested_ram_mb > max_ram_mb:
             raise ValueError(
                 f"RAM_MB={requested_ram_mb} exceeds the supported limit of {max_ram_mb} MiB "

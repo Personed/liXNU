@@ -74,8 +74,12 @@ an accepted x86_64 build result. The QEMU/KVM launcher below remains independent
   `XNU_LINUX_TCG_BOOTED` and powered off cleanly.
 - The actual QEMU 10.0.13 launcher passed `--check` with real `qemu-img`, and a paused TCG invocation accepted its Q35,
   OVMF, AppleSMC, AHCI, E1000, USB and VGA arguments. This checked command/device setup only.
-- The direct x86 FKI module check found missing architecture hooks, and `xnu_main.c` / `world.S` contain AArch64-only
-  code. These are open implementation tasks for the native port; the optional QEMU/KVM launcher is not a substitute.
+- An initial direct x86 FKI build, before the native backend work, failed modpost because architecture hooks were
+  missing. The current native-port branch supplies Linux-side x86_64 host hooks and an alternate Linux stack; its FKI
+  module builds against Debian 6.12.118 x86_64 headers. The backend reports no XNU execution capabilities, so this is
+  a compile milestone only. `xnu_main.c` and `world.S` still contain AArch64-only code, and the x86_64 XNU entry,
+  world switch, address-space and fault paths remain unimplemented. The optional QEMU/KVM launcher is a separate
+  guest experiment and is not a substitute for that work.
 - ARM64 `fki.ko` and `xnu.ko` cross-compiled against Debian 6.12.118 ARM64 headers. This is a build check, not an ARM64
   runtime smoke test.
 - This environment has no `/dev/kvm`, no Tahoe disk and no physical Intel/AMD/ARM hardware. No native hosted-XNU boot,
@@ -83,7 +87,8 @@ an accepted x86_64 build result. The QEMU/KVM launcher below remains independent
 
 ## Native x86_64 acceptance evidence still required
 
-- Build architecture-matched FKI, XNU, machine-layer, kext, and collection outputs for x86_64 while retaining ARM64 builds.
+- Build architecture-matched XNU, machine-layer, kext, and collection outputs for x86_64, extending the existing FKI
+  host-backend build, while retaining ARM64 builds.
 - Verify entry/return, fault recovery, Linux register/FPU/memory state, host syscalls, disk, input, network, display, and clean shutdown.
 - Boot Tahoe 26 to the desktop through the native hosted-XNU path on physical Intel and AMD PCs separately. Record CPU model/features, Linux kernel, RAM, page size, matching system build, host-integrity checks, and results.
 - Re-run the documented macOS 27 ARM64 desktop smoke on supported ARM64 hardware and record the result.

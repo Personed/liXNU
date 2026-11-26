@@ -25,7 +25,8 @@ linked into the collection by `scripts/kclink` the way xnulinux's own kexts are.
 
 Nothing of Apple's is read to make it. `kclink` links kexts into an existing collection, so `scripts/free-kc/mk-template.py`
 first makes an empty one: an `MH_FILESET` with the kernel's segments at the addresses in `scripts/free-kc/layout.json`
-(region sizes, nothing else), the kernel's pseudo-extensions (`com.apple.kpi.*`, from XNU's own
+(region sizes, nothing else), moving `__PRELINK_INFO` after the source-built kernel's executable span if it grew past
+the reference layout; the kernel's pseudo-extensions (`com.apple.kpi.*`, from XNU's own
 `config/System.kext/PlugIns/*/Info.plist`) as the prelink info, and empty chained fixups. Built with every
 kernelcache and kernel collection of Apple's hidden from the build (a mount namespace with them replaced by empty files),
 the result is the same byte for byte. It also boots with no static trust cache (`TRUSTCACHE=`).

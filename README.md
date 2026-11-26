@@ -101,13 +101,16 @@ Working on two arm64 Linux setups:
 
 QEMU TCG does not require VT-x/AMD-V. The reference profile allocates 16 GiB to the ARM64 Linux guest and needs
 additional physical RAM for the host OS and QEMU; report host total/available RAM separately from guest RAM. The first
-#36 run built the pinned image and HFS+ disk, but `kclink` failed on a `__TEXT_EXEC`/`__PRELINK_INFO` overlap. The
-current #36 head `5312b29` calculates the plist location from the kernel Mach-O; workflow run #72 is rebuilding, and
-review is checking whether `__KLD`/`__LAST` remain overlapped by `__TEXT_EXEC`. There is no PureDarwin console or
-clean-halt pass yet. Full console checks for Windows and Intel macOS are proposed in #46 and remain pending. The
-proposed public runners are reported as 16 GB for Windows and 14 GB for Intel macOS, less than the 16 GiB guest
-allocation plus host overhead; use larger runners or mark those combinations unsupported for this profile if they
-cannot boot. This is not a universal RAM minimum or a performance, GUI, networking, or Tahoe/KVM claim. See
+#36 run (#69) built the pinned image and HFS+ disk, but `kclink` failed on a `__TEXT_EXEC`/`__PRELINK_INFO` overlap.
+At head `5312b29`, [run #72](https://github.com/Personed/xnulinux/actions/runs/45845795576) completed the source build,
+prepared the guest, and passed the full console command, guest halt, XNU unload, Linux power-off, and QEMU exit checks
+on Ubuntu 24.04 x86-64. The review thread still asks for the actual `__TEXT_EXEC`/`__KLD`/`__LAST` ranges; the tested
+collection booted successfully, but the layout concern remains under review. Full-console Windows and Intel-macOS
+checks are proposed in #46 and remain pending. Its public runners are reported as 16 GB for Windows and 14 GB for
+Intel macOS, less than the 16 GiB guest allocation plus host overhead; use larger runners or mark those combinations
+unsupported for this profile if they cannot boot. The guest workflow still selects the latest Ubuntu ARM64 kernel at
+run time, so reruns are not yet pinned to identical kernel inputs. This is not a universal RAM minimum or a
+performance, GUI, networking, or Tahoe/KVM claim. See
 [PR #3](https://github.com/Personed/xnulinux/pull/3) for Windows/macOS/Linux host setup and
 [`docs/portability-validation.md`](docs/portability-validation.md) for stage-specific evidence.
 

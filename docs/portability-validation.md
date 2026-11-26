@@ -50,14 +50,15 @@ Report the profile alongside the stage:
   guest kernel `.config` or its SHA-256; report host RAM separately from the guest's
   16 GiB allocation. The workflow currently selects Ubuntu's latest generic ARM64
   kernel package at run time and records its release/config digest; pinning the package
-  or repository snapshot is still needed for identical reruns. The first run built the
+  or repository snapshot is still needed for identical reruns. The first run (#69) built the
   pinned image and HFS+ disk but failed at `kclink` on a `__TEXT_EXEC`/`__PRELINK_INFO`
-  overlap. Current head `5312b29` calculates `__PRELINK_INFO` from the kernel Mach-O;
-  run #72 is rebuilding, while review checks possible `__TEXT_EXEC`/`__KLD`/`__LAST`
-  overlap. No Darwin console, clean halt, XNU unload, or Linux guest power-off pass is recorded. A complete pass
-  requires the Darwin command marker, guest-issued halt, `xnu.ko` unload, the Linux serial marker `reboot: Power down`,
-  and QEMU exit status 0. The full-console Linux job currently runs only on Ubuntu; cross-host Windows/Intel-macOS jobs are proposed in
-  [#46](https://github.com/Personed/xnulinux/pull/46) and have no pass yet. Its proposed
+  overlap. At current head `5312b29`, [run #72](https://github.com/Personed/xnulinux/actions/runs/45845795576)
+  completed the source build, guest preparation, and full QEMU TCG boot on Ubuntu 24.04 x86-64. It passed the
+  Darwin command marker, guest-issued halt, `xnu.ko` unload, Linux serial marker `reboot: Power down`, and QEMU exit
+  status 0. The review thread still requests the actual `__TEXT_EXEC`/`__KLD`/`__LAST` segment ranges; the tested
+  collection boots, but that layout question remains open. The full-console Linux job currently runs only on Ubuntu;
+  cross-host Windows/Intel-macOS jobs are proposed in [#46](https://github.com/Personed/xnulinux/pull/46) and have no
+  pass yet. Its proposed
   public runners have 16 GB (Windows) and 14 GB (Intel macOS), below guest allocation
   plus host overhead; larger runners or a validated lower-memory profile are needed
   before those rows can be supported. This profile does not establish a universal

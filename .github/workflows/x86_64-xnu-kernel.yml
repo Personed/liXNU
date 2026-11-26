@@ -141,6 +141,8 @@ jobs:
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/xnu-target-include-diagnostics.log
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/xnu-warning-policy-probe.log
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/kdk-preflight.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/trustcache-sdk-header-candidates.txt
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/trustcache-sdk-header-scan-errors.log
           if-no-files-found: ignore
           retention-days: 5
   cross-build-on-arm64-host:

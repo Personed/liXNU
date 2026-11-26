@@ -87,6 +87,19 @@ assumptions in `xnu_main.c`; it is not yet an x86_64 pass condition. The x86_64 
 that lack the documented feature floor before reaching its world-switch refusal. The native port must keep XNU execution
 capability disabled until its context switch, memory isolation and exception paths are implemented.
 
+`tools/dev/x86_64/xnu-macho-inspect` is a host-side read-only inspector for a candidate `kernel.development` artifact.
+Build it with the instructions in `tools/dev/x86_64/README.md`, then run:
+
+```sh
+/tmp/xnu-macho-inspect /path/to/kernel.development
+```
+
+Its JSON reports the parser-accepted x86_64 subtype, unslid thread RIP, aggregate and per-segment metadata, and whether
+fixup/linkedit commands are present. The tool exits nonzero for unsupported or malformed inputs and never maps,
+relocates, interprets fixups, or executes the image. A successful report is structural inspection only, not loadability
+or runtime evidence. `tests/x86_64/test-macho-inspect.sh` runs synthetic positive and negative fixtures; CI runs it with
+the x86_64 parser job. No Tahoe artifact has yet been confirmed against this subset.
+
 ## Evidence and limits
 
 - The fake-QEMU launcher suite passes preflight errors, OVMF auto-detection including qcow2 firmware arguments and persistent NVRAM format detection, TCG

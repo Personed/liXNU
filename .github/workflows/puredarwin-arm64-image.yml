@@ -193,6 +193,10 @@ jobs:
     needs: puredarwin-build
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
+    env:
+      KERNEL_ABI: 7.0.0-44
+      KERNEL_RELEASE: 7.0.0-44-generic
+      KERNEL_PACKAGE_VERSION: "7.0.0-44.44~24.04.1"
     steps:
       - uses: actions/checkout@v4
       - name: Download the source-built PureDarwin collection
@@ -203,12 +207,21 @@ jobs:
       - name: Install matching ARM64 kernel headers and image tools
         run: |
           sudo apt-get update -qq
-          pkg=$(apt-cache search --names-only '^linux-headers-[0-9.]+-[0-9]+-generic$' | awk '{print $1}' | sort -V | tail -1)
-          test -n "$pkg" || { echo 'No Ubuntu generic ARM64 headers found' >&2; exit 1; }
-          sudo apt-get install -y -qq "$pkg" busybox-static cpio kmod xz-utils zstd
-          echo "KERNEL_RELEASE=${pkg#linux-headers-}" >> "$GITHUB_ENV"
-          echo "KDIR=/usr/src/$pkg" >> "$GITHUB_ENV"
-          echo "Selected kernel headers: $pkg"
+          headers="linux-headers-$KERNEL_RELEASE"
+          common_headers="linux-hwe-7.0-headers-$KERNEL_ABI"
+          sudo apt-get install -y -qq \
+            "$headers=$KERNEL_PACKAGE_VERSION" \
+            "$common_headers=$KERNEL_PACKAGE_VERSION" \
+            busybox-static cpio kmod xz-utils zstd
+          for package in "$headers" "$common_headers"; do
+            version=$(dpkg-query -W -f='${Version}' "$package")
+            test "$version" = "$KERNEL_PACKAGE_VERSION" || {
+              echo "$package: expected $KERNEL_PACKAGE_VERSION, found $version" >&2
+              exit 1
+            }
+          done
+          echo "KDIR=/usr/src/$headers" >> "$GITHUB_ENV"
+          echo "Pinned ARM64 kernel release: $KERNEL_RELEASE ($KERNEL_PACKAGE_VERSION)"
       - name: Build FKI and XNU against the guest kernel
         run: |
           make -s -C "$KDIR" M="$GITHUB_WORKSPACE/fki-ko" modules
@@ -219,7 +232,29 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/puredarwin-e2e-guest" "$RUNNER_TEMP/linux-packages"
           cd "$RUNNER_TEMP/linux-packages"
-          apt-get download "linux-image-unsigned-$KERNEL_RELEASE" "linux-modules-$KERNEL_RELEASE"
+          image_package="linux-image-unsigned-$KERNEL_RELEASE"
+          modules_package="linux-modules-$KERNEL_RELEASE"
+          apt-get download \
+            "$image_package=$KERNEL_PACKAGE_VERSION" \
+            "$modules_package=$KERNEL_PACKAGE_VERSION"
+          image_deb_sha=
+          modules_deb_sha=
+          for package in ./*.deb; do
+            name=$(dpkg-deb -f "$package" Package)
+            version=$(dpkg-deb -f "$package" Version)
+            test "$version" = "$KERNEL_PACKAGE_VERSION" || {
+              echo "$name: expected $KERNEL_PACKAGE_VERSION, found $version" >&2
+              exit 1
+            }
+            digest=$(sha256sum "$package" | awk '{print $1}')
+            case "$name" in
+              "$image_package") image_deb_sha=$digest ;;
+              "$modules_package") modules_deb_sha=$digest ;;
+              *) echo "Unexpected kernel package: $name" >&2; exit 1 ;;
+            esac
+            echo "$name=$version sha256=$digest"
+          done
+          test -n "$image_deb_sha" && test -n "$modules_deb_sha"
           mkdir kernel
           for package in ./*.deb; do dpkg-deb -x "$package" kernel; done
           modules="kernel/lib/modules/$KERNEL_RELEASE"
@@ -237,14 +272,30 @@ jobs:
             "$RUNNER_TEMP/puredarwin-e2e-guest"
           cp "$RUNNER_TEMP/puredarwin-e2e-inputs/manifest.txt" \
             "$RUNNER_TEMP/puredarwin-e2e-guest/build-manifest.txt"
+          vmlinuz_sha=$(sha256sum "kernel/boot/vmlinuz-$KERNEL_RELEASE" | awk '{print $1}')
           config_sha=$(sha256sum "$kernel_config" | awk '{print $1}')
+          modules_tree_sha=$(cd "$modules" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
+          image_sha=$(sha256sum "$RUNNER_TEMP/puredarwin-e2e-guest/Image" | awk '{print $1}')
+          initramfs_sha=$(sha256sum "$RUNNER_TEMP/puredarwin-e2e-guest/initramfs.cpio.gz" | awk '{print $1}')
+          fki_sha=$(sha256sum "$GITHUB_WORKSPACE/fki-ko/fki.ko" | awk '{print $1}')
+          xnu_sha=$(sha256sum "$GITHUB_WORKSPACE/xnu-ko/xnu.ko" | awk '{print $1}')
           {
             echo "arm64_guest_kernel_release=$KERNEL_RELEASE"
+            echo "arm64_guest_kernel_package_version=$KERNEL_PACKAGE_VERSION"
+            echo "arm64_guest_kernel_image_deb_sha256=$image_deb_sha"
+            echo "arm64_guest_kernel_modules_deb_sha256=$modules_deb_sha"
             echo 'arm64_guest_page_size=4096 (CONFIG_ARM64_4K_PAGES=y)'
             echo 'arm64_guest_pac=runtime checked through /proc/cpuinfo paca and FKI_CAP_PAC'
             echo 'arm64_guest_exception_level=EL1 (QEMU virt,virtualization=off)'
+            echo "arm64_guest_vmlinuz_sha256=$vmlinuz_sha"
             echo "arm64_guest_kernel_config_sha256=$config_sha"
+            echo "arm64_guest_kernel_modules_tree_sha256=$modules_tree_sha"
+            echo "arm64_guest_image_sha256=$image_sha"
+            echo "arm64_guest_initramfs_sha256=$initramfs_sha"
+            echo "arm64_guest_fki_module_sha256=$fki_sha"
+            echo "arm64_guest_xnu_module_sha256=$xnu_sha"
           } > "$RUNNER_TEMP/puredarwin-e2e-guest/guest-manifest.txt"
+          cat "$RUNNER_TEMP/puredarwin-e2e-guest/guest-manifest.txt" >> "$GITHUB_STEP_SUMMARY"
       - name: Retain the ARM64 Linux guest inputs
         uses: actions/upload-artifact@v4
         with:

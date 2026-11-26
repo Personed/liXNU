@@ -11,6 +11,18 @@ PR #48 adds the first x86_64 Linux-side FKI build hooks, with `fki_caps() == 0`.
 
 The pinned XNU source tag used by the current build scripts contains `osfmk/i386` and `mach-o/x86_64` sources, but this repository's LINUX64 machine patches and loader target ARM64. An x86_64 Tahoe kernel collection and matching entry ABI must be built and checked; the presence of i386 sources alone does not prove that target.
 
+## Default and validation artifacts
+
+- The normal x86_64 build keeps `fki.ko` at zero execution capabilities and `xnu.ko` fail-closed with `-EOPNOTSUPP`.
+- After the context, memory, and fault prerequisites pass, a separate opt-in build target may emit `fki-x86-test.ko` and
+  `xnu-x86-test.ko`, compiled with a test-only flag such as `XNULINUX_X86_TEST=1`. These artifacts are not installed or
+  autoloaded by the normal package, service, or boot script; the normal `fki.ko` and `xnu.ko` outputs remain unchanged.
+- CI loads only the test artifacts into a disposable x86_64 Linux VM with a disposable guest disk. Intel and AMD desktop
+  acceptance uses the same test artifact loaded manually on a dedicated test installation with the normal service and
+  autoload disabled. The test artifacts are removed after the run; their result is evidence for the tested profile only.
+- Enabling native x86_64 execution in the normal artifacts requires a later change after the XNU boot, desktop, and host-
+  integrity gates pass. Do not make a test-only flag or module parameter silently turn the normal artifact on.
+
 ## Concrete architecture dependencies
 
 | Area | Current ARM64 dependency | Work needed for x86_64 |
@@ -29,17 +41,19 @@ The pinned XNU source tag used by the current build scripts contains `osfmk/i386
 1. **Pin the x86 build input.** Select the exact Tahoe-compatible XNU source/configuration, toolchain, and symbol-bearing x86_64 kernel collection. Record the architecture and source revision in CI artifacts. A successful ARM64 build or generic Mach-O parse is not sufficient.
 2. **Keep architecture selection explicit.** Build separate ARM64 and x86_64 module object lists and machine-layer patches.
    Make FKI capabilities describe generic context execution separately from PAC and other optional features. Default and
-   distributed x86 builds stay fail-closed. A development-only configuration may expose only capabilities whose
-   prerequisites have passed; mark it experimental and never make it the default through a test-only change.
+   distributed x86 builds stay fail-closed. A separate test target such as `fki-x86-test.ko`/`xnu-x86-test.ko` uses an
+   explicit compile-time test flag, is not packaged or autoloaded, and exposes only capabilities whose prerequisites
+   passed. Never make the normal artifacts executable through a test-only change.
 3. **Prove host-state entry/return in isolation.** Add a disposable x86_64 test for the assembly boundary before entering XNU. Exercise normal return and abort paths, stack alignment, saved registers/flags, Linux FS/GS and page-table state, IRQ/preemption state, and enabled XSAVE state. Verify the Linux task resumes correctly. Test both Intel and AMD CPU profiles; QEMU/KVM can provide early repeatable checks but not final hardware acceptance.
 4. **Prove memory and exception routing.** Add a bounded XNU address-space test and verify page-table isolation, TLB/PCID behavior, Linux host mappings, #PF recovery, and fatal-fault return. Test SMP and CPU hotplug only after the one-CPU case is stable.
-5. **Boot XNU with one CPU.** After the isolated context, memory, and exception tests pass, use an explicit development-only
-   build to exercise native XNU entry. Supply x86 boot arguments and host calls, reach the firmware/console boundary, then
-   a PureDarwin shell and clean halt. Keep default/distributed builds fail-closed until the acceptance gates pass. Record
-   each stage separately; reaching the XNU entry is not a PureDarwin boot.
+5. **Boot XNU with one CPU.** After the isolated context, memory, and exception tests pass, use the separate test artifacts
+   to exercise native XNU entry in the disposable CI VM and on dedicated physical test hosts. Supply x86 boot arguments
+   and host calls, reach the firmware/console boundary, then a PureDarwin shell and clean halt. Keep default/distributed
+   builds fail-closed until the acceptance gates pass. Record each stage separately; reaching the XNU entry is not a
+   PureDarwin boot.
 6. **Validate the Tahoe desktop on hardware.** Boot a user-provided x86_64 Tahoe disk through the native module path on physical Intel and AMD Linux PCs separately. Record CPU model/features, Linux kernel/config, RAM, source and disk hashes, display/input/network/disk results, clean shutdown, and Linux host-integrity checks. Keep the ARM64 macOS 27 build and runtime smoke as a regression requirement.
 
-A gate passes only with its named evidence. Keep default/distributed x86_64 builds at `fki_caps() == 0` until the native
-XNU boot and host-integrity gates pass. An experimental build must expose only capabilities whose prerequisites have been
-verified, and x86_64 remains in development until all acceptance gates pass. No Apple macOS image, firmware, or locally
-supplied SMC key belongs in this repository or its logs.
+A gate passes only with its named evidence. Keep default/distributed x86_64 builds at `fki_caps() == 0` until native XNU
+boot, desktop, and host-integrity gates pass. Test artifacts must be explicitly named, built only through the test target,
+and must expose only capabilities whose prerequisites have been verified. x86_64 remains in development until all
+acceptance gates pass. No Apple macOS image, firmware, or locally supplied SMC key belongs in this repository or its logs.

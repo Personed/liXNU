@@ -266,12 +266,16 @@ jobs:
       - uses: actions/checkout@v4
       # All hosts boot the exact same guest kernel/initramfs and PureDarwin disk artifacts.
       - name: Initialize host report before artifact preparation (POSIX)
+        id: host_preflight_posix
         if: runner.os != 'Windows'
-        run: python3 tests/puredarwin/run-tcg-e2e.py --initialize-host-report
+        continue-on-error: true
+        run: bash tests/puredarwin/init-host-report.sh
       - name: Initialize host report before artifact preparation (Windows)
+        id: host_preflight_windows
         if: runner.os == 'Windows'
+        continue-on-error: true
         shell: pwsh
-        run: python tests/puredarwin/run-tcg-e2e.py --initialize-host-report
+        run: pwsh -File tests/puredarwin/init-host-report.ps1
       - name: Download the ARM64 Linux guest inputs
         id: guest_artifact
         continue-on-error: true
@@ -315,6 +319,8 @@ jobs:
       - name: Boot PureDarwin and require the console command plus clean halt (POSIX)
         if: runner.os != 'Windows'
         env:
+          XNULINUX_HOST_PREFLIGHT_POSIX_OUTCOME: ${{ steps.host_preflight_posix.outcome }}
+          XNULINUX_HOST_PREFLIGHT_WINDOWS_OUTCOME: ${{ steps.host_preflight_windows.outcome }}
           XNULINUX_GUEST_ARTIFACT_OUTCOME: ${{ steps.guest_artifact.outcome }}
           XNULINUX_DISK_ARTIFACT_OUTCOME: ${{ steps.disk_artifact.outcome }}
           XNULINUX_QEMU_LINUX_OUTCOME: ${{ steps.install_qemu_linux.outcome }}
@@ -330,6 +336,8 @@ jobs:
       - name: Boot PureDarwin and require the console command plus clean halt (Windows)
         if: runner.os == 'Windows'
         env:
+          XNULINUX_HOST_PREFLIGHT_POSIX_OUTCOME: ${{ steps.host_preflight_posix.outcome }}
+          XNULINUX_HOST_PREFLIGHT_WINDOWS_OUTCOME: ${{ steps.host_preflight_windows.outcome }}
           XNULINUX_GUEST_ARTIFACT_OUTCOME: ${{ steps.guest_artifact.outcome }}
           XNULINUX_DISK_ARTIFACT_OUTCOME: ${{ steps.disk_artifact.outcome }}
           XNULINUX_QEMU_LINUX_OUTCOME: ${{ steps.install_qemu_linux.outcome }}

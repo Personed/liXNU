@@ -54,21 +54,23 @@ missing inputs or tools can be recorded for that host.
 ### Host matrix status
 
 Only a full boot to the Darwin marker followed by the guest-requested halt, XNU unload, and Linux power-off counts as
-success. Failed or skipped runs must retain their detected host RAM and reason. The job always requests the same fixed
-16 GiB QEMU guest-memory setting; it does not lower the RAM requirement to make a runner pass. Available-RAM values
-are snapshots, not a peak measurement. A successful boot shows that the configured profile completed on that runner;
-it does not prove that all 16 GiB stayed resident, that the host avoided swap/overcommit, or that other PCs will have
-enough physical memory for the same workload.
+functional boot success. Failed or skipped runs must retain their detected host RAM and reason. The job always requests
+the same fixed 16 GiB QEMU guest-memory setting; it does not lower the RAM requirement to make a runner pass. The
+separate RAM capacity screen requires at least 20 GiB total physical host RAM and at least 4 GiB available before QEMU
+(16 GiB guest plus 4 GiB reserved headroom for Linux/QEMU). Runners below either value are marked capacity-limited even
+if QEMU overcommits and completes a functional boot. Available-RAM values are snapshots, not a peak measurement. A
+successful boot does not prove that all 16 GiB stayed resident, that the host avoided swap, or that another PC has
+enough memory. Passing this RAM screen on a hosted runner is not by itself a physical-PC hardware support claim.
 
 | x86-64 host | Hosted runner RAM | Full-console status |
 | --- | ---: | --- |
-| Ubuntu 24.04 | Record from the run report; host RAM must remain available alongside the 16 GiB guest | Pending a green matrix run with all acceptance markers |
-| Windows Server 2025 | 16 GiB | Pending; QEMU must successfully start and complete the full profile, including host memory overhead |
-| macOS 15 Intel | 14 GB | Pending; do not claim support for this fixed profile unless the full boot completes successfully |
+| Ubuntu 24.04 | Record from the run report; capacity screen is 20 GiB total and 4 GiB available | Pending a green matrix run with all acceptance markers; mark capacity-limited below the RAM screen |
+| Windows Server 2025 | 16 GiB | Capacity-limited for hardware support under the 20 GiB / 4 GiB screen, even if functional boot passes |
+| macOS 15 Intel | 14 GB | Capacity-limited for hardware support under the 20 GiB / 4 GiB screen, even if functional boot passes |
 
-If a public runner cannot allocate the fixed guest while leaving enough resources for its host, the result is a runner
-capacity limit for that OS. Use a suitably sized runner to establish support; a module smoke test, overcommitted launch,
-or a boot without the console and clean-halt markers does not pass this matrix.
+Public runners below the RAM screen cannot establish host-capacity support for this profile. Use a suitably sized
+runner or physical PC for that claim; a module smoke test, overcommitted launch, or boot without the console and
+clean-halt markers does not pass the functional matrix.
 
 This CI profile directly boots Linux with an initramfs. The separate [QEMU UEFI launcher in #3] validates the persistent
 VM launch path. Neither check establishes a graphical PureDarwin or macOS desktop, GPU acceleration, networking, KVM

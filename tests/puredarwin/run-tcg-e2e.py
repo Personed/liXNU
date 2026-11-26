@@ -29,6 +29,8 @@ PROFILE = (
     "ARM64 Linux, 4 KiB pages, PAC at EL1, 16 GiB QEMU RAM; mem=7G; "
     "FKI carve-out 8156 MiB at 0x200000000; XNU RAM 7900 MiB"
 )
+GUEST_RAM_BYTES = 16 * 1024 ** 3
+HOST_HEADROOM_BYTES = 4 * 1024 ** 3
 
 
 def command_output(command: list[str]) -> str:
@@ -111,6 +113,22 @@ def available_memory_bytes() -> int | None:
     return host_facts()["memory_available_bytes"]
 
 
+def ram_capacity(host: dict) -> dict:
+    reasons = []
+    total = host["memory_total_bytes"]
+    available = host["memory_available_bytes"]
+    if total is None or total < GUEST_RAM_BYTES + HOST_HEADROOM_BYTES:
+        reasons.append("host physical RAM is below 20 GiB (16 GiB guest plus 4 GiB host headroom)")
+    if available is None or available < HOST_HEADROOM_BYTES:
+        reasons.append("available RAM before QEMU is below the 4 GiB host-headroom allowance")
+    return {
+        "minimum_total_ram_bytes": GUEST_RAM_BYTES + HOST_HEADROOM_BYTES,
+        "minimum_available_before_qemu_bytes": HOST_HEADROOM_BYTES,
+        "capacity_screen_passed": not reasons,
+        "reasons": reasons,
+    }
+
+
 def qemu_path(path: Path) -> str:
     return path.resolve().as_posix()
 
@@ -188,6 +206,7 @@ def save_report(report: dict, serial_log: Path, *, write_summary: bool = True) -
         f"- Host CPU: {host['processor']}",
         f"- Host resources: {host['logical_cpus']} logical CPUs / {memory_text} total RAM",
         f"- Available RAM snapshots: {available_text} before QEMU / {available_at_report_text} when report was written",
+        f"- RAM capacity screen: {'passed' if report['ram_capacity']['capacity_screen_passed'] else 'capacity-limited'}",
         f"- QEMU: {report['qemu_version']}",
         f"- Profile: {report['profile']}",
         f"- Result: {'passed' if result['passed'] else 'failed'}",
@@ -200,6 +219,8 @@ def save_report(report: dict, serial_log: Path, *, write_summary: bool = True) -
         lines.append("- Preparation step outcomes: " + ", ".join(
             f"{name}={outcome}" for name, outcome in report["preparation_steps"].items()
         ))
+    if report["ram_capacity"]["reasons"]:
+        lines.append("- RAM capacity limits: " + "; ".join(report["ram_capacity"]["reasons"]))
     for name, manifest in report["manifests"].items():
         lines.extend([
             f"- {name} manifest SHA-256: {manifest['sha256'] or 'unavailable'}",
@@ -221,40 +242,13 @@ def save_report(report: dict, serial_log: Path, *, write_summary: bool = True) -
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("kernel", type=Path, nargs="?")
-    parser.add_argument("initramfs", type=Path, nargs="?")
-    parser.add_argument("disk", type=Path, nargs="?")
-    parser.add_argument("serial_log", type=Path, nargs="?")
+    parser.add_argument("kernel", type=Path)
+    parser.add_argument("initramfs", type=Path)
+    parser.add_argument("disk", type=Path)
+    parser.add_argument("serial_log", type=Path)
     parser.add_argument("--timeout-seconds", type=int, default=14400)
     parser.add_argument("--qemu", default="qemu-system-aarch64")
-    parser.add_argument("--initialize-host-report", action="store_true")
     args = parser.parse_args()
-
-    if args.initialize_host_report:
-        temp_dir = Path(os.environ.get("RUNNER_TEMP", "."))
-        report = {
-            "runner_label": os.environ.get("XNULINUX_RUNNER_LABEL", "local"),
-            "host": host_facts(),
-            "qemu_version": "not checked",
-            "profile": PROFILE,
-            "inputs": {"kernel_sha256": None, "initramfs_sha256": None, "disk_sha256": None},
-            "manifests": {
-                "build": {"path": "build-manifest.txt", "sha256": None, "contents": None},
-                "guest": {"path": "guest-manifest.txt", "sha256": None, "contents": None},
-            },
-            "preparation_steps": {"status": "preflight only; boot has not started"},
-            "result": {
-                "passed": False,
-                "returncode": None,
-                "missing_markers": list(REQUIRED),
-                "error": "The boot runner did not complete; see the job step outcomes and logs.",
-            },
-        }
-        save_report(report, temp_dir / "puredarwin-tcg-serial.log", write_summary=False)
-        return 0
-
-    if any(path is None for path in (args.kernel, args.initramfs, args.disk, args.serial_log)):
-        parser.error("kernel, initramfs, disk, and serial_log are required unless --initialize-host-report is used")
     missing_inputs = []
     for path in (args.kernel, args.initramfs, args.disk):
         if not path.is_file():
@@ -276,10 +270,13 @@ def main() -> int:
     report = {
         "runner_label": os.environ.get("XNULINUX_RUNNER_LABEL", "local"),
         "host": host,
+        "ram_capacity": ram_capacity(host),
         "qemu_version": "unavailable",
         "profile": PROFILE,
         "inputs": input_hashes,
         "preparation_steps": {
+            "host_preflight_posix": os.environ.get("XNULINUX_HOST_PREFLIGHT_POSIX_OUTCOME", "not-applicable"),
+            "host_preflight_windows": os.environ.get("XNULINUX_HOST_PREFLIGHT_WINDOWS_OUTCOME", "not-applicable"),
             "guest_artifact_download": os.environ.get("XNULINUX_GUEST_ARTIFACT_OUTCOME", "not-recorded"),
             "disk_artifact_download": os.environ.get("XNULINUX_DISK_ARTIFACT_OUTCOME", "not-recorded"),
             "qemu_install_linux": os.environ.get("XNULINUX_QEMU_LINUX_OUTCOME", "not-applicable"),

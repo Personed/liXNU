@@ -3,6 +3,9 @@
 #include "xrt.h"
 #define ENOEXEC 8
 #define ENOMEM 12
+#ifndef EOPNOTSUPP
+#define EOPNOTSUPP 95
+#endif
 #include "macho.h"
 
 static int lc_bounds_ok(const unsigned char *base, unsigned long size,
@@ -162,6 +165,7 @@ int macho_copy(struct xnu_image *img, void *dst)
 	return 0;
 }
 
+#if defined(__aarch64__)
 static inline u64_t sign(u64_t v, unsigned key, u64_t disc)
 {
 	switch (key) {
@@ -211,6 +215,13 @@ int macho_rebase(struct xnu_image *img)
 	}
 	return (int)n;
 }
+#else
+int macho_rebase(struct xnu_image *img)
+{
+	(void)img;
+	return -EOPNOTSUPP;
+}
+#endif
 
 int macho_va_to_loaded(const struct xnu_image *img, u64_t unslid, u64_t len, u64_t *out_va)
 {

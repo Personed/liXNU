@@ -68,11 +68,12 @@ tests/x86_64/tcg-smoke.sh /path/to/x86_64/vmlinuz /path/to/initrd.cpio.gz
 The smoke initramfs must print `XNU_LINUX_TCG_BOOTED` on its serial console and shut down before the timeout. TCG boots
 only a disposable Linux guest; it does not demonstrate macOS boot, KVM, Intel/AMD compatibility or useful performance.
 
-`build-fki.sh KDIR` now builds the x86_64 FKI host backend. `build-xnu-main.sh KDIR` remains a diagnostic probe and
-currently exposes AArch64-specific assumptions in `xnu_main.c`; it is not yet an x86_64 pass condition. The x86_64
-fail-closed XNU target rejects CPUs that lack the documented feature floor before reaching its world-switch refusal.
-The native port must keep XNU execution capability disabled until its context switch, memory isolation and exception
-paths are implemented.
+`build-fki.sh KDIR` now builds the x86_64 FKI host backend. `build-xnu-objects.sh KDIR` compiles `macho.o` and `adt.o`
+as validation objects without linking them into `xnu.ko`; on x86_64 `macho_rebase()` returns `-EOPNOTSUPP` rather than
+simulating PAC signing. `build-xnu-main.sh KDIR` remains a diagnostic probe and currently exposes AArch64-specific
+assumptions in `xnu_main.c`; it is not yet an x86_64 pass condition. The x86_64 fail-closed XNU target rejects CPUs
+that lack the documented feature floor before reaching its world-switch refusal. The native port must keep XNU execution
+capability disabled until its context switch, memory isolation and exception paths are implemented.
 
 ## Evidence and limits
 

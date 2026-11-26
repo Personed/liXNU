@@ -105,6 +105,43 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def read_manifest(path: Path) -> tuple[str | None, dict[str, str]]:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return None, {}
+    values = {}
+    for line in raw.splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            values[key.strip()] = value.strip()
+    return raw, values
+
+
+def serial_evidence(path: Path) -> tuple[str, list[str], list[str]]:
+    try:
+        log = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        log = ""
+    kmsg_prefix = re.compile(r"^\d+,\d+,\d+,[^;]*;(.*)$")
+    messages = []
+    for line in log.splitlines():
+        match = kmsg_prefix.match(line)
+        messages.append(match.group(1) if match else line)
+    missing = [marker for marker in REQUIRED if not any(marker in line for line in messages)]
+    if "fki: darwin console: Darwin" not in messages:
+        missing.append("exact Darwin uname output line")
+    if not any(re.search(r"xnu: contiguous DRAM at phys 0x0*200000000\b", line) for line in messages):
+        missing.append("XNU contiguous DRAM at physical 0x200000000")
+    return log, messages, missing
+
+
+def output_tail(value) -> str:
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    return "\n".join((value or "").splitlines()[-80:])
+
+
 def save_report(report: dict, serial_log: Path) -> None:
     temp_dir = Path(os.environ.get("RUNNER_TEMP", str(serial_log.parent)))
     report_path = temp_dir / "puredarwin-tcg-boot-report.json"
@@ -133,8 +170,21 @@ def save_report(report: dict, serial_log: Path) -> None:
         f"  - initramfs: {report['inputs']['initramfs_sha256']}",
         f"  - PureDarwin disk: {report['inputs']['disk_sha256']}",
     ]
+    for name, manifest in report["manifests"].items():
+        lines.extend([
+            f"- {name} manifest SHA-256: {manifest['sha256'] or 'unavailable'}",
+            "```text",
+            manifest["contents"] or "(manifest unavailable)",
+            "```",
+        ])
     if result.get("missing_markers"):
         lines.append("- Missing evidence: " + "; ".join(result["missing_markers"]))
+    if result.get("errors"):
+        lines.append("- Errors: " + "; ".join(result["errors"]))
+    if result.get("error"):
+        lines.append("- Error: " + result["error"])
+    if result.get("qemu_stderr_tail"):
+        lines.extend(["- QEMU stderr:", "```text", result["qemu_stderr_tail"], "```"])
     with Path(summary_path).open("a", encoding="utf-8") as summary:
         summary.write("\n".join(lines) + "\n")
 
@@ -151,33 +201,86 @@ def main() -> int:
     for path in (args.kernel, args.initramfs, args.disk):
         if not path.is_file():
             parser.error(f"missing input: {path}")
-    qemu = shutil.which(args.qemu)
-    if not qemu:
-        parser.error(f"QEMU executable not found: {args.qemu}")
     if args.timeout_seconds < 1:
         parser.error("--timeout-seconds must be positive")
 
     host = host_facts()
-    if host["architecture"].lower() not in ("x86_64", "amd64"):
-        parser.error(f"x86-64 host required for this TCG acceptance; got {host['architecture']}")
-
     args.serial_log.parent.mkdir(parents=True, exist_ok=True)
-    version_result = subprocess.run([qemu, "--version"], check=False, text=True, capture_output=True)
-    version_text = version_result.stdout or version_result.stderr
-    qemu_version = version_text.splitlines()[0] if version_text else "unknown"
     input_hashes = {
         "kernel_sha256": sha256_file(args.kernel),
         "initramfs_sha256": sha256_file(args.initramfs),
         "disk_sha256": sha256_file(args.disk),
     }
+    build_manifest_path = args.kernel.parent / "build-manifest.txt"
+    guest_manifest_path = args.kernel.parent / "guest-manifest.txt"
+    build_manifest_text, build_manifest = read_manifest(build_manifest_path)
+    guest_manifest_text, guest_manifest = read_manifest(guest_manifest_path)
     report = {
         "runner_label": os.environ.get("XNULINUX_RUNNER_LABEL", "local"),
         "host": host,
-        "qemu_version": qemu_version,
+        "qemu_version": "unavailable",
         "profile": PROFILE,
         "inputs": input_hashes,
+        "manifests": {
+            "build": {
+                "path": build_manifest_path.name,
+                "sha256": hashlib.sha256(build_manifest_text.encode("utf-8")).hexdigest() if build_manifest_text is not None else None,
+                "contents": build_manifest_text,
+            },
+            "guest": {
+                "path": guest_manifest_path.name,
+                "sha256": hashlib.sha256(guest_manifest_text.encode("utf-8")).hexdigest() if guest_manifest_text is not None else None,
+                "contents": guest_manifest_text,
+            },
+        },
         "result": {"passed": False, "returncode": None, "missing_markers": list(REQUIRED)},
     }
+
+    qemu = shutil.which(args.qemu)
+    if not qemu and os.name == "nt" and not args.qemu.lower().endswith(".exe"):
+        qemu = shutil.which(args.qemu + ".exe")
+    if qemu:
+        try:
+            version_result = subprocess.run([qemu, "--version"], check=False, text=True, capture_output=True)
+            version_text = version_result.stdout or version_result.stderr
+            report["qemu_version"] = version_text.splitlines()[0] if version_text else "unknown"
+        except OSError as error:
+            report["qemu_version"] = f"unavailable ({error})"
+
+    manifest_errors = []
+    expected_disk_sha = build_manifest.get("puredarwin_disk_sha256")
+    if not build_manifest_text:
+        manifest_errors.append("build-manifest.txt is missing")
+    elif not expected_disk_sha:
+        manifest_errors.append("build manifest has no puredarwin_disk_sha256")
+    elif expected_disk_sha.lower() != input_hashes["disk_sha256"].lower():
+        manifest_errors.append("downloaded PureDarwin disk SHA-256 does not match the build manifest")
+    if not guest_manifest_text:
+        manifest_errors.append("guest-manifest.txt is missing")
+    for key in (
+        "arm64_guest_kernel_release",
+        "arm64_guest_page_size",
+        "arm64_guest_pac",
+        "arm64_guest_exception_level",
+    ):
+        if key not in guest_manifest:
+            manifest_errors.append(f"guest manifest is missing {key}")
+
+    host_errors = []
+    if host["architecture"].lower() not in ("x86_64", "amd64"):
+        host_errors.append(f"x86-64 host required; got {host['architecture']}")
+    if not qemu:
+        host_errors.append(f"QEMU executable not found: {args.qemu}")
+    if manifest_errors or host_errors:
+        report["result"] = {
+            "passed": False,
+            "returncode": None,
+            "missing_markers": [],
+            "errors": manifest_errors + host_errors,
+        }
+        print("TCG boot could not start: " + "; ".join(manifest_errors + host_errors), file=sys.stderr)
+        save_report(report, args.serial_log)
+        return 1
 
     command = [
         qemu,
@@ -203,54 +306,55 @@ def main() -> int:
     print(f"Host: {host['system']} {host['release']} ({host['architecture']})")
     print(f"Host CPU: {host['processor']}")
     print(f"Host logical CPUs / RAM: {host['logical_cpus']} / {host['memory_total_bytes']}")
-    print(f"QEMU: {qemu_version}")
+    print(f"QEMU: {report['qemu_version']}")
     print(f"Profile: {PROFILE}")
     print(f"Runner: {report['runner_label']}")
     for key, value in input_hashes.items():
         print(f"{key}: {value}")
 
     try:
-        result = subprocess.run(command, check=False, timeout=args.timeout_seconds)
+        result = subprocess.run(command, check=False, timeout=args.timeout_seconds, text=True, capture_output=True)
     except (OSError, subprocess.TimeoutExpired) as error:
+        log, _, missing = serial_evidence(args.serial_log)
         report["result"] = {
             "passed": False,
             "returncode": None,
             "error": str(error),
-            "missing_markers": list(REQUIRED),
+            "missing_markers": missing,
+            "serial_log_tail": "\n".join(log.splitlines()[-160:]),
+            "qemu_stdout_tail": output_tail(getattr(error, "stdout", None)),
+            "qemu_stderr_tail": output_tail(getattr(error, "stderr", None)),
         }
         print(f"TCG boot could not complete: {error}", file=sys.stderr)
+        if report["result"]["qemu_stderr_tail"]:
+            print(report["result"]["qemu_stderr_tail"], file=sys.stderr)
         save_report(report, args.serial_log)
         return 1
 
-    log = args.serial_log.read_text(encoding="utf-8", errors="replace") if args.serial_log.exists() else ""
-    kmsg_prefix = re.compile(r"^\d+,\d+,\d+,[^;]*;(.*)$")
-    messages = []
-    for line in log.splitlines():
-        match = kmsg_prefix.match(line)
-        messages.append(match.group(1) if match else line)
-    missing = [marker for marker in REQUIRED if not any(marker in line for line in messages)]
-    darwin_line = "fki: darwin console: Darwin"
-    if darwin_line not in messages:
-        missing.append("exact Darwin uname output line")
-    if not any(re.search(r"xnu: contiguous DRAM at phys 0x0*200000000\b", line) for line in messages):
-        missing.append("XNU contiguous DRAM at physical 0x200000000")
+    log, messages, missing = serial_evidence(args.serial_log)
 
     report["result"] = {
         "passed": result.returncode == 0 and not missing,
         "returncode": result.returncode,
         "missing_markers": missing,
+        "serial_log_tail": "\n".join(log.splitlines()[-160:]),
     }
+    if result.returncode != 0:
+        report["result"]["qemu_stdout_tail"] = output_tail(result.stdout)
+        report["result"]["qemu_stderr_tail"] = output_tail(result.stderr)
     save_report(report, args.serial_log)
     if result.returncode != 0 or missing:
         print(f"QEMU exit status: {result.returncode}", file=sys.stderr)
         if missing:
             print("Missing boot evidence: " + "; ".join(missing), file=sys.stderr)
+        if report["result"].get("qemu_stderr_tail"):
+            print(report["result"]["qemu_stderr_tail"], file=sys.stderr)
         print("--- serial log tail ---", file=sys.stderr)
         print("\n".join(log.splitlines()[-160:]), file=sys.stderr)
         return 1
 
     for line in messages:
-        if line == darwin_line or any(marker in line for marker in REQUIRED):
+        if line == "fki: darwin console: Darwin" or any(marker in line for marker in REQUIRED):
             print(line)
     print("PureDarwin ARM64 console boot and guest-requested halt passed under QEMU TCG.")
     return 0

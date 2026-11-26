@@ -45,8 +45,25 @@ Report the profile alongside the stage:
 The full-run job in the [PureDarwin ARM64 image workflow](../.github/workflows/puredarwin-arm64-image.yml) builds the
 pinned image and kernel collection, creates the HFS+ disk on Linux, and boots an ARM64 Linux guest with QEMU TCG on an
 x86-64 runner. It requires the real PureDarwin console to run `uname -s` and print `XNULINUX_USERLAND_OK`, then requires
-the guest's own `halt`, XNU module unload, and Linux power-off. The Actions summary records the runner and QEMU versions
-plus the PureDarwin image, disk, collection and XNU digests; the serial log artifact is kept for 30 days.
+the guest's own `halt`, XNU module unload, and Linux power-off. Each host report records OS, CPU, available RAM, QEMU
+version, guest input hashes, the build and guest manifests, missing boot markers, and the serial log tail; reports and
+the two source manifests are retained for 30 days.
+
+### Host matrix status
+
+Only a full boot to the Darwin marker followed by the guest-requested halt, XNU unload, and Linux power-off counts as
+success. Failed or skipped runs must retain their detected host RAM and reason. The job always requests the same fixed
+16 GiB guest profile; it does not lower the RAM requirement to make a runner pass.
+
+| x86-64 host | Hosted runner RAM | Full-console status |
+| --- | ---: | --- |
+| Ubuntu 24.04 | Record from the run report; host RAM must remain available alongside the 16 GiB guest | Pending a green matrix run with all acceptance markers |
+| Windows Server 2025 | 16 GiB | Pending; QEMU must successfully start and complete the full profile, including host memory overhead |
+| macOS 15 Intel | 14 GB | Pending; do not claim support for this fixed profile unless the full boot completes successfully |
+
+If a public runner cannot allocate the fixed guest while leaving enough resources for its host, the result is a runner
+capacity limit for that OS. Use a suitably sized runner to establish support; a module smoke test, overcommitted launch,
+or a boot without the console and clean-halt markers does not pass this matrix.
 
 This CI profile directly boots Linux with an initramfs. The separate [QEMU UEFI launcher in #3] validates the persistent
 VM launch path. Neither check establishes a graphical PureDarwin or macOS desktop, GPU acceleration, networking, KVM

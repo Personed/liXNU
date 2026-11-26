@@ -31,7 +31,7 @@ Port the hosted-XNU runtime to native x86_64 Linux PCs while preserving the work
 Project work is coordinated continuously through pull request comments. For **every task**:
 
 1. Read this file and inspect the working tree and branch before editing.
-2. Find open PRs touching the files, runtime path, or interfaces involved. Read the current conversation comments, inline review comments, review submissions, and requested changes; the PR description alone is not enough. Recheck those threads as work progresses.
+2. Find open PRs touching the files, runtime path, or interfaces involved. Read the current conversation comments, inline review comments, review submissions, and requested changes; the PR description alone is not enough. Recheck those threads as work progresses. For each applicable automated review finding, reply in its thread with the fix commit and validation evidence, or an evidence-based explanation that it is duplicate, superseded, or inapplicable.
 3. Before changing a shared interface or overlapping files, post a coordination comment on the relevant PR stating your scope, files/interfaces, and dependencies. If no relevant PR exists, create a ready-for-merge PR as soon as a reviewable change is ready.
 4. Keep all related agents visibly in sync in PR comments: post decisions, interface changes, test results, and blockers; link related PRs; reply to one another's coordination comments. Do not rely on private or local handoffs for project decisions.
 5. Use your own branch and PR. Do not push commits to `main` directly or close another agent's PR.

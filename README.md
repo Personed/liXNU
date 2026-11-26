@@ -99,8 +99,8 @@ Working on two arm64 Linux setups:
 | Linux host | Guest target | Status |
 |---|---|---|
 | ARM64 with PAC and 4 KiB pages | macOS 27 ARM64 (direct hosted XNU) | Existing supported path; tested on Apple Silicon Linux VMs and NVIDIA DGX Spark as described above. |
-| Intel x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | The FKI host backend merged in [#48](https://github.com/Personed/xnulinux/pull/48) builds and preserves ARM64, but advertises no XNU execution capability; [#47](https://github.com/Personed/xnulinux/pull/47) is a fail-closed XNU target. Native runtime and physical Intel acceptance remain pending. |
-| AMD x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | The FKI host backend merged in [#48](https://github.com/Personed/xnulinux/pull/48) builds and preserves ARM64, but advertises no XNU execution capability; [#47](https://github.com/Personed/xnulinux/pull/47) is a fail-closed XNU target. Native runtime and physical AMD acceptance remain pending. |
+| Intel x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | The FKI host backend merged in [#48](https://github.com/Personed/xnulinux/pull/48) builds and preserves ARM64, but advertises no XNU execution capability; the fail-closed XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Native runtime and physical Intel acceptance remain pending. |
+| AMD x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | The FKI host backend merged in [#48](https://github.com/Personed/xnulinux/pull/48) builds and preserves ARM64, but advertises no XNU execution capability; the fail-closed XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Native runtime and physical AMD acceptance remain pending. |
 | Intel/AMD x86_64 with QEMU/KVM | User-prepared macOS guest | Complementary launcher experiment; does not use the hosted-XNU modules or validate the native port. |
 | Intel/AMD x86_64 with QEMU TCG | ARM64 Linux (complementary test profile) | Linux/module evidence only; not a native x86_64 hosted-XNU result. |
 
@@ -134,7 +134,7 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 
 - Linux on an Intel or AMD x86_64 PC. Kernel versions, CPU features, RAM, and page-size requirements are being established by the port.
 - User-provided macOS Tahoe 26 x86_64 artifacts that match the selected XNU build. No Apple system image or binary is provided here.
-- The x86_64 FKI host-backend build merged in [#48](https://github.com/Personed/xnulinux/pull/48); [#47](https://github.com/Personed/xnulinux/pull/47) adds an x86_64 XNU module target that fails closed. Neither milestone provides native XNU execution. The QEMU/KVM launcher below is a separate optional guest experiment.
+- The x86_64 FKI host-backend build merged in [#48](https://github.com/Personed/xnulinux/pull/48), and the fail-closed x86_64 XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Neither milestone provides native XNU execution. The QEMU/KVM launcher below is a separate optional guest experiment.
 
 ## Building and running
 

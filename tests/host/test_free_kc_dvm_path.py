@@ -180,17 +180,31 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                 [str(vm.resolve()), str(launch / "scripts/free-kc/kcc.py")],
             )
 
-    def test_xnu_rebuild_resolves_symlink_with_cdpath_set(self):
+    def test_xnu_rebuild_uses_its_checkout_and_cdpath_dvm(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            launch = root / "launch"
+            launch = root / "dev"
+            stable = root / "stable"
             vm = root / "vm-real"
             alternate_vm = root / "vm-alternate"
             fake_bin = root / "bin"
-            launch.mkdir()
             fake_bin.mkdir()
+            for checkout, marker in ((launch, "dev.c"), (stable, "stable.c")):
+                (checkout / "scripts").mkdir(parents=True)
+                (checkout / "xnu-patches/include").mkdir(parents=True)
+                (checkout / "xnu-patches/corecrypto/include/corecrypto").mkdir(parents=True)
+                (checkout / "xnu-patches/corecrypto/kernel").mkdir(parents=True)
+                (checkout / "xnu-patches/include/test.h").write_text("/* fixture */\n", encoding="utf-8")
+                (checkout / "xnu-patches/0001-source.patch").write_text(
+                    f"+++ b/{marker}\n",
+                    encoding="utf-8",
+                )
+            (launch / "scripts/vm-xnu-rebuild.sh").write_text(
+                (ROOT / "scripts/vm-xnu-rebuild.sh").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
             (launch / "vm-link").symlink_to(vm, target_is_directory=True)
-            (root / "vm-link").symlink_to(alternate_vm, target_is_directory=True)
+            (stable / "vm-link").symlink_to(alternate_vm, target_is_directory=True)
             (alternate_vm / "out/k27/xnu").mkdir(parents=True)
 
             builder = alternate_vm / "k27/build-kernel27.sh"
@@ -198,6 +212,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             builder.write_text(
                 "#!/bin/sh\n"
                 "printf '%s\\n%s\\n' \"$PWD\" \"$DVM\" > \"$DVM_CAPTURE\"\n"
+                "cat out/k27/xnu/.linux64-patched >> \"$DVM_CAPTURE\"\n"
                 "exit 73\n",
                 encoding="utf-8",
             )
@@ -219,14 +234,15 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             env = os.environ.copy()
             env.update(
                 {
-                    "CDPATH": "..",
+                    "CDPATH": "../stable",
                     "DVM": "vm-link",
                     "DVM_CAPTURE": str(capture),
                     "PATH": str(fake_bin) + os.pathsep + env["PATH"],
                 }
             )
+            env.pop("POC", None)
             result = subprocess.run(
-                ["bash", str(ROOT / "scripts/vm-xnu-rebuild.sh")],
+                ["bash", "scripts/vm-xnu-rebuild.sh"],
                 cwd=launch,
                 env=env,
                 stdout=subprocess.PIPE,
@@ -238,7 +254,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             self.assertEqual(result.returncode, 73, result.stdout)
             self.assertEqual(
                 capture.read_text(encoding="utf-8").splitlines(),
-                [str(alternate_vm.resolve())] * 2,
+                [str(alternate_vm.resolve()), str(alternate_vm.resolve()), "dev.c"],
             )
 
 

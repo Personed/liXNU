@@ -102,7 +102,7 @@ Working on two arm64 Linux setups:
 | Intel x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | The FKI host backend merged in [#48](https://github.com/Personed/xnulinux/pull/48) builds and preserves ARM64, but advertises no XNU execution capability; the fail-closed XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Native runtime and physical Intel acceptance remain pending. |
 | AMD x86_64 Linux | macOS Tahoe 26 x86_64 through native hosted XNU | The FKI host backend merged in [#48](https://github.com/Personed/xnulinux/pull/48) builds and preserves ARM64, but advertises no XNU execution capability; the fail-closed XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Native runtime and physical AMD acceptance remain pending. |
 | Intel/AMD x86_64 with QEMU/KVM | User-prepared macOS guest | Complementary launcher experiment; does not use the hosted-XNU modules or validate the native port. |
-| Intel/AMD x86_64 with QEMU TCG | ARM64 Linux (complementary test profile) | Linux/module evidence only; not a native x86_64 hosted-XNU result. |
+| Intel/AMD x86_64 with QEMU TCG | ARM64 Linux → PureDarwin console | Complementary profile: #50 CI and #62/#64 local runs report console and guest-halt evidence. The synchronized #36/#46 manifest and cross-host matrix remain pending; this is not a native x86_64 result. |
 
 The x86_64 native target is not a support claim yet: the FKI host backend exposes no XNU execution capabilities, and
 the architecture-specific XNU execution path plus physical Intel and AMD desktop boots with Linux host-integrity checks
@@ -115,16 +115,22 @@ for complementary launcher/tests and stage-specific evidence.
 
 The full TCG route in [#36](https://github.com/Personed/xnulinux/pull/36) uses a 16 GiB ARM64 guest; its separate
 reference host-capacity screen is 20 GiB total RAM and 4 GiB available before artifact preparation. These values
-describe one measured profile, not a universal minimum. Run #72 on older head `5312b29` emitted Darwin-console,
+describe one measured profile, not a universal minimum. Run #72 on older #36 head `5312b29` emitted Darwin-console,
 guest-halt, module-unload, Linux power-off, and clean-QEMU-exit markers, but later byte inspection found overlapping
 file-backed `__TEXT_EXEC` and `__KLD` data, so that run is not an acceptance pass. Current #36 head `97727ac` failed
-run #74 before boot on the same overlap. PRs #50/#52/#57/#58 continue the relocation, input-pinning, and diagnostics
-work; their results are not yet an integrated #36/#46 run. Separately, merged [#62](https://github.com/Personed/xnulinux/pull/62)
-records a local run against the pinned Ubuntu ARM64 kernel package that reached the Darwin console, accepted guest
-`halt`, unloaded both modules, and powered off Linux using a locally relocated collection checked with #50's checker.
-That local run did not use the synchronized #50/#52 CI manifest or cross-host matrix. None of this TCG evidence
-establishes native x86_64 hosting, Tahoe/KVM, a desktop, or practical speed on every PC. The detailed profiles and
-remaining evidence are in [`docs/portability-validation.md`](docs/portability-validation.md).
+run #74 before boot on the same overlap.
+
+PR #50 run #89 subsequently passed its own Linux x86-64 TCG workflow through the Darwin console, guest `halt`, module
+unload, Linux power-off, and QEMU success on Ubuntu 24.04.5 x86-64 with QEMU 8.2.2. The nested KVM-backed Intel runner
+reported 15.3 GiB total RAM, below the #36 20 GiB reference screen; the functional run does not establish that all
+guest memory stayed resident or that the host avoided overcommit/swap. This validates that TCG profile only. Merged
+[#62](https://github.com/Personed/xnulinux/pull/62) and follow-up [#64](https://github.com/Personed/xnulinux/pull/64)
+also report local runs with the pinned Ubuntu ARM64 kernel package, Darwin console, guest `halt`, module unload, and
+Linux power-off using the locally relocated collection. Those runs are not the synchronized #50/#52 CI manifest or
+cross-host matrix. PRs #52/#57/#58 continue input pinning and diagnostics, while #46 has no Windows or Intel-macOS boot
+result yet. None of this TCG evidence establishes native x86_64 hosting, Tahoe/KVM, a macOS desktop, or practical speed
+on every PC. The detailed profiles and remaining evidence are in
+[`docs/portability-validation.md`](docs/portability-validation.md).
 
 Shipping it as a hosted service (what is distributed, what a user installs to run Apple's macOS) is in
 [`docs/hosted-service.md`](docs/hosted-service.md).

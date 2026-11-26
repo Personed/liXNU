@@ -1,13 +1,15 @@
-# Separate experimental native x86_64 hosted-XNU port
+# Native x86_64 hosted-XNU port
 
-## Target and current boundary
+## Project goal and current boundary
 
-The active project target is x86-64 PC → QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin console. This document records
-a separate exploratory design for a future native x86_64 FKI/XNU path on Linux PCs while retaining the existing direct
-ARM64 path. Any native-port work and its Intel/AMD acceptance profiles are independent of the active TCG/PureDarwin
-goal. The QEMU/KVM macOS guest launcher is also separate; its results do not validate this native port.
+The active x86_64 target is hosted XNU on native Intel/AMD Linux PCs, running macOS Tahoe 26 (the latest macOS release
+compatible with Intel). Preserve the existing direct ARM64 hosted-XNU path and its macOS 27 target. QEMU TCG → ARM64
+Linux → FKI/XNU → PureDarwin and the QEMU/KVM macOS guest launcher are complementary profiles; neither substitutes
+for the native port.
 
-PR #48 adds the first x86_64 Linux-side FKI build hooks, with `fki_caps() == 0`. PR #47 adds an x86_64 `xnu.ko` target that refuses to load. Neither PR executes XNU. Keep both gates fail-closed until the architecture boundary below is implemented and verified.
+PR #48 provides the x86_64 Linux-side FKI host backend, with `fki_caps() == 0`. PR #47 adds an x86_64 `xnu.ko` target
+that refuses to load. Neither PR executes XNU. Keep both gates fail-closed until the architecture boundary below is
+implemented and verified.
 
 The pinned XNU source tag used by the current build scripts contains `osfmk/i386` and `mach-o/x86_64` sources, but this repository's LINUX64 machine patches and loader target ARM64. An x86_64 Tahoe kernel collection and matching entry ABI must be built and checked; the presence of i386 sources alone does not prove that target.
 

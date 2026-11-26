@@ -62,25 +62,34 @@ Report the profile alongside the stage:
   `MemTotal: 16078396 kB` while assigning 16 GiB to the guest; this does not show all guest
   memory remained resident or rule out host overcommit/swap. Current #36 head `97727ac`
   failed run #74 before boot on the same file-backed overlap. PR #50's segment relocation
-  workflow run #89 passed its own image workflow, but it is not yet integrated into #36.
-  PR #52 run #91 remains in progress, with modules run #600 queued; PR #57 run #92 remains
-  in progress, with modules run #602 queued; and PR #58 run #90 failed, with modules run
-  #597 queued. Their launcher checks passed, but these stacked results do not replace an
-  integrated console/halt run. PR #46 run #79 built the guest image but failed at the same
+  workflow run #89 passed its own end-to-end Linux x86-64 TCG route on the #36 head plus
+  the #50 relocation: source build, guest preparation, Darwin console
+  `XNULINUX_USERLAND_OK`, guest halt, XNU unload, Linux power-off, and QEMU exit all passed
+  on Ubuntu 24.04.5 x86-64 with QEMU 8.2.2. Its nested KVM-backed Intel runner reported
+  15.3 GiB total host RAM, below the #36 20 GiB reference screen; functional success does
+  not show that all guest RAM stayed resident or rule out host overcommit/swap. This is
+  TCG evidence for that workflow, not native-hosted-XNU evidence or the synchronized
+  #52/#62/#64/#58 cross-host acceptance. PR #50 is not yet integrated into #36.
+  PR #52 image run #91 passed, with modules run #600 queued; its fixed expected package
+  digests and package-availability checks remain pending. PR #57 run #92 remains in
+  progress, with modules run #602 queued; PR #58 run #90 failed, with modules run #597
+  queued; and follow-up PR #64 run #95 is in progress, with modules run #644 queued.
+  Their launcher checks passed, but these stacked results do not replace an integrated
+  #36/#46 console/halt run with the same manifest. PR #46 run #79 built the guest image but failed at the same
   overlap before the host matrix, so it provides no Windows or Intel-macOS boot result.
   The earlier Windows run #71 faulted while loading XNU with an older kernel layout and is
   not a Windows compatibility result. The proposed Windows (16 GB) and Intel-macOS (14 GB)
   runners are below the 16 GiB guest allocation plus host overhead; a larger runner or
-  separately validated profile remains necessary. Status checked 2026-11-26 17:24 UTC.
+  separately validated profile remains necessary. Status checked 2026-11-26 17:33 UTC.
 
-  Merged PR #62 records separate local evidence using the exact #52 kernel package
-  `7.0.0-44.44~24.04.1`: both ARM64 modules built against its headers, and the QEMU TCG
-  harness reached the Darwin console, accepted guest `halt`, unloaded `xnu.ko` and
-  `fki.ko`, and powered Linux off. It used a locally relocated collection checked with
-  #50's `--check`, not the synchronized #50/#52 CI manifest or cross-host matrix. Its
-  current modules run #613 passed Linux 6.12 and ARM64 smoke jobs; x86-64 FKI, SPDX, and
-  QEMU matrix jobs were cancelled. This is useful local TCG evidence, not native x86_64 or
-  integrated #36/#46 acceptance.
+  Merged PR #62 and follow-up PR #64 record separate local evidence using the exact #52
+  kernel package `7.0.0-44.44~24.04.1`: both ARM64 modules built against its headers, the
+  prepared guest inputs ran under QEMU TCG, and the harness reached the Darwin console,
+  accepted guest `halt`, unloaded `xnu.ko` and `fki.ko`, and powered Linux off. These runs
+  used a locally relocated collection checked with #50's `--check`, not the synchronized
+  #50/#52 CI manifest or cross-host matrix. #62's modules run #613 passed Linux 6.12 and
+  ARM64 smoke jobs, while its x86-64 FKI, SPDX, and QEMU matrix jobs were cancelled. This
+  is useful local TCG evidence, not native x86_64 or integrated #36/#46 acceptance.
 - **Native x86-64 hosted XNU on Intel/AMD Linux:** this is the project target for Tahoe 26.
   The x86_64 FKI host-backend build merged in [#48](https://github.com/Personed/xnulinux/pull/48) and passed compilation while preserving ARM64; it advertises no XNU execution capability.
   The fail-closed x86_64 XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47) still provides no execution support.
@@ -166,6 +175,15 @@ Profile (ARM64 hosted XNU, native x86_64 hosted XNU, supplemental QEMU/KVM guest
 Outer machine + CPU / OS + version:
 Runtime + version / accelerator:
 TCG Linux stage and result (if applicable; do not label as a macOS result):
+
+TCG full-route host capacity (only when applicable; separate from guest RAM):
+Host physical RAM total / RAM available before artifact preparation / sample time:
+20 GiB total / 4 GiB available reference-screen result / capacity or overcommit caveat:
+QEMU version / host CPU model and core count:
+Pinned guest kernel package / kernel release / .config or manifest SHA-256:
+ARM64 guest assigned RAM / mem= / FKI carve-out / XNU RAM:
+Darwin console command and output / guest-issued halt:
+XNU unload / FKI unload / Linux guest power-off / QEMU exit status:
 
 ARM64 FKI/PureDarwin profile (only when applicable):
 Linux distro / kernel / page size / PAC / userspace type:

@@ -6,6 +6,8 @@ This document defines the evidence required before a test-only x86_64 entry/retu
 
 The existing disposable-VM boundary probe (PR #71; `tests/x86_64/boundary-probe/`) validates a Linux-to-Linux call/return boundary. It checks callee-saved GPRs, stack/RSP, selected RFLAGS, FS/GS/KERNEL_GS, CR3 root and PCID, kernel XSAVE/YMM preservation, Linux syscalls before and after the probe, and normal/software-abort returns on each of two vCPUs. It does not enter XNU, switch page tables or GS, route exceptions, or validate XNU boot arguments. Its success is necessary host-ABI evidence, not an XNU entry proof.
 
+No second Linux-only stack-switch module is added here: that would repeat #71 without supplying XNU ABI or isolation evidence. This slice records the next test contract and the exact handoff blockers; the synthetic target remains a future test-only gate, not a production FKI interface.
+
 ## Non-negotiable safety rules
 
 - The first entry-envelope implementation, when its prerequisites are met, must be a separately named test artifact loaded only in a disposable x86_64 Linux VM. It must not be packaged, autoloaded, or enabled by a runtime parameter on normal artifacts.
@@ -21,7 +23,7 @@ Each row is a separate gate. The harness records the kernel release/configuratio
 
 | Gate | Test-only operation | Required oracle |
 | --- | --- | --- |
-| Artifact preflight | Read the successful Intel-native Tahoe build artifact without loading it. Run the production parse-only inspector and retain its JSON and SHA-256. | File type, CPU type/subtype, segments, entry-state record, and fixup metadata are reported. The image is rejected before allocation if unsupported. This is structural validation only; the parser does not load or interpret fixups. |
+| Artifact preflight | Read the successful Intel-native Tahoe build artifact without loading it. Run the production parse-only inspector and retain its JSON and SHA-256. | File type, CPU type/subtype, segments, entry-state record, and fixup metadata are reported. Unsupported structure returns an error; the inspector itself makes no allocations. This is structural validation only; the parser does not load or interpret fixups. |
 | ABI pinning | Compare the exact artifact and build configuration with the pinned Tahoe source, symbols, entry assembly, boot-argument definitions, and fixup/linker rules. | A reviewed record names the actual XNU handoff symbol/protocol, register and stack inputs, required memory map, and artifact-specific fixup requirements. `LC_UNIXTHREAD` alone is not accepted as proof. |
 | Linux boundary baseline | Run the existing #71 probe in a disposable VM before adding new transitions. | The saved host snapshot and its explicit comparisons pass for normal return and software abort; Linux syscalls work before and after; test modules unload; the guest powers off. This baseline does not claim XNU entry. |
 | Synthetic entry envelope | Call a test-owned assembly shim on one pinned CPU, using only a test-owned target and Linux's current address space. Exercise a normal return and an explicit software-abort return. Do not map or jump to XNU. | Before/after snapshots match for CPU/task identity, task-stack bounds, RSP, relevant RFLAGS, FS/GS/KERNEL_GS, CR3 root and PCID, preemption/IRQ state, and the enabled XCR0/XSAVE state. Canary GPRs and stack canaries match; the shim's return status is exact; Linux syscalls still work afterward. No C callback executes while the test-owned foreign register/stack state is active. |
@@ -33,7 +35,7 @@ The synthetic entry-envelope gate is intentionally narrower than an XNU run. It 
 
 ## Evidence currently missing
 
-The following inputs block implementation of the synthetic entry envelope or any XNU handoff. They are concrete prerequisites, not optional runtime polish:
+These inputs block adapting a test boundary to the XNU image/entry, changing the FKI execution ABI, or making an XNU handoff. A test-owned Linux shim can be exercised without the Tahoe artifact, but #71 already covers that safe call/return surface; repeating it does not advance native XNU support. The concrete handoff prerequisites are:
 
 1. **A successful Intel-native artifact.** The current #56 diagnostics contain no `kernel.development`; there is therefore no artifact hash, file type, image layout, or successful Intel build to inspect. A cross-build on Apple Silicon is useful separately but does not replace this input.
 2. **The artifact's real entry ABI.** Pin the source-level Tahoe entry symbol and its expected register/stack state, boot-argument structure/version, memory map, and CPU setup to the exact source revision/configuration that produced the artifact. Do not infer these from the ARM64 `xnu_main.c` handoff or the Mach-O thread-state record.

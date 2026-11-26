@@ -3,6 +3,7 @@
 """Check QEMU launcher arguments on Linux, macOS, and Windows."""
 
 import importlib.util
+import io
 from pathlib import Path
 import tempfile
 import unittest
@@ -36,6 +37,7 @@ class QemuLauncherTest(unittest.TestCase):
             installer=self.installer,
             ssh_port=2222,
             graphical=True,
+            display_backend=None,
         )
 
     def test_graphics_backend_matches_host(self):
@@ -52,6 +54,37 @@ class QemuLauncherTest(unittest.TestCase):
              mock.patch.object(qemu_vm.subprocess, "run", return_value=mock.Mock(stdout="sdl\n")):
             command = qemu_vm.build_command(self.args)
         self.assertEqual(command[command.index("-display") + 1], "sdl")
+
+    def test_uses_explicit_display_backend_when_requested(self):
+        self.args.display_backend = "sdl"
+        with mock.patch.object(qemu_vm.platform, "system", return_value="Linux"), \
+             mock.patch.object(qemu_vm.subprocess, "run", return_value=mock.Mock(stdout="gtk\nsdl\n")):
+            command = qemu_vm.build_command(self.args)
+        self.assertEqual(command[command.index("-display") + 1], "sdl")
+
+    def test_explicit_display_backend_must_be_available(self):
+        self.args.display_backend = "sdl"
+        with mock.patch.object(qemu_vm.platform, "system", return_value="Linux"), \
+             mock.patch.object(qemu_vm.subprocess, "run", return_value=mock.Mock(stdout="gtk\n")):
+            with self.assertRaisesRegex(ValueError, "no graphical backend suitable"):
+                qemu_vm.build_command(self.args)
+
+    def test_display_backend_requires_graphical_mode(self):
+        argv = [
+            "qemu-vm.py", str(self.disk),
+            "--firmware-code", str(self.firmware_code),
+            "--firmware-vars", str(self.firmware_vars),
+            "--display-backend", "sdl",
+        ]
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(qemu_vm.sys, "argv", argv),
+            mock.patch.object(qemu_vm.sys, "stderr", stderr),
+            self.assertRaises(SystemExit) as result,
+        ):
+            qemu_vm.main()
+        self.assertEqual(result.exception.code, 2)
+        self.assertIn("--display-backend requires --graphical", stderr.getvalue())
 
     def test_escapes_qemu_name_option_separators(self):
         self.args.window_title = "Linux, ARM64=Test"

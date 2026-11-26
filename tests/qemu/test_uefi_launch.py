@@ -186,6 +186,9 @@ class UefiLaunchTest(unittest.TestCase):
             }
             if graphical:
                 command += ["--graphical", "--window-title", guest_name]
+                display_backend = os.environ.get("QEMU_TEST_DISPLAY_BACKEND")
+                if display_backend:
+                    command += ["--display-backend", display_backend]
             qemu = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             window_found = False
             window_output = ""

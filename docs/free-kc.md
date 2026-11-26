@@ -40,16 +40,22 @@ kernel has; and a kext's load tag.
 ## Using it
 
 1. `scripts/puredarwin-root.sh IMAGE root.tar.gz` archives the PureDarwin arm64 root on Linux, including x86-64.
-   It requires `fdisk` (`sfdisk`), `util-linux` (loop devices, mount tools, `findmnt`, `unshare`, and `setpriv`), `e2fsprogs`
-   (`tune2fs` and `e2fsck`), `python3`, `tar`, `coreutils` (`link`), and kernel support for ext4, loop devices, and
-   private mount namespaces. Run as root or with `sudo`. The host `/tmp` must be local, writable, and have the sticky
-   bit (normally mode `1777`); setting `TMPDIR` does not change the mountpoint location. The exporter uses a private
-   mount namespace so other local processes cannot see files from the guest while its ext4 root is mounted.
+   It requires `fdisk` (`sfdisk`), `util-linux` (loop devices, mount tools, `unshare`, and `setpriv`), `e2fsprogs`
+   (`tune2fs` and `e2fsck`), `python3`, `tar`, `coreutils` (`link`, `stat`, and `chmod`), and kernel support for ext4,
+   loop devices, and private mount namespaces. Run as root or as a regular user with `sudo` available. For output on
+   root-squashed NFS, run as a regular user so the archive remains owned by that account.
    The input image's ext4
    root must be clean and have no pending journal recovery; the exporter refuses filesystems that need repair. It opens
-   the source image read-only, mounts with journal replay disabled, and preserves numeric owners in the archive. The
-   output path must be new, its parent directory must exist, and that filesystem must support hard links. The archive
-   is published without replacing an existing file or symlink and has mode `0644`. Build the input image with
+   the source image read-only, mounts below a private mode-0700 directory in a private mount namespace, disables
+   journal replay, and preserves numeric owners in the archive. It tries a root-accessible `TMPDIR` first and falls
+   back to `/tmp`, allowing the output directory itself to be on root-squashed NFS. Set `TMPDIR` to a local filesystem
+   if neither path is accessible to the mount helper. The output path must be new, its parent directory must exist,
+   and that filesystem
+   must support hard links. The archive
+   is published without replacing an existing file or symlink and has mode `0644`. The exporter refuses output paths
+   with an ancestor controlled by another account or writable by a group or other user outside a sticky directory;
+   use a private directory or a root-owned sticky shared directory such as `/tmp`.
+   Build the input image with
    `nix build 'git+https://github.com/AFK-surf/PureDarwin?submodules=1&rev=b3b4b2812fdd1c5c251dc3089b5a1a9e00d29970#image-arm64-virt-minimal'` (PureDarwin's
    binary cache, https://hydra.lab004.dev, has its toolchain and what the fork did not change; the images there are
    upstream's).

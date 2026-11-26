@@ -51,10 +51,11 @@ if k in s and multiarch != 'x86_64-linux-gnu' and patch not in s:
     open(p,'w').write(s)
 PY
 # cctools' foreign mach/machine headers know x86 only; host tools (kextsymboltool, ...) only need LP64 types.
-# Patched once the toolchain step has fetched them.
+# Patch the copied worktree used in LINUX_HOST_CFLAGS, not the pinned source checkout: dirtying that checkout makes
+# setup-env.py reject the next build as no longer clean.
 patch_cctools() {
   local d f T
-  for d in $(find toolchains -type d -path '*/cctools/include/foreign' 2>/dev/null); do
+  for d in $(find toolchains/linux/cctools-work -type d -path '*/cctools/include/foreign' 2>/dev/null); do
     for f in $(grep -rl -E 'defined *\(__x86_64__\)' "$d"); do
       grep -q __aarch64__ "$f" || sed -i 's/defined *(__x86_64__)/defined(__x86_64__) || defined(__aarch64__)/g' "$f"
     done

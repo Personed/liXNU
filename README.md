@@ -107,14 +107,17 @@ At head `5312b29`, [run #72](https://github.com/Personed/xnulinux/actions/runs/4
 prepared the guest, and passed the full console command, guest halt, XNU unload, Linux power-off, and QEMU exit checks
 on Ubuntu 24.04 x86-64. A later Mach-O inspection found overlapping `__TEXT_EXEC`/`__KLD` ranges. Current #36 head
 `97727ac` adds a file-backed range check; run #74 failed before boot on that overlap, so run #72 does not validate
-the current layout. PR #50 proposes relocating `__KLD`/`__LAST` and relinking; run #86 is rebuilding the pinned
-guest image. PR #52 pins the ARM64 guest kernel and records input hashes; it is now rebased onto #50 head `cfc4406`,
-and run #87 is rebuilding that pinned guest image. PR #57 separately retains the final post-relink segment-check
-output but still targets the earlier #50 head `3dfcc0e`. Cross-host PR #46 run #79 built the guest image but failed the XNU source build
+the current layout. PR #50 proposes relocating `__KLD`/`__LAST` and relinking; its current head is `eb01aba` and
+run #89 is in progress. PR #52 pins the ARM64 guest kernel and records input hashes, but still targets older #50
+head `cfc4406`; run #87 is in progress and needs a rebase onto `eb01aba` before it validates that relink. PR #57
+retains the final post-relink segment-check output but still targets older #50 head `3dfcc0e`. Cross-host PR #46
+run #79 built the guest image but failed the XNU source build
 at the same `__TEXT_EXEC`/`__KLD` overlap; preparation and host boots were skipped. It is based on the
 pre-relocation/pre-pin head and provides no host acceptance. PR #58 adds guest-input hash checks and reliable
 per-host preflight reports; run #85 is building its guest image, with review still requesting macOS preflight
-regression coverage and precise RAM measurement ordering.
+regression coverage and correct reporting of invalid-UTF-8 manifest hashes. Its current follow-up also needs to
+confirm the macOS `vm_stat` unavailable-pages case. After #50/#52/#57/#58 are synchronized, rerun the full
+console/halt route and the host matrix with identical guest hashes.
 After #50/#52/#58 are synchronized, rerun the full console/halt route and the host matrix with identical guest hashes.
 Its public runners are reported as 16 GB for Windows and 14 GB for Intel macOS, less than the 16 GiB guest allocation
 plus host overhead; use larger runners or mark those combinations unsupported for this profile if they cannot boot.

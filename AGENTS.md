@@ -6,7 +6,7 @@ Run xnulinux on common x86-64 PCs through QEMU TCG by booting an ARM64 Linux gue
 
 - **x86-64 PC via QEMU TCG:** boot ARM64 Linux and run the ARM64-only `fki.ko` and `xnu.ko` modules inside that guest. The target for this goal is a real PureDarwin console command and guest-issued clean halt. TCG does not require VT-x/AMD-V, but memory needs and speed vary by PC; report the exact tested profile and do not claim every PC from one CI run.
 - **Native ARM64 Linux:** preserve the existing direct XNU-in-Linux runtime using `fki.ko` and `xnu.ko`, including its build and runtime behavior.
-- **Separate native x86_64 prototype:** PRs #47/#48/#49 explore an x86_64 FKI backend and fail-closed XNU stub. They do not execute XNU and are not the active acceptance route; keep x86_64 and ARM64 kernel header trees separate.
+- **Separate native x86_64 prototype:** PRs #47/#48/#49 explore an x86_64 FKI backend and fail-closed XNU stub. They do not execute XNU and are not the active acceptance route; keep x86_64 and ARM64 kernel header trees separate. The [module workflow](.github/workflows/modules.yml) and [x86_64 fail-closed workflow](.github/workflows/xnu-x86_64.yml) provide repeatable checks for this prototype, separate from TCG/PureDarwin acceptance.
 - **Separate x86-64 macOS/KVM experiment:** a user-prepared Tahoe guest is a distinct experiment. The project modules remain ARM64-only; do not present them as an x86 runtime or add unsafe no-op x86 hooks. A Linux TCG boot is not evidence of a macOS/KVM boot.
 
 ## x86-64 QEMU TCG guest

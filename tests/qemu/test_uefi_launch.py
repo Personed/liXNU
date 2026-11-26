@@ -113,7 +113,10 @@ class UefiLaunchTest(unittest.TestCase):
                 tree_output = tree.stdout or ""
                 for line in tree_output.splitlines():
                     match = title_pattern.match(line)
-                    if not match or match.group(2) not in expected_titles:
+                    if not match:
+                        continue
+                    title = self._normalize_window_title(match.group(2))
+                    if title not in expected_titles:
                         continue
                     detail = subprocess.run(
                         ["xwininfo", "-id", match.group(1)],
@@ -142,6 +145,16 @@ class UefiLaunchTest(unittest.TestCase):
     def _window_dimension(output, name):
         match = re.search(rf"^\s*{name}:\s*(\d+)\s*$", output, re.MULTILINE)
         return int(match.group(1)) if match else 0
+
+    @staticmethod
+    def _normalize_window_title(title):
+        return re.sub(r" - Press Ctrl-Alt-G to exit grab$", "", title)
+
+    def test_sdl_window_title_suffix_is_normalized(self):
+        title = "QEMU (xnulinux-uefi,window=Test-0) - Press Ctrl-Alt-G to exit grab"
+        self.assertEqual(
+            self._normalize_window_title(title), "QEMU (xnulinux-uefi,window=Test-0)"
+        )
 
     def start_guest(self, graphical=False):
         qemu_binary = shutil.which("qemu-system-aarch64")

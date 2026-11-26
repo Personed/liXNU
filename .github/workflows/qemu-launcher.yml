@@ -17,11 +17,12 @@ jobs:
           python-version: "3.12"
       - name: Test platform launch options
         run: python tests/qemu/test_launcher.py
-      - name: Test Windows cleanup timeout and taskkill failure
+      - name: Test Windows cleanup and SDL window title parsing
         run: >-
           python tests/qemu/test_uefi_launch.py
           UefiLaunchTest.test_windows_cleanup_kills_launcher_when_taskkill_times_out
           UefiLaunchTest.test_windows_cleanup_falls_back_when_taskkill_cannot_start
+          UefiLaunchTest.test_sdl_window_title_suffix_is_normalized
       - name: Install QEMU on Linux
         if: runner.os == 'Linux'
         run: |

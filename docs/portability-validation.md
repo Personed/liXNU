@@ -71,7 +71,7 @@ Report the profile alongside the stage:
   PR #50 proposes relocating `__KLD`/`__LAST` and relinking; current head is `eb01aba` and run #89 is in progress.
   PR #52 pins the guest inputs and is rebased onto `eb01aba`; run #91 is in progress. It uses an immutable Ubuntu
   snapshot, but fixed expected hashes for downloaded packages and package-availability validation are pending.
-  PR #57 is also rebased onto `eb01aba`; run #92 is queued to validate retention of final post-relink segment-check
+  PR #57 is also rebased onto `eb01aba`; run #92 is in progress to validate retention of final post-relink segment-check
   output. Cross-host
   Windows and Intel-macOS checks are proposed in [#46](https://github.com/Personed/xnulinux/pull/46); its run #79
   built the guest image, then failed the XNU source build in `kclink` on the same file-backed `__TEXT_EXEC`/`__KLD`

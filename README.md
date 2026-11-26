@@ -109,9 +109,9 @@ byte comparison confirmed the historical collection's `__TEXT_EXEC`/`__KLD` over
 with output bytes matching `__KLD` rather than `__TEXT_EXEC`. Current #36 head `97727ac` adds a file-backed range
 check; run #74 failed before boot on that overlap. PR #50 proposes relocating `__KLD`/`__LAST` and relinking; its current head is `eb01aba` and
 run #89 is in progress. PR #52 pins the ARM64 guest kernel and records input hashes; it is rebased onto `eb01aba`
-and run #91 is queued. The workflow uses an immutable Ubuntu snapshot, but fixed expected hashes for downloaded
-packages and package-availability validation are still pending. PR #57 now also targets `eb01aba` and has run #92
-queued to validate retention of the final post-relink segment-check output. Cross-host PR #46
+and run #91 is in progress. The workflow uses an immutable Ubuntu snapshot, but fixed expected hashes for downloaded
+packages and package-availability validation are still pending. PR #57 now also targets `eb01aba` and run #92 is
+in progress to validate retention of the final post-relink segment-check output. Cross-host PR #46
 run #79 built the guest image but failed the XNU source build
 at the same `__TEXT_EXEC`/`__KLD` overlap; preparation and host boots were skipped. It is based on the
 pre-relocation/pre-pin head and provides no host acceptance. PR #58 adds guest-input hash checks and reliable

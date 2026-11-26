@@ -235,7 +235,6 @@ static long bp_ioctl(struct file *file, unsigned int command, unsigned long arg)
 static const struct file_operations bp_fops = {
 	.owner = THIS_MODULE,
 	.unlocked_ioctl = bp_ioctl,
-	.llseek = noop_llseek,
 };
 
 static struct miscdevice bp_device = {

@@ -148,6 +148,11 @@ int main(void)
 		perror("open /dev/x86-boundary-probe");
 		return 1;
 	}
+	errno = 0;
+	if (lseek(fd, 0, SEEK_SET) != -1 || errno != ESPIPE) {
+		fprintf(stderr, "probe device unexpectedly supports lseek\n");
+		return 1;
+	}
 	if (check_linux_syscalls(pid))
 		return 1;
 	for (cpu = 0; cpu < cpu_count; cpu++) {

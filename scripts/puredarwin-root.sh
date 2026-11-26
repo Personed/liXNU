@@ -86,7 +86,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 export PATH="$PATH:/usr/sbin:/sbin"
 export LC_ALL=C
-for tool in sfdisk python3 losetup mount mountpoint umount e2fsck tune2fs tar mktemp link stat chmod mkdir unshare setpriv id env; do
+for tool in sfdisk python3 losetup mount mountpoint umount e2fsck tune2fs tar link stat chmod mkdir unshare setpriv id env; do
   if ! command -v "$tool" >/dev/null; then
     echo "PureDarwin root export requires $tool." >&2
     exit 1
@@ -177,6 +177,7 @@ archive_dir='' archive_identity='' archive='' loop='' check_log=''
 cleanup() {
   local cleanup_mount_identity cleanup_mount_owner_mode cleanup_parent_identity cleanup_parent_owner_mode
   local cleanup_archive_identity cleanup_archive_owner_mode
+  local staging_owner_mode staging_owner staging_mode
   trap '' INT TERM
   if [ -n "$mount_dir" ] && { [ -e "$mount_dir" ] || [ -L "$mount_dir" ]; }; then
     if mountpoint -q -- "$mount_dir"; then
@@ -198,6 +199,23 @@ cleanup() {
       echo "Could not detach $loop; leaving temporary files for recovery." >&2
       return 1
     fi
+  fi
+  if [ -n "$archive_dir" ] && [ -z "$archive_identity" ]; then
+    CDPATH= cd -P -- "$output_dir" || return 1
+    if [ -d "$archive_dir" ] && [ ! -L "$archive_dir" ]; then
+      staging_owner_mode=$(stat -c '%u:%a' -- "$archive_dir" 2>/dev/null || true)
+      staging_owner=${staging_owner_mode%%:*}
+      staging_mode=${staging_owner_mode#*:}
+      if [ "$staging_owner" = "$EUID" ] &&
+         { [ "$staging_mode" = 700 ] || [ "$staging_mode" = 2700 ]; } &&
+         [ -z "$(find "$archive_dir" -mindepth 1 -print -quit 2>/dev/null)" ] &&
+         export_path_is_safe "$output_dir"; then
+        rmdir -- "$archive_dir" || return 1
+      else
+        echo "Staging path changed before its identity was recorded; leaving it untouched: $archive_dir" >&2
+      fi
+    fi
+    archive_dir=''
   fi
   if [ -n "$archive_dir" ] && [ -n "$archive_identity" ]; then
     if [ "$(stat -c '%d:%i' -- . 2>/dev/null || true)" != "$archive_identity" ]; then
@@ -266,17 +284,22 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-staging_signal=0
-trap 'staging_signal=130' INT
-trap 'staging_signal=143' TERM
-archive_dir=$(mktemp -d -- "$output_dir/.puredarwin-root.XXXXXXXX")
-if [ -n "$archive_dir" ]; then
-  expected_archive_identity=$(stat -c '%d:%i' -- "$archive_dir")
-  archive_identity=$expected_archive_identity
-fi
 trap 'exit 130' INT
 trap 'exit 143' TERM
-if [ "$staging_signal" -ne 0 ]; then exit "$staging_signal"; fi
+archive_dir=''
+for attempt in {1..10}; do
+  archive_dir=$output_dir/.puredarwin-root.$$.${RANDOM}${RANDOM}
+  if mkdir -m 0700 -- "$archive_dir" 2>/dev/null; then
+    break
+  fi
+  archive_dir=''
+done
+if [ -z "$archive_dir" ]; then
+  echo "Could not create a unique staging directory in $output_dir." >&2
+  exit 1
+fi
+expected_archive_identity=$(stat -c '%d:%i' -- "$archive_dir")
+archive_identity=$expected_archive_identity
 if [ -L "$archive_dir" ] || ! export_path_is_safe "$archive_dir"; then
   echo "Refusing an unsafe private staging directory: $archive_dir" >&2
   exit 1

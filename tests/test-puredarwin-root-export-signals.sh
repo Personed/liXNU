@@ -3,7 +3,6 @@
 set -euo pipefail
 
 script=$(cd -- "$(dirname -- "$0")/.." && pwd)/scripts/puredarwin-root.sh
-real_mktemp=$(command -v mktemp)
 real_chmod=$(command -v chmod)
 real_stat=$(command -v stat)
 real_mkdir=$(command -v mkdir)
@@ -18,7 +17,6 @@ mkdir -- "$bin" "$state"
 export SECURE_PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export TEST_STATE=$state
 export FAKE_LOOP=/dev/loop-codex-test
-export REAL_MKTEMP=$real_mktemp
 export REAL_CHMOD=$real_chmod
 export REAL_STAT=$real_stat
 export REAL_MKDIR=$real_mkdir
@@ -145,27 +143,6 @@ if [ "${REPLACE_DURING_E2FSCK:-0}" = 1 ]; then
 fi
 exit 0
 WRAPPER
-cat >"$bin/mktemp" <<'WRAPPER'
-#!/bin/sh
-result=$("$REAL_MKTEMP" "$@") || exit
-if [ "$1" = '-d' ]; then
-  case "$*" in
-    *'.puredarwin-root.'*)
-      printf '%s\n' "$result" >"$TEST_STATE/archive-dir"
-      if [ "${PAUSE_AFTER_ARCHIVE_MKTEMP:-0}" = 1 ]; then
-        : >"$TEST_STATE/archive-mktemp-ready"
-        while [ ! -e "$TEST_STATE/archive-mktemp-release" ]; do sleep 0.01; done
-      fi
-      if [ "${REPLACE_ARCHIVE_DIR:-0}" = 1 ]; then
-        mv -- "$result" "$result.original"
-        ln -s -- "$ATTACKER_DIR" "$result"
-        printf '%s\n' "$result.original" >"$TEST_STATE/replaced-stage"
-      fi
-      ;;
-  esac
-fi
-printf '%s\n' "$result"
-WRAPPER
 cat >"$bin/stat" <<'WRAPPER'
 #!/bin/sh
 result=$("$REAL_STAT" "$@") || exit
@@ -200,6 +177,18 @@ cat >"$bin/mkdir" <<'WRAPPER'
 last=''
 for arg do last=$arg; done
 case "$last" in
+  */.puredarwin-root.*)
+    printf '%s\n' "$last" >"$TEST_STATE/archive-dir"
+    if [ "${REPLACE_ARCHIVE_DIR:-0}" = 1 ]; then
+      mv -- "$last" "$last.original"
+      ln -s -- "$ATTACKER_DIR" "$last"
+      printf '%s\n' "$last.original" >"$TEST_STATE/replaced-stage"
+    fi
+    if [ "${PAUSE_AFTER_ARCHIVE_MKDIR:-0}" = 1 ]; then
+      : >"$TEST_STATE/archive-mkdir-ready"
+      while [ ! -e "$TEST_STATE/archive-mkdir-release" ]; do sleep 0.01; done
+    fi
+    ;;
   */mount)
     printf '%s\n' "${last%/mount}" >"$TEST_STATE/mount-parent"
     printf '%s\n' "$last" >"$TEST_STATE/mount-dir"
@@ -298,7 +287,7 @@ second_check_log=$(cat "$state/check-log")
 
 echo 'PureDarwin root exporter pre-mount signal cleanup test passed.'
 
-# A signal after mktemp but before clearing setgid must still remove the empty
+# A signal after creating the stage but before clearing setgid must still remove the empty
 # 2700 staging directory using its recorded inode identity.
 early_setgid_dir=$tmp/early-setgid
 mkdir -- "$early_setgid_dir"
@@ -364,36 +353,39 @@ echo 'PureDarwin root exporter mount-directory signal cleanup test passed.'
 
 unset SIGNAL_AFTER_MOUNT SIGNAL_BEFORE_MOUNT
 
-# A signal immediately after mktemp returns, before the exporter changes into
-# the staging directory, must still record its inode and remove it safely.
-early_output=$tmp/early-mktemp-signal.tar.gz
-rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/archive-mktemp-ready" "$state/archive-mktemp-release" "$state/check-log"
-PAUSE_AFTER_ARCHIVE_MKTEMP=1 "$script" "$image" "$early_output" >/dev/null 2>&1 &
+# Interrupt the entire process group while mkdir is paused after creating the
+# archive stage but before returning. The exporter already knows the pathname,
+# so its signal trap can remove the empty directory without mktemp output.
+early_output=$tmp/early-mkdir-signal.tar.gz
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/archive-mkdir-ready" "$state/archive-mkdir-release" "$state/archive-export-pgid" "$state/check-log"
+PAUSE_AFTER_ARCHIVE_MKDIR=1 setsid --wait bash -c 'printf "%s\\n" "$$" >"$TEST_STATE/archive-export-pgid"; exec "$@"' _ \
+  "$script" "$image" "$early_output" >/dev/null 2>&1 &
 early_export_pid=$!
 for attempt in {1..500}; do
-  [ -e "$state/archive-mktemp-ready" ] && break
+  [ -e "$state/archive-mkdir-ready" ] && break
   if ! kill -0 "$early_export_pid" 2>/dev/null; then break; fi
   sleep 0.01
 done
-if [ ! -e "$state/archive-mktemp-ready" ]; then
+if [ ! -e "$state/archive-mkdir-ready" ]; then
+  early_export_pgid=$(cat "$state/archive-export-pgid" 2>/dev/null || true)
+  if [ -n "$early_export_pgid" ]; then kill -TERM -- "-$early_export_pgid" 2>/dev/null || true; fi
   kill -TERM "$early_export_pid" 2>/dev/null || true
-  : >"$state/archive-mktemp-release"
   wait "$early_export_pid" 2>/dev/null || true
-  echo 'Exporter did not pause after creating its staging directory.' >&2
+  echo 'Exporter did not pause during archive staging mkdir.' >&2
   exit 1
 fi
-kill -TERM "$early_export_pid"
-: >"$state/archive-mktemp-release"
+early_export_pgid=$(cat "$state/archive-export-pgid")
+kill -TERM -- "-$early_export_pgid"
 set +e
 wait "$early_export_pid"
 status=$?
 set -e
-[ "$status" -eq 143 ] || { echo "Expected post-mktemp SIGTERM exit 143; got $status" >&2; exit 1; }
+[ "$status" -eq 143 ] || { echo "Expected archive-mkdir SIGTERM exit 143; got $status" >&2; exit 1; }
 early_archive_dir=$(cat "$state/archive-dir")
 [ ! -e "$early_archive_dir" ]
 [ ! -e "$early_output" ]
 [ ! -e "$state/loop-attached" ]
-echo 'PureDarwin root exporter post-mktemp signal cleanup test passed.'
+echo 'PureDarwin root exporter process-group archive-mkdir signal cleanup test passed.'
 
 # The sudo re-exec deliberately drops TMPDIR. The private child must restore
 # the original value before selecting a physical mount staging path.
@@ -428,6 +420,40 @@ esac
 [ -f "$fallback_output" ]
 [ ! -e "$fallback_mount_parent" ]
 echo 'PureDarwin root exporter physical /tmp fallback test passed.'
+
+# Replace only the literal default fallback in a test copy with a symlink
+# fixture. This verifies that the /tmp fallback is canonicalized physically
+# without changing the host's /tmp entry.
+fallback_link_target=$tmp/fallback-link-target
+fallback_link=$tmp/fallback-link
+fallback_link_script=$tmp/puredarwin-root-fallback-link.sh
+mkdir -m 0700 -- "$fallback_link_target"
+ln -s -- "$fallback_link_target" "$fallback_link"
+fallback_link_physical=$(CDPATH= cd -P -- "$fallback_link_target" && pwd)
+python3 - "$script" "$fallback_link_script" "$fallback_link" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+source = Path(sys.argv[1]).read_text()
+old = "add_mount_tmp_candidate /tmp"
+new = f"add_mount_tmp_candidate {shlex.quote(sys.argv[3])}"
+if source.count(old) != 1:
+    raise SystemExit("Could not replace the default /tmp candidate in test copy")
+Path(sys.argv[2]).write_text(source.replace(old, new))
+PY
+chmod +x "$fallback_link_script"
+fallback_link_output=$tmp/fallback-link.tar.gz
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/archive-dir" "$state/mount-dir" "$state/mount-parent" "$state/mount-parent-mode" "$state/check-log"
+env -u TMPDIR DROP_TMPDIR_ON_SUDO=1 "$fallback_link_script" "$image" "$fallback_link_output" >/dev/null
+fallback_link_mount_parent=$(cat "$state/mount-parent")
+case "$fallback_link_mount_parent" in
+  "$fallback_link_physical"/.puredarwin-root-mount.*) ;;
+  *) echo "Symlinked default tmp fallback was not resolved physically: $fallback_link_mount_parent" >&2; exit 1 ;;
+esac
+[ -f "$fallback_link_output" ]
+[ ! -e "$fallback_link_mount_parent" ]
+echo 'PureDarwin root exporter symlinked /tmp fallback test passed.'
 
 # A child of a setgid temporary parent can still have mode 2700 when a signal
 # arrives before the exporter clears the inherited setgid bit.
@@ -487,7 +513,7 @@ rmdir -- "$cleanup_replacement"
 
 echo 'PureDarwin root exporter cleanup identity replacement test passed.'
 
-# A replacement symlink created immediately after mktemp must be rejected
+# A replacement symlink created immediately after mkdir must be rejected
 # before the exporter enters the directory or starts e2fsck.
 attacker_dir=$tmp/attacker
 mkdir -- "$attacker_dir"
@@ -625,7 +651,7 @@ if [ "$EUID" -eq 0 ] || [ "${#root_runner[@]}" -gt 0 ]; then
   fi
   foreign_output=$foreign_dir/root.tar.gz
   rm -f -- "$state/archive-dir" "$state/mount-dir" "$state/mount-parent" "$state/mount-parent-mode" "$state/loop-attached"
-  if "${root_runner[@]}" env PATH="$PATH" TEST_STATE="$state" FAKE_LOOP="$FAKE_LOOP" REAL_MKTEMP="$REAL_MKTEMP" TMPDIR=. "$script" "$image" "$foreign_output" >/dev/null 2>"$tmp/foreign-export.log"; then
+  if "${root_runner[@]}" env PATH="$PATH" TEST_STATE="$state" FAKE_LOOP="$FAKE_LOOP" TMPDIR=. "$script" "$image" "$foreign_output" >/dev/null 2>"$tmp/foreign-export.log"; then
     echo 'Exporter unexpectedly accepted a directory controlled by another account.' >&2
     exit 1
   fi

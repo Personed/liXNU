@@ -51,7 +51,17 @@ kernel has; and a kext's load tag.
 
    On Linux, install `hfsprogs` and `sfdisk` (the `fdisk` package on Debian and Ubuntu). The Linux kernel needs loop devices
    and writable HFS+ support. The script uses root privileges for those operations and writes a non-journaled volume. After
-   an unclean shutdown, check the unmounted HFS+ partition with `fsck.hfsplus` on Linux before booting it again.
+   an unclean shutdown, check the HFS+ partition on Linux before booting again.
+
+   ```sh
+   loop=$(sudo losetup --find --show --partscan pd.img)
+   trap 'sudo losetup --detach "$loop"' EXIT
+   sudo fsck.hfsplus -f "${loop}p1"
+   sudo losetup --detach "$loop"
+   trap - EXIT
+   ```
+
+   The image uses GPT, so run `fsck.hfsplus` on the first partition exposed by `losetup --partscan`, not on `pd.img`.
 3. In the VM, after `scripts/vm-xnu-rebuild.sh`: `scripts/free-kc/build.sh`, which writes `/lib/firmware/xnu/kc-free.bin`.
 4. Boot it: `MAC_CONF=pd.conf DISK=pd.img IMAGE=xnu/kc-free.bin TRUSTCACHE= GPU=off scripts/xnulinux-boot.sh`. The console
    (`CONSOLE_IN`) is PureDarwin's zsh. Its `halt` and `reboot` end the run.

@@ -12,16 +12,16 @@ usage() {
 Usage: build-xnu-kernel.sh [--check]
 
 Build the pinned Tahoe 26 XNU source as an x86_64 macOS development kernel.
-The build uses an Xcode toolchain and the public, checksum-pinned macOS 26.1
-SDK. It does not use or modify a macOS system disk.
+The build uses Xcode 26.1.1 and its bundled macOS 26.1 SDK. It does not use
+or modify a macOS system disk.
 
 Environment:
   XNU_X86_BUILD_DIR  Build/download directory (default: ${TMPDIR:-/tmp}/xnulinux-x86_64-xnu-build)
   XNU_X86_JOBS       Parallel jobs (default: logical CPU count)
 
---check validates the source pin, SDK, Xcode tools, and x86_64 target without
-downloading or building. The default action builds kernel.development and
-writes build-result.json next to it.
+--check validates the source pin, bundled SDK, Xcode tools, and x86_64 target
+without downloading or building. The default action builds kernel.development
+and writes build-result.json next to it.
 USAGE
 }
 
@@ -41,24 +41,20 @@ readonly KERNEL_VERSION='25.5.0'
 readonly SOURCE_VERSION='12377.121.6'
 readonly SDK_VERSION='26.1'
 readonly XCODE_VERSION='26.1.1'
-readonly SDK_URL='https://github.com/joseluisq/macosx-sdks/releases/download/26.1/MacOSX26.1.sdk.tar.xz'
-readonly SDK_SHA256='beee7212d265a6d2867d0236cc069314b38d5fb3486a6515734e76fa210c784c'
 
 HOST_OS="$(uname -s)"
 HOST_ARCH="$(uname -m)"
 [[ "$HOST_OS" == Darwin ]] || fail 'the pinned Apple build tools require a macOS build host'
 [[ "$HOST_ARCH" == x86_64 ]] || fail "run this x86_64 artifact build on an Intel macOS host (found $HOST_ARCH)"
 
-for tool in git make curl tar shasum xcrun xcodebuild sysctl python3; do
+for tool in git make xcrun xcodebuild sysctl python3; do
   command -v "$tool" >/dev/null 2>&1 || fail "required host tool not found: $tool"
 done
 
 DEFAULT_TMPDIR="${TMPDIR:-/tmp}"
 BUILD_ROOT="${XNU_X86_BUILD_DIR:-${DEFAULT_TMPDIR%/}/xnulinux-x86_64-xnu-build}"
 SOURCE_DIR="$BUILD_ROOT/source"
-SDK_CACHE="$BUILD_ROOT/cache/MacOSX26.1.sdk.tar.xz"
-SDK_PARENT="$BUILD_ROOT/sdk"
-SDK_DIR="$SDK_PARENT/MacOSX26.1.sdk"
+SDK_DIR=''
 OUT_DIR="$BUILD_ROOT/out"
 OBJROOT="$OUT_DIR/obj"
 SYMROOT="$OUT_DIR/sym"
@@ -80,17 +76,26 @@ verify_source() {
 }
 
 verify_sdk() {
-  [[ -f "$SDK_DIR/SDKSettings.json" ]] || fail "missing extracted macOS $SDK_VERSION SDK at $SDK_DIR"
+  [[ -f "$SDK_DIR/SDKSettings.json" ]] || fail "missing bundled macOS SDK settings at $SDK_DIR"
   local version
   version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["Version"])' "$SDK_DIR/SDKSettings.json")"
   [[ "$version" == "$SDK_VERSION" ]] || fail "SDK at $SDK_DIR is $version; expected $SDK_VERSION"
+  [[ -x "$SDK_DIR/System/DriverKit/usr/local/libexec/availability.pl" ]] \
+    || fail "macOS $SDK_VERSION SDK is missing DriverKit availability.pl required by XNU"
+}
+
+verify_xcode_and_sdk() {
+  local actual_xcode
+  actual_xcode="$(xcodebuild -version | awk '/^Xcode / { print $2; exit }')"
+  [[ "$actual_xcode" == "$XCODE_VERSION" ]] || fail "Xcode is $actual_xcode; expected $XCODE_VERSION"
+  SDK_DIR="$(xcrun --sdk macosx --show-sdk-path)"
+  [[ -n "$SDK_DIR" && -d "$SDK_DIR" ]] || fail 'Xcode did not resolve its macOS SDK'
+  verify_sdk
 }
 
 if (( CHECK_ONLY )); then
   verify_source
-  verify_sdk
-  actual_xcode="$(xcodebuild -version | awk '/^Xcode / { print $2; exit }')"
-  [[ "$actual_xcode" == "$XCODE_VERSION" ]] || fail "Xcode is $actual_xcode; expected $XCODE_VERSION"
+  verify_xcode_and_sdk
   xcodebuild -version
   xcrun --find clang >/dev/null
   xcrun --find ld >/dev/null
@@ -101,7 +106,7 @@ if (( CHECK_ONLY )); then
   exit 0
 fi
 
-mkdir -p "$BUILD_ROOT/cache" "$SDK_PARENT" "$OUT_DIR"
+mkdir -p "$OUT_DIR"
 
 if [[ ! -d "$SOURCE_DIR/.git" && ! -f "$SOURCE_DIR/.git" ]]; then
   [[ ! -d "$SOURCE_DIR" || -z "$(find "$SOURCE_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]] \
@@ -114,21 +119,9 @@ if [[ ! -d "$SOURCE_DIR/.git" && ! -f "$SOURCE_DIR/.git" ]]; then
 fi
 verify_source
 
-if [[ ! -f "$SDK_CACHE" ]] || [[ "$(shasum -a 256 "$SDK_CACHE" | awk '{print $1}')" != "$SDK_SHA256" ]]; then
-  partial="$SDK_CACHE.download"
-  rm -f -- "$partial"
-  curl --fail --location --retry 3 --output "$partial" "$SDK_URL"
-  [[ "$(shasum -a 256 "$partial" | awk '{print $1}')" == "$SDK_SHA256" ]] \
-    || fail 'downloaded macOS SDK checksum does not match the pinned value'
-  mv -- "$partial" "$SDK_CACHE"
-fi
-if [[ ! -f "$SDK_DIR/SDKSettings.json" ]]; then
-  tar -C "$SDK_PARENT" -xf "$SDK_CACHE"
-fi
-verify_sdk
-
 ACTUAL_XCODE_VERSION="$(xcodebuild -version | tr '\n' ' ')"
 [[ "$ACTUAL_XCODE_VERSION" == "Xcode $XCODE_VERSION "* ]] || fail "Xcode does not match pinned version $XCODE_VERSION"
+verify_xcode_and_sdk
 CLANG="$(xcrun --find clang)"
 LD="$(xcrun --find ld)"
 IIG="$(xcrun --find iig)"

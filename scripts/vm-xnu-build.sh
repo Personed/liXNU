@@ -70,6 +70,10 @@ D=out/k27/xnu/SETUP/decomment/decomment.c
 sed -i -E 's/^([[:space:]]*)char([[:space:]]+bufchar;)/\1int\2/' $D
 grep -qE '^[[:space:]]*int[[:space:]]+bufchar;' $D || { echo "decomment.c: no int bufchar after the patch" >&2; exit 1; }
 rm -f out/x12377/build/xnu/hdrs-obj/SETUP/decomment/decomment
+# unifdef 2.10 loses conditional nesting after pfvar.h's bare #error; give it the diagnostic text it requires.
+P=out/k27/xnu/bsd/net/pfvar.h
+sed -i 's|^#error$|#error "PF_MD5_DIGEST_LENGTH != MD5_DIGEST_LENGTH"|' $P
+grep -q '^#error "PF_MD5_DIGEST_LENGTH != MD5_DIGEST_LENGTH"' $P || { echo "pfvar.h: no diagnostic #error after the patch" >&2; exit 1; }
 python3 scripts/setup-env.py x12377 --jobs 12
 # the first kernel build is the rebuild's: xnu-patches and xnulinux's corecrypto go into the tree before anything of it
 # is compiled (XNU's own corecrypto never is)

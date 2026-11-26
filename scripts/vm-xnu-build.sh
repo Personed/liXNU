@@ -13,7 +13,7 @@ if [ ! -x /usr/lib/llvm-21/bin/clang ]; then
   sudo apt-get update -qq
 fi
 host_header_packages=()
-if [ "${INSTALL_HOST_HEADERS:-1}" != 0 ]; then
+if [ "${INSTALL_HOST_HEADERS:-1}" != 0 ] && [ ! -d "/lib/modules/$(uname -r)/build" ]; then
   host_header_packages+=("linux-headers-$(uname -r)")
 fi
 sudo -E apt-get install -y -qq build-essential autoconf automake libtool pkg-config git python3 python3-yaml python3-packaging \

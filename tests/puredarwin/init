@@ -83,7 +83,7 @@ for _ in $(seq 1 300); do
 done
 [ "$ended" = 1 ] || fail 'guest halt did not return from xnu.ko within five minutes'
 wait "$xnu_pid" || fail 'xnu.ko failed after the guest halt'
-grep -Fxq 'fki: darwin console: Darwin' /tmp/kernel.log || fail 'Darwin uname output was not exactly observed'
+grep -Eq '^[^;]*;fki: darwin console: Darwin$' /tmp/kernel.log || fail 'Darwin uname output was not exactly observed'
 grep -Fq 'fki: darwin console: XNULINUX_USERLAND_OK' /tmp/kernel.log || fail 'Darwin userspace marker was not observed'
 grep -Fq 'xnu: the hosted system halted' /tmp/kernel.log || fail 'host issued no guest halt confirmation'
 

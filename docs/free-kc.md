@@ -93,8 +93,8 @@ kernel has; and a kext's load tag.
 3. In the VM, after `scripts/vm-xnu-rebuild.sh`: `scripts/free-kc/build.sh`, which writes `/lib/firmware/xnu/kc-free.bin`.
    `scripts/vm-xnu-build.sh` checks out DroidVM at pinned revision
    `524d27bf57ae92375aa39e3a81e11727c08973ff`; set `DVM_REV` explicitly only when intentionally building against a
-   different DroidVM commit, and record that commit with the output. The build script installs headers for
-   `$(uname -r)` by default so the ARM64 Linux host can compile FKI and XNU modules at boot. Set
+   different DroidVM commit, and record that commit with the output. The build script uses the existing
+   `/lib/modules/$(uname -r)/build` tree when present, or installs `linux-headers-$(uname -r)` when it is missing. Set
    `INSTALL_HOST_HEADERS=0` only on a build machine whose running kernel will not host the modules, such as the x86-64
    image-build runner; install matching headers for the ARM64 host before following the boot steps.
 4. Boot it: `MAC_CONF=pd.conf DISK=pd.img IMAGE=xnu/kc-free.bin TRUSTCACHE= GPU=off scripts/xnulinux-boot.sh`. The console

@@ -32,7 +32,8 @@ Report the profile alongside the stage:
   this profile.
 - **ARM64 module build prerequisites:** the host must have headers matching its running
   Linux kernel (`/lib/modules/$(uname -r)/build`) and a compiler. The normal
-  `scripts/vm-xnu-build.sh` setup installs `linux-headers-$(uname -r)`; the x86-64
+  `scripts/vm-xnu-build.sh` setup reuses that headers tree or installs
+  `linux-headers-$(uname -r)` when missing; the x86-64
   image-build CI sets `INSTALL_HOST_HEADERS=0` because it does not load the ARM64 modules.
 - **x86-64 guest on Intel/AMD Linux:** [#16] describes a distinct experimental QEMU/KVM
   path, not a port of the ARM64 XNU/FKI modules. Report KVM and TCG separately; a Linux

@@ -86,11 +86,12 @@ def main() -> int:
         return 1
 
     log = args.serial_log.read_text(encoding="utf-8", errors="replace") if args.serial_log.exists() else ""
-    missing = [marker for marker in REQUIRED if marker not in log]
+    messages = [line.split(";", 1)[1] if ";" in line else line for line in log.splitlines()]
+    missing = [marker for marker in REQUIRED if not any(marker in line for line in messages)]
     darwin_line = "fki: darwin console: Darwin"
-    if darwin_line not in log.splitlines():
+    if darwin_line not in messages:
         missing.append("exact Darwin uname output line")
-    if not re.search(r"xnu: contiguous DRAM at phys 0x0*200000000\b", log):
+    if not any(re.search(r"xnu: contiguous DRAM at phys 0x0*200000000\b", line) for line in messages):
         missing.append("XNU contiguous DRAM at physical 0x200000000")
     if result.returncode != 0 or missing:
         print(f"QEMU exit status: {result.returncode}", file=sys.stderr)
@@ -100,7 +101,7 @@ def main() -> int:
         print("\n".join(log.splitlines()[-160:]), file=sys.stderr)
         return 1
 
-    for line in log.splitlines():
+    for line in messages:
         if line == darwin_line or any(marker in line for marker in REQUIRED):
             print(line)
     print("PureDarwin ARM64 console boot and guest-requested halt passed under QEMU TCG.")

@@ -68,7 +68,9 @@ if [ -e out/kc/kc27.bin ] || [ "${BUILD_NATIVE_KEXTS:-0}" = 1 ]; then
     python3 scripts/build-native-kext.py $n "$(dirname "$j")/$n.cpp" -I "$NETINC" --obj ${KEXT_OBJ:-k27-obj} || { echo "kext $n failed to build: left out"; continue; }
     NATIVE+=("$j")
   done
-  printf '%s\n' "${NATIVE[@]}" > out/k27/natives.txt	# the kexts of ours in this collection, for scripts/apple-kc/package.sh
+  if [ -e out/kc/kc27.bin ]; then
+    printf '%s\n' "${NATIVE[@]}" > out/k27/natives.txt	# the kexts of ours in this collection, for scripts/apple-kc/package.sh
+  fi
   if [ -e out/kc/kc27.bin ]; then
     # the collection (scripts/kclink): the kernel, xnulinux's kexts, and the Apple kexts of scripts/apple-kc/keep.txt from
     # macOS 27.2's kernelcache
@@ -84,6 +86,9 @@ if [ -e out/kc/kc27.bin ] || [ "${BUILD_NATIVE_KEXTS:-0}" = 1 ]; then
     sudo cp out/k27/kc-k27.bin /lib/firmware/xnu/kc.bin
   fi
 fi
+# natives.txt describes kexts to package with an Apple kernelcache. The free
+# collection consumes the generated object manifests directly instead.
+if [ ! -e out/kc/kc27.bin ]; then rm -f out/k27/natives.txt; fi
 ls -la out/k27/kernel-k27.macho
 sudo cp out/k27/kernel-k27.macho /lib/firmware/xnu/kernel.macho
 sync	# the VM may be stopped from the host right after (tart/krunkit stop): unsynced pages of the collection would be lost

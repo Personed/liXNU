@@ -45,8 +45,12 @@ if [ -f "$GRUB_DEFAULT" ]; then
   echo "GRUB_CMDLINE_LINUX=\"\$GRUB_CMDLINE_LINUX $CMDLINE_ARGS\"" | sudo tee "$G" >/dev/null
 
   BLS_ENABLED=0
-  if [ -d "$BLS_ENTRIES" ] && ! grep -qE '^[[:space:]]*GRUB_ENABLE_BLSCFG=(false|no|0|"false"|'\''false'\'')' "$GRUB_DEFAULT" 2>/dev/null; then
-    BLS_ENABLED=1
+  if [ -d "$BLS_ENTRIES" ]; then
+    BLS_CFG_VAL=$(awk -F= '/^[[:space:]]*GRUB_ENABLE_BLSCFG=/{v=$2; gsub(/["'\''[:space:]]/, "", v); last=v} END{print last}' "$GRUB_DEFAULT" 2>/dev/null || true)
+    case "$BLS_CFG_VAL" in
+      false|no|0) BLS_ENABLED=0 ;;
+      *) BLS_ENABLED=1 ;;
+    esac
   fi
 
   if [ "$BLS_ENABLED" = 1 ]; then
@@ -115,6 +119,10 @@ if [ -f "$GRUB_DEFAULT" ]; then
     done
     if [ -n "$GRUB_CFG" ]; then
       sudo "$GRUB2_MKCONFIG_BIN" -o "$GRUB_CFG" >/dev/null 2>&1
+      if ! sudo grep -qw "mem=$LINUX_MEM" "$GRUB_CFG" 2>/dev/null; then
+        echo "error: '$GRUB_CFG' does not contain 'mem=$LINUX_MEM' after grub2-mkconfig (this distro may ignore $G; add '$CMDLINE_ARGS' to GRUB_CMDLINE_LINUX in $GRUB_DEFAULT and rerun)" >&2
+        exit 1
+      fi
     else
       echo "note: GRUB configuration file not found; add '$CMDLINE_ARGS' to your bootloader's kernel command line manually" >&2
     fi

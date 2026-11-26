@@ -92,8 +92,9 @@ capability disabled until its context switch, memory isolation and exception pat
   OVMF, AppleSMC, AHCI, E1000, USB and VGA arguments. This checked command/device setup only.
 - The x86_64 FKI module now builds against Debian 6.12.118 x86_64 headers. It reports zero execution capabilities,
   and the current XNU startup requires `FKI_CAP_PAC`. `xnu_main.c` and `world.S` still contain AArch64-only code;
-  native macOS execution is not implemented. The separate x86_64 fail-closed XNU stub builds and is exercised in
-  disposable VMs on both feature-complete and feature-limited CPUs; neither run validates native execution.
+  native macOS execution is not implemented. The fail-closed x86_64 XNU stub introduced in PR #47 is extended here
+  with CPU-feature gating and is exercised in disposable VMs on both feature-complete and feature-limited CPUs; neither
+  run validates native execution.
 - ARM64 `fki.ko` and `xnu.ko` cross-compiled against Debian 6.12.118 ARM64 headers. This is a build check, not an ARM64
   runtime smoke test.
 - The disposable feature-complete XNU-stub VM can use `/dev/kvm` where available, but there is still no Tahoe disk and

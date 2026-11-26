@@ -347,7 +347,7 @@ class HostPreflightTests(unittest.TestCase):
             "host_preflight_before_artifact_downloads",
         )
 
-    def test_macos_preflight_writes_decimal_memory_with_large_page_counts(self):
+    def _run_macos_preflight(self, vm_stat_output):
         script = ROOT / "tests" / "puredarwin" / "init-host-report.sh"
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -368,12 +368,8 @@ class HostPreflightTests(unittest.TestCase):
             (fake_bin / "vm_stat").write_text(
                 "#!/bin/sh\n"
                 "cat <<'EOF'\n"
-                "Mach Virtual Memory Statistics: (page size of 4096 bytes)\n"
-                "Pages free: 250000.\n"
-                "Pages inactive: 3000000.\n"
-                "Pages speculative: 100000.\n"
-                "Pages purgeable: 50000.\n"
-                "EOF\n",
+                + vm_stat_output
+                + "\nEOF\n",
                 encoding="utf-8",
             )
             for executable in (fake_bin / "sw_vers", fake_bin / "sysctl", fake_bin / "vm_stat"):
@@ -385,15 +381,44 @@ class HostPreflightTests(unittest.TestCase):
             env["XNULINUX_RUNNER_LABEL"] = "macos-report-test"
             env["PATH"] = str(fake_bin) + os.pathsep + env["PATH"]
             subprocess.run(["bash", str(script)], check=True, env=env, capture_output=True, text=True)
-            report = json.loads(
+            return json.loads(
                 (root / "puredarwin-tcg-boot-report.json").read_text(encoding="utf-8")
             )
+
+    def test_macos_preflight_writes_decimal_memory_with_large_page_counts(self):
+        report = self._run_macos_preflight(
+            "Mach Virtual Memory Statistics: (page size of 4096 bytes)\n"
+            "Pages free: 250000.\n"
+            "Pages inactive: 3000000.\n"
+            "Pages speculative: 100000.\n"
+            "Pages purgeable: 50000."
+        )
 
         host = report["host"]
         self.assertEqual(host["system"], "Darwin")
         self.assertEqual(host["memory_total_bytes"], 17179869184)
         self.assertEqual(host["memory_available_bytes"], (250000 + 3000000 + 100000 + 50000) * 4096)
         self.assertIsInstance(host["memory_available_bytes"], int)
+
+    def test_macos_preflight_reports_null_when_vm_stat_has_no_page_counts(self):
+        report = self._run_macos_preflight(
+            "Mach Virtual Memory Statistics: (page size of 4096 bytes)\n"
+            "Page sizes: 4096 bytes"
+        )
+
+        host = report["host"]
+        capacity = report["ram_capacity"]
+        self.assertIsNone(host["memory_available_bytes"])
+        self.assertIsNone(host["memory_available_at_report_bytes"])
+        self.assertFalse(capacity["capacity_screen_passed"])
+        self.assertIn(
+            "host physical RAM is below 20 GiB (16 GiB guest plus 4 GiB host headroom)",
+            capacity["reasons"],
+        )
+        self.assertIn(
+            "available RAM before QEMU is below the 4 GiB host-headroom allowance",
+            capacity["reasons"],
+        )
 
 
 if __name__ == "__main__":

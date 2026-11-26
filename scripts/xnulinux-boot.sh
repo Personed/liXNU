@@ -68,6 +68,7 @@ check_host() {
 }
 
 # Check before reading the disk configuration, building modules or changing host state.
+export PATH="$PATH:/usr/sbin:/sbin"
 KERNEL_RELEASE=$(uname -r)
 K=/lib/modules/$KERNEL_RELEASE/build
 check_host

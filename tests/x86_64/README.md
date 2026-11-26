@@ -38,8 +38,11 @@ tied to the canonical source path, format, and a SHA-256 sidecar. If file metada
 contents: identical restored bytes reuse the overlay, but changed bytes fail before QEMU starts. Hashing reads the full
 source image on its first launch and after metadata changes; later launches with unchanged metadata skip the read.
 Restore the matching base image or set a new `STATE_DIR` to start fresh. `--check` validates requirements without
-creating state files. An unassociated overlay from an earlier launcher stops startup with migration guidance. Do not
-select a managed qcow2 overlay as `DISK` with the same `STATE_DIR`; use the original base, or choose another state
+creating state files; disk-to-state association is checked at launch. The `.base` sidecar identifies launcher-owned
+`disk-<20 hex>.qcow2` overlays, so a user-prepared qcow2 source with the same filename pattern is accepted when it has
+no matching sidecar. An unassociated overlay from an earlier launcher stops startup with migration guidance. Existing
+overlays can be stored on another volume and symlinked into `STATE_DIR` when the link resolves to a regular file. Do
+not select a managed qcow2 overlay as `DISK` with the same `STATE_DIR`; use the original base, or choose another state
 directory to fork it intentionally.
 
 ## Development tests
@@ -62,7 +65,8 @@ they are not pass/fail tests for the selected QEMU/KVM path.
 - The fake-QEMU launcher suite passes preflight errors, TCG and KVM argument construction, paths containing spaces and
   commas, SMC config permissions/redaction/cleanup, source-disk immutability, same-content base restoration, rejection
   of changed base contents, detection of unassociated legacy overlays, rejection of a managed overlay selected as its
-  own base, and a hash-named disk stored inside a symlinked `STATE_DIR`.
+  own base, a backed qcow2 source with an overlay-shaped filename, an overlay symlinked from another volume, and a
+  hash-named disk stored inside a symlinked `STATE_DIR`.
 - QEMU 10.0.13 booted a disposable Debian 6.12.118 x86_64 guest with a BusyBox initramfs under TCG. The guest printed
   `XNU_LINUX_TCG_BOOTED` and powered off cleanly.
 - The actual QEMU 10.0.13 launcher passed `--check` with real `qemu-img`, and a paused TCG invocation accepted its Q35,

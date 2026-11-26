@@ -182,9 +182,12 @@ fi
 STATE_DIR_REAL="$(realpath -e -- "$STATE_DIR")" || fail "could not resolve STATE_DIR: $STATE_DIR"
 DISK_FILENAME="${DISK_PATH##*/}"
 if [[ "$DISK_FORMAT" == qcow2 && "$(dirname -- "$DISK_PATH")" == "$STATE_DIR_REAL" \
-    && "$DISK_FILENAME" =~ ^disk-[a-f0-9]{20}\.qcow2$ ]] \
-    && grep -Eq '^backing file:[[:space:]]+' <<<"$QEMU_IMG_INFO"; then
-  fail "DISK points to an xnulinux-managed overlay in STATE_DIR: $DISK_PATH (use the original base image with this state directory, or choose a separate STATE_DIR to fork the image)"
+    && "$DISK_FILENAME" =~ ^disk-[a-f0-9]{20}\.qcow2$ ]]; then
+  SOURCE_OVERLAY_META="${DISK_PATH%.qcow2}.base"
+  if [[ -f "$SOURCE_OVERLAY_META" && ! -L "$SOURCE_OVERLAY_META" ]] \
+      && grep -Eq '^backing file:[[:space:]]+' <<<"$QEMU_IMG_INFO"; then
+    fail "DISK points to an xnulinux-managed overlay in STATE_DIR: $DISK_PATH (use the original base image with this state directory, or choose a separate STATE_DIR to fork the image)"
+  fi
 fi
 
 # This directory owns one VM's disk overlay. Catch legacy overlays from prior
@@ -205,7 +208,13 @@ for existing_overlay in "$STATE_DIR"/disk-*.qcow2; do
   fi
 done
 
-if [[ -L "$DISK_OVERLAY" || ( -e "$DISK_OVERLAY" && ! -f "$DISK_OVERLAY" ) ]]; then
+if [[ -L "$DISK_OVERLAY" ]]; then
+  [[ -f "$DISK_OVERLAY" ]] || fail "disk overlay symlink does not resolve to a regular file: $DISK_OVERLAY"
+  DISK_OVERLAY_REALPATH="$(realpath -e -- "$DISK_OVERLAY")" \
+    || fail "could not resolve disk overlay symlink: $DISK_OVERLAY"
+  [[ "$DISK_OVERLAY_REALPATH" != "$DISK_PATH" ]] \
+    || fail "disk overlay symlink resolves to DISK: $DISK_OVERLAY"
+elif [[ -e "$DISK_OVERLAY" && ! -f "$DISK_OVERLAY" ]]; then
   fail "disk overlay is not a regular file: $DISK_OVERLAY"
 fi
 

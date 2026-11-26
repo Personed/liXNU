@@ -195,9 +195,12 @@ assert_contains "$LEGACY_OVERLAY_OUTPUT" 'unassociated disk overlay exists in ST
 
 SAVED_OVERLAY_STATE_DIR="$TMP_DIR/saved overlay selected as disk"
 SAVED_OVERLAY_DISK="$SAVED_OVERLAY_STATE_DIR/disk-0123456789abcdefabcd.qcow2"
+SAVED_OVERLAY_META="${SAVED_OVERLAY_DISK%.qcow2}.base"
 SAVED_OVERLAY_OUTPUT="$TMP_DIR/saved-overlay-as-source.out"
 mkdir -p -- "$SAVED_OVERLAY_STATE_DIR"
 printf 'fake saved qcow2 overlay\n' >"$SAVED_OVERLAY_DISK"
+printf 'version=1\nformat=qcow2\nstat=%s\nsha256=%s\n' \
+  "$(stat -Lc '%d:%i:%s:%y:%z' -- "$DISK")" "$(sha256sum -- "$DISK" | awk '{print $1}')" >"$SAVED_OVERLAY_META"
 if env "${BASE_ENV[@]}" DISK="$SAVED_OVERLAY_DISK" DISK_FORMAT=qcow2 STATE_DIR="$SAVED_OVERLAY_STATE_DIR" \
   QEMU_IMG_BACKED_DISK="$SAVED_OVERLAY_DISK" ACCEL=tcg "$LAUNCHER" >"$SAVED_OVERLAY_OUTPUT" 2>&1; then
   fail 'managed qcow2 overlay unexpectedly started as a new base disk'
@@ -342,6 +345,18 @@ assert args[args.index("-cpu") + 1] == "host"
 print("fake KVM argument contract passed")
 PY
 
+# An existing overlay may live on another volume and be linked into STATE_DIR.
+PRIMARY_OVERLAY="$(find "$STATE_DIR" -maxdepth 1 -type f -name 'disk-*.qcow2' -print -quit)"
+[[ -n "$PRIMARY_OVERLAY" ]] || fail 'primary overlay was not created'
+EXTERNAL_OVERLAY="$TMP_DIR/external disk overlay.qcow2"
+mv -- "$PRIMARY_OVERLAY" "$EXTERNAL_OVERLAY"
+ln -s -- "$EXTERNAL_OVERLAY" "$PRIMARY_OVERLAY"
+env "${BASE_ENV[@]}" ACCEL=tcg "$LAUNCHER" >"$TMP_DIR/symlinked-overlay.out" 2>&1 || {
+  cat "$TMP_DIR/symlinked-overlay.out" >&2
+  fail 'valid symlinked disk overlay was rejected'
+}
+[[ "$(<"$QEMU_IMG_COUNT")" == 1 ]] || fail 'symlinked overlay was recreated instead of reused'
+
 # A changed base is a hard error before the guest starts, preserving the
 # existing overlay and making the recovery choice explicit.
 printf 'changed base image content\n' >"$DISK"
@@ -363,7 +378,8 @@ SOURCE_STATE_IMG_COUNT="$TMP_DIR/source state qemu-img count"
 mkdir -p -- "$SOURCE_STATE_DIR"
 ln -s -- "$SOURCE_STATE_DIR" "$SOURCE_STATE_ALIAS"
 printf 'source image stored next to VM state\n' >"$SOURCE_DISK_IN_STATE"
-env "${BASE_ENV[@]}" DISK="$SOURCE_DISK_IN_STATE" STATE_DIR="$SOURCE_STATE_ALIAS" QEMU_IMG_COUNT="$SOURCE_STATE_IMG_COUNT" ACCEL=tcg \
+env "${BASE_ENV[@]}" DISK="$SOURCE_DISK_IN_STATE" DISK_FORMAT=qcow2 STATE_DIR="$SOURCE_STATE_ALIAS" \
+  QEMU_IMG_BACKED_DISK="$SOURCE_DISK_IN_STATE" QEMU_IMG_COUNT="$SOURCE_STATE_IMG_COUNT" ACCEL=tcg \
   "$LAUNCHER" >"$TMP_DIR/source-in-state.out" 2>&1 || {
   cat "$TMP_DIR/source-in-state.out" >&2
   fail 'source disk inside STATE_DIR was mistaken for a legacy overlay'

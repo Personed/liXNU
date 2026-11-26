@@ -85,6 +85,64 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             self.assertEqual(result.returncode, 73, result.stdout)
             self.assertEqual(capture.read_text(encoding="utf-8").strip(), str(vm.resolve()))
 
+    def test_xnu_rebuild_resolves_symlink_with_cdpath_set(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            launch = root / "launch"
+            vm = root / "vm-real"
+            alternate_vm = root / "vm-alternate"
+            fake_bin = root / "bin"
+            launch.mkdir()
+            fake_bin.mkdir()
+            (launch / "vm-link").symlink_to(vm, target_is_directory=True)
+            (root / "vm-link").symlink_to(alternate_vm, target_is_directory=True)
+            (vm / "out/k27/xnu").mkdir(parents=True)
+
+            builder = vm / "k27/build-kernel27.sh"
+            builder.parent.mkdir(parents=True)
+            builder.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n%s\\n' \"$PWD\" \"$DVM\" > \"$DVM_CAPTURE\"\n"
+                "exit 73\n",
+                encoding="utf-8",
+            )
+            builder.chmod(0o755)
+
+            git = fake_bin / "git"
+            git.write_text(
+                "#!/bin/bash\n"
+                "case \"$3\" in\n"
+                "  checkout) exit 1 ;;\n"
+                "  apply) exit 0 ;;\n"
+                "  *) exit 88 ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            git.chmod(0o755)
+
+            capture = root / "vm-paths.txt"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "CDPATH": "..",
+                    "DVM": "vm-link",
+                    "DVM_CAPTURE": str(capture),
+                    "PATH": str(fake_bin) + os.pathsep + env["PATH"],
+                }
+            )
+            result = subprocess.run(
+                ["bash", str(ROOT / "scripts/vm-xnu-rebuild.sh")],
+                cwd=launch,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 73, result.stdout)
+            self.assertEqual(capture.read_text(encoding="utf-8").splitlines(), [str(vm.resolve())] * 2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,6 +3,11 @@
 # On Linux, archive the "Darwin ext4 Root" partition from a PureDarwin arm64 image.
 #   puredarwin-root.sh IMAGE OUT.tar.gz
 set -euo pipefail
+private_mount_namespace=0
+if [ "${1:-}" = '--private-mount-namespace' ]; then
+  private_mount_namespace=1
+  shift
+fi
 if [ "$#" -ne 2 ]; then
   echo "Usage: ${0##*/} IMAGE OUT.tar.gz" >&2
   exit 2
@@ -44,12 +49,30 @@ if [ "$EUID" -ne 0 ]; then
 fi
 export PATH="$PATH:/usr/sbin:/sbin"
 export LC_ALL=C
-for tool in sfdisk python3 losetup mount mountpoint umount e2fsck tune2fs tar mktemp link stat chmod; do
+for tool in sfdisk python3 losetup mount mountpoint umount e2fsck tune2fs tar mktemp link stat chmod mkdir findmnt unshare setpriv id; do
   if ! command -v "$tool" >/dev/null; then
     echo "PureDarwin root export requires $tool." >&2
     exit 1
   fi
 done
+
+# Keep the privileged read-only mount private to this export process. Mounting
+# directly in the host namespace would expose any world-readable guest files
+# through /tmp while the ext4 filesystem is mounted.
+if [ "$private_mount_namespace" -eq 0 ]; then
+  if [ "$EUID" -eq 0 ]; then
+    exec unshare --mount --propagation private -- "$0" --private-mount-namespace "$image" "$output"
+  fi
+  if ! command -v sudo >/dev/null; then
+    echo 'Run as root or install sudo to create a private mount namespace.' >&2
+    exit 1
+  fi
+  caller_uid=$EUID
+  caller_gid=$(id -g)
+  exec sudo unshare --mount --propagation private -- setpriv \
+    --reuid "$caller_uid" --regid "$caller_gid" --init-groups -- \
+    "$0" --private-mount-namespace "$image" "$output"
+fi
 
 partition_table=$(sfdisk --json -- "$image")
 partition=$(python3 -c '
@@ -75,7 +98,7 @@ read -r offset length <<< "$partition"
 mount_dir='' archive_dir='' archive_identity='' archive='' loop='' check_log=''
 cleanup() {
   trap '' INT TERM
-  if [ -n "$mount_dir" ]; then
+  if [ -n "$mount_dir" ] && [ -d "$mount_dir" ]; then
     if mountpoint -q -- "$mount_dir"; then
       if ! "${as_root[@]}" umount -- "$mount_dir"; then
         echo "Could not unmount $mount_dir; leaving the loop device and temporary archive for recovery." >&2
@@ -96,7 +119,8 @@ cleanup() {
       return 1
     fi
   fi
-  if [ -n "$mount_dir" ]; then rmdir -- "$mount_dir" || return 1; mount_dir=''; fi
+  if [ -n "$mount_dir" ] && [ -d "$mount_dir" ]; then rmdir -- "$mount_dir" || return 1; fi
+  mount_dir=''
   if [ -n "$archive" ]; then rm -f -- "$archive" || return 1; archive=''; fi
   if [ -n "$check_log" ]; then rm -f -- "$check_log" || return 1; check_log=''; fi
   if [ -n "$archive_dir" ]; then
@@ -122,7 +146,25 @@ if [ ! -d /tmp ] || [ ! -w /tmp ] || [ ! -k /tmp ]; then
   echo 'PureDarwin root export requires a writable sticky /tmp for its local mount point.' >&2
   exit 1
 fi
-mount_dir=$(mktemp -d -- /tmp/.puredarwin-root-mount.XXXXXXXX)
+tmp_fstype=$(findmnt --target /tmp --noheadings --output FSTYPE)
+case "$tmp_fstype" in
+  nfs|nfs4|cifs|smb3|sshfs|fuse.sshfs|davfs|9p)
+    echo "PureDarwin root export requires /tmp on a local filesystem; found $tmp_fstype." >&2
+    exit 1
+    ;;
+esac
+mount_dir=''
+for attempt in {1..10}; do
+  mount_dir=/tmp/.puredarwin-root-mount.$$.${RANDOM}${RANDOM}
+  if mkdir -m 0700 -- "$mount_dir" 2>/dev/null; then
+    break
+  fi
+  mount_dir=''
+done
+if [ -z "$mount_dir" ]; then
+  echo 'Could not create a unique mount point under /tmp.' >&2
+  exit 1
+fi
 archive_dir=$(mktemp -d -- "$output_dir/.puredarwin-root.XXXXXXXX")
 archive_identity=$(stat -c '%d:%i' -- "$archive_dir")
 CDPATH= cd -P -- "$archive_dir"

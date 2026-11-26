@@ -6,27 +6,67 @@ script=$(cd -- "$(dirname -- "$0")/.." && pwd)/scripts/puredarwin-root.sh
 real_mktemp=$(command -v mktemp)
 real_chmod=$(command -v chmod)
 real_stat=$(command -v stat)
+real_mkdir=$(command -v mkdir)
 tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
 bin=$tmp/bin
 state=$tmp/state
 shared_output=$tmp/shared-output
-mkdir -- "$bin" "$state" "$shared_output"
+alternate_tmp=$tmp/alternate-tmp
+mkdir -- "$bin" "$state" "$shared_output" "$alternate_tmp"
 chmod 2777 -- "$shared_output"
 export TEST_STATE=$state
 export FAKE_LOOP=/dev/loop-codex-test
 export REAL_MKTEMP=$real_mktemp
 export REAL_CHMOD=$real_chmod
 export REAL_STAT=$real_stat
+export REAL_MKDIR=$real_mkdir
+export TMPDIR=$alternate_tmp
 export PATH="$bin:$PATH"
 
 cat >"$bin/sfdisk" <<'WRAPPER'
 #!/bin/sh
 printf '%s\n' '{"partitiontable":{"label":"gpt","sectorsize":512,"partitions":[{"start":2048,"size":2048,"name":"Darwin ext4 Root"}]}}'
 WRAPPER
+cat >"$bin/findmnt" <<'WRAPPER'
+#!/bin/sh
+printf '%s\n' "${TEST_TMP_FSTYPE:-tmpfs}"
+WRAPPER
 cat >"$bin/sudo" <<'WRAPPER'
 #!/bin/sh
 exec "$@"
+WRAPPER
+cat >"$bin/unshare" <<'WRAPPER'
+#!/bin/sh
+while [ "$#" -gt 0 ] && [ "$1" != '--' ]; do shift; done
+[ "$#" -gt 0 ] || exit 2
+shift
+if [ "${1:-}" = setpriv ]; then
+  shift
+  while [ "$#" -gt 0 ] && [ "$1" != '--' ]; do
+    case "$1" in
+      --reuid|--regid) shift 2 ;;
+      --init-groups) shift ;;
+      *) echo "Unexpected setpriv argument: $1" >&2; exit 2 ;;
+    esac
+  done
+  [ "$#" -gt 0 ] || exit 2
+  shift
+fi
+exec "$@"
+WRAPPER
+cat >"$bin/mkdir" <<'WRAPPER'
+#!/bin/sh
+target=''
+for arg in "$@"; do target=$arg; done
+case "$target" in
+  /tmp/.puredarwin-root-mount.*)
+    "$REAL_MKDIR" "$@" || exit
+    printf '%s\n' "$target" >"$TEST_STATE/mount-dir"
+    if [ "${SIGNAL_DURING_MOUNTPOINT_MKDIR:-0}" = 1 ]; then kill -TERM "$PPID"; fi
+    ;;
+  *) exec "$REAL_MKDIR" "$@" ;;
+esac
 WRAPPER
 cat >"$bin/losetup" <<'WRAPPER'
 #!/bin/sh
@@ -52,6 +92,7 @@ WRAPPER
 cat >"$bin/mountpoint" <<'WRAPPER'
 #!/bin/sh
 case "$3" in /*) mount_dir=$3 ;; *) mount_dir=$PWD/$3 ;; esac
+printf '%s\n' "$mount_dir" >"$TEST_STATE/mount-dir"
 if [ -e "$TEST_STATE/mounted" ]; then exit 0; fi
 if [ -d "$3" ]; then exit 32; fi
 exit 1
@@ -76,6 +117,15 @@ cat >"$bin/e2fsck" <<'WRAPPER'
 #!/bin/sh
 printf '%s\n' "$PWD/check.log" >"$TEST_STATE/check-log"
 if [ "${SIGNAL_BEFORE_MOUNT:-0}" = 1 ]; then kill -TERM "$PPID"; fi
+if [ "${REPLACE_DURING_E2FSCK:-0}" = 1 ]; then
+  staging=$(cat "$TEST_STATE/archive-dir")
+  mv -- "$staging" "$staging.original"
+  "$REAL_MKDIR" -m 0700 -- "$staging"
+  "$REAL_CHMOD" 0700 -- "$staging"
+  "$REAL_CHMOD" g-s -- "$staging"
+  printf '%s\n' "$staging" >"$TEST_STATE/cleanup-replacement"
+  exit 1
+fi
 exit 0
 WRAPPER
 cat >"$bin/mktemp" <<'WRAPPER'
@@ -91,7 +141,6 @@ if [ "$1" = '-d' ]; then
         printf '%s\n' "$result.original" >"$TEST_STATE/replaced-stage"
       fi
       ;;
-    *) printf '%s\n' "$result" >"$TEST_STATE/mount-dir" ;;
   esac
 fi
 printf '%s\n' "$result"
@@ -104,7 +153,9 @@ if [ "${REPLACE_AFTER_IDENTITY:-0}" = 1 ] &&
    [ "$4" = "$(cat "$TEST_STATE/archive-dir")" ] &&
    [ ! -e "$TEST_STATE/identity-replaced" ]; then
   mv -- "$4" "$4.original"
-  ln -s -- "$ATTACKER_DIR" "$4"
+  "$REAL_MKDIR" -m 0700 -- "$4"
+  "$REAL_CHMOD" 0700 -- "$4"
+  "$REAL_CHMOD" g-s -- "$4"
   printf '%s\n' "$4.original" >"$TEST_STATE/replaced-stage"
   : >"$TEST_STATE/identity-replaced"
 fi
@@ -124,6 +175,14 @@ chmod +x "$bin/chmod"
 image=$tmp/fake.img
 truncate -s 4194304 "$image"
 output=$shared_output/must-not-exist.tar.gz
+set +e
+TEST_TMP_FSTYPE=nfs4 "$script" "$image" "$output" >"$tmp/nfs-tmp.log" 2>&1
+status=$?
+set -e
+[ "$status" -ne 0 ] || { echo 'Exporter accepted NFS /tmp for its privileged mountpoint' >&2; exit 1; }
+grep -q 'requires /tmp on a local filesystem' "$tmp/nfs-tmp.log"
+[ ! -e "$state/mount-dir" ]
+
 set +e
 "$script" "$image" "$output" >/dev/null 2>&1
 status=$?
@@ -177,6 +236,23 @@ second_check_log=$(cat "$state/check-log")
 
 echo 'PureDarwin root exporter pre-mount signal cleanup test passed.'
 
+# Interrupt while the mountpoint directory is being created, before mkdir
+# returns. The path is already known to the shell, so cleanup must remove it.
+rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/mount-dir" "$state/check-log"
+set +e
+SIGNAL_DURING_MOUNTPOINT_MKDIR=1 "$script" "$image" "$output" >/dev/null 2>&1
+status=$?
+set -e
+[ "$status" -eq 143 ] || { echo "Expected mountpoint-creation SIGTERM exit 143; got $status" >&2; exit 1; }
+mount_dir=$(cat "$state/mount-dir")
+[ "${mount_dir#/tmp/.puredarwin-root-mount.}" != "$mount_dir" ]
+[ ! -e "$mount_dir" ]
+[ ! -e "$state/loop-attached" ]
+[ ! -e "$state/check-log" ]
+[ ! -e "$output" ]
+
+echo 'PureDarwin root exporter mountpoint creation signal cleanup test passed.'
+
 # A signal after mktemp but before clearing setgid must still remove the empty
 # 2700 staging directory using its recorded inode identity.
 rm -f -- "$state/events" "$state/loop-attached" "$state/mounted" "$state/mount-dir" "$state/check-log"
@@ -203,6 +279,7 @@ private_attacker_dir=$tmp/attacker-private
 mkdir -- "$private_attacker_dir"
 chmod 0700 "$private_attacker_dir"
 printf 'private sentinel\n' >"$private_attacker_dir/root.tar.gz"
+printf 'check sentinel\n' >"$private_attacker_dir/check.log"
 rm -f -- "$state/check-log" "$state/identity-replaced" "$state/replaced-stage"
 set +e
 REPLACE_AFTER_IDENTITY=1 ATTACKER_DIR=$private_attacker_dir \
@@ -211,15 +288,37 @@ status=$?
 set -e
 [ "$status" -ne 0 ] || { echo 'Exporter accepted a same-owner staging inode replacement' >&2; exit 1; }
 [ "$(cat "$private_attacker_dir/root.tar.gz")" = 'private sentinel' ]
+[ "$(cat "$private_attacker_dir/check.log")" = 'check sentinel' ]
 [ ! -e "$output" ]
 [ ! -e "$state/check-log" ] || { echo 'Exporter started filesystem validation through a replaced staging inode' >&2; exit 1; }
 replaced_stage=$(cat "$state/replaced-stage")
 [ -d "$replaced_stage" ]
-[ -L "$(cat "$state/archive-dir")" ]
+[ -d "$(cat "$state/archive-dir")" ]
+[ ! -L "$(cat "$state/archive-dir")" ]
 rm -rf -- "$replaced_stage"
-rm -f -- "$(cat "$state/archive-dir")"
+rm -rf -- "$(cat "$state/archive-dir")"
 
 echo 'PureDarwin root exporter same-owner inode replacement test passed.'
+
+# Replace the directory after validation has started. Cleanup must compare the
+# recorded staging identity and leave the new empty 0700 directory untouched.
+rm -f -- "$state/check-log" "$state/archive-dir" "$state/cleanup-replacement" "$state/loop-attached" "$state/mounted"
+set +e
+REPLACE_DURING_E2FSCK=1 "$script" "$image" "$output" >/dev/null 2>&1
+status=$?
+set -e
+[ "$status" -ne 0 ] || { echo 'Exporter unexpectedly completed after staging replacement during cleanup' >&2; exit 1; }
+cleanup_replacement=$(cat "$state/cleanup-replacement")
+[ -d "$cleanup_replacement" ]
+[ ! -L "$cleanup_replacement" ]
+[ "$(stat -c '%a' -- "$cleanup_replacement")" = 700 ]
+[ -z "$(find "$cleanup_replacement" -mindepth 1 -print -quit)" ]
+cleanup_original=$(cat "$state/archive-dir").original
+[ -d "$cleanup_original" ]
+rm -rf -- "$cleanup_original"
+rmdir -- "$cleanup_replacement"
+
+echo 'PureDarwin root exporter cleanup inode replacement test passed.'
 
 # An attacker-controlled replacement directory in the shared output parent
 # must be rejected before the exporter writes its archive or e2fsck log.

@@ -98,6 +98,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                 "printf '%s\\0' \"$@\" >> \"$PYTHON_CAPTURE\"\n"
                 "case \"$1\" in\n"
                 "  */kclink.py)\n"
+                "    pwd -P > \"$KCLINK_CWD_CAPTURE\"\n"
                 "    mkdir -p -- \"$(dirname -- \"$4\")\"\n"
                 "    printf 'fake kernel collection\\n' > \"$4\"\n"
                 "    printf 'wrote %s\\n' \"$4\"\n"
@@ -127,6 +128,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             env.update(
                 {
                     "DVM": "../vm with spaces",
+                    "KCLINK_CWD_CAPTURE": str(root / "kclink-cwd.txt"),
                     "PYTHON_CAPTURE": str(python_capture),
                     "STRINGS_CAPTURE": str(strings_capture),
                     "FAKE_PD_REV": pd_revision,
@@ -175,6 +177,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             ]
             self.assertEqual(strings_arguments, [str(vm.resolve() / "out/k27/kernel-k27.macho")])
             kclink = next(arguments for arguments in calls if arguments[0].endswith("/kclink.py"))
+            self.assertEqual((root / "kclink-cwd.txt").read_text().strip(), str(vm.resolve()))
             self.assertEqual(kclink[1], str(work.resolve() / "kc-template.bin"))
             self.assertEqual(kclink[3], str(work.resolve() / "kc-free.bin"))
             self.assertEqual(kclink[4], "--native")

@@ -49,7 +49,8 @@ the guest's own `halt`, XNU module unload, and Linux power-off. Each host report
 input hashes, the build and guest manifests, preparation step outcomes, missing boot markers, and serial/QEMU output
 tails; reports and the two source manifests are retained for 30 days. It records the RAM capacity-screen phase in
 `ram_capacity.measurement_phase`: native preflight before artifact downloads if the Python runner never writes a
-report, or Python after preparation and immediately before QEMU if it does. The separate
+report, or at Python-runner entry after downloads and setup but before input hashing, manifest validation, and the
+QEMU version check if it does. The Python sample is not taken immediately before QEMU starts. The separate
 `host.memory_available_at_report_phase` identifies when the final available-RAM snapshot was taken (preflight,
 pre-QEMU validation failure, QEMU start failure/timeout, or after QEMU exits). These are snapshots, not peak readings.
 Artifact-download and Python/QEMU setup failures continue to the report step so missing inputs or tools can be

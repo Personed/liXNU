@@ -185,11 +185,123 @@ class BootRunnerFailureTests(unittest.TestCase):
         )
         self.assertEqual(
             report["ram_capacity"]["measurement_phase"],
-            "python_runner_after_preparation_before_qemu",
+            "python_runner_start_before_input_hashing",
         )
         self.assertEqual(
             report["host"]["memory_available_at_report_phase"],
             "validation_failed_before_qemu",
+        )
+
+    def test_invalid_utf8_manifest_is_retained_in_host_report(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            kernel = root / "Image"
+            initramfs = root / "initramfs.cpio.gz"
+            disk = root / "pd.img"
+            serial_log = root / "serial.log"
+            kernel.write_bytes(b"kernel image")
+            initramfs.write_bytes(b"initramfs")
+            disk.write_bytes(b"PureDarwin disk")
+            (root / "build-manifest.txt").write_text(
+                f"puredarwin_disk_sha256={RUNNER.sha256_file(disk)}\n", encoding="utf-8"
+            )
+            (root / "guest-manifest.txt").write_bytes(b"invalid-utf8=\xff\n")
+            report_path = root / "puredarwin-tcg-boot-report.json"
+            fake_host = {
+                "system": "Linux", "release": "test", "version": "test",
+                "architecture": "x86_64", "processor": "test CPU", "logical_cpus": 4,
+                "memory_total_bytes": 24 * 1024**3, "memory_available_bytes": 8 * 1024**3,
+            }
+            argv = [
+                str(ROOT / "tests" / "puredarwin" / "run-tcg-e2e.py"),
+                str(kernel), str(initramfs), str(disk), str(serial_log),
+                "--qemu", "missing-qemu-for-test",
+            ]
+            env = {
+                "RUNNER_TEMP": temp_dir,
+                "XNULINUX_RUNNER_LABEL": "invalid-manifest-test",
+                "GITHUB_STEP_SUMMARY": str(root / "summary.md"),
+            }
+
+            with mock.patch.dict(os.environ, env, clear=False), \
+                 mock.patch.object(sys, "argv", argv), \
+                 mock.patch.object(RUNNER, "host_facts", return_value=fake_host), \
+                 mock.patch.object(RUNNER.shutil, "which", return_value=None), \
+                 contextlib.redirect_stdout(io.StringIO()), \
+                 contextlib.redirect_stderr(io.StringIO()):
+                result = RUNNER.main()
+
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result, 1)
+        self.assertTrue(
+            any("guest-manifest.txt is not valid UTF-8" in error for error in report["result"]["errors"])
+        )
+        self.assertIn("guest-manifest.txt is not valid UTF-8", report["manifests"]["guest"]["contents"])
+
+    def test_mismatched_kernel_hash_does_not_start_qemu_vm(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            kernel = root / "Image"
+            initramfs = root / "initramfs.cpio.gz"
+            disk = root / "pd.img"
+            serial_log = root / "serial.log"
+            kernel.write_bytes(b"kernel image")
+            initramfs.write_bytes(b"initramfs")
+            disk.write_bytes(b"PureDarwin disk")
+            (root / "build-manifest.txt").write_text(
+                f"puredarwin_disk_sha256={RUNNER.sha256_file(disk)}\n", encoding="utf-8"
+            )
+            (root / "guest-manifest.txt").write_text(
+                "\n".join(
+                    [
+                        "arm64_guest_kernel_release=7.0.0-44-generic",
+                        "arm64_guest_page_size=4096",
+                        "arm64_guest_pac=runtime checked",
+                        "arm64_guest_exception_level=EL1",
+                        "arm64_guest_image_sha256=" + "0" * 64,
+                        f"arm64_guest_initramfs_sha256={RUNNER.sha256_file(initramfs)}",
+                    ]
+                ) + "\n",
+                encoding="utf-8",
+            )
+            report_path = root / "puredarwin-tcg-boot-report.json"
+            fake_host = {
+                "system": "Linux", "release": "test", "version": "test",
+                "architecture": "x86_64", "processor": "test CPU", "logical_cpus": 4,
+                "memory_total_bytes": 24 * 1024**3, "memory_available_bytes": 8 * 1024**3,
+            }
+            argv = [
+                str(ROOT / "tests" / "puredarwin" / "run-tcg-e2e.py"),
+                str(kernel), str(initramfs), str(disk), str(serial_log), "--qemu", "qemu-test",
+            ]
+            env = {
+                "RUNNER_TEMP": temp_dir,
+                "XNULINUX_RUNNER_LABEL": "hash-mismatch-test",
+                "GITHUB_STEP_SUMMARY": str(root / "summary.md"),
+            }
+            version_result = mock.Mock(stdout="QEMU test version", stderr="")
+
+            with mock.patch.dict(os.environ, env, clear=False), \
+                 mock.patch.object(sys, "argv", argv), \
+                 mock.patch.object(RUNNER, "host_facts", return_value=fake_host), \
+                 mock.patch.object(RUNNER.shutil, "which", return_value="/fake/qemu"), \
+                 mock.patch.object(RUNNER.subprocess, "run", return_value=version_result) as qemu_run, \
+                 contextlib.redirect_stdout(io.StringIO()), \
+                 contextlib.redirect_stderr(io.StringIO()):
+                result = RUNNER.main()
+
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result, 1)
+        self.assertTrue(
+            any(
+                "ARM64 guest kernel SHA-256 does not match its manifest" in error
+                for error in report["result"]["errors"]
+            )
+        )
+        qemu_run.assert_called_once_with(
+            ["/fake/qemu", "--version"], check=False, text=True, capture_output=True
         )
 
 

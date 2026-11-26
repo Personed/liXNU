@@ -36,6 +36,7 @@ GUEST_INPUT_HASHES = {
     "arm64_guest_image_sha256": ("kernel_sha256", "ARM64 guest kernel"),
     "arm64_guest_initramfs_sha256": ("initramfs_sha256", "ARM64 guest initramfs"),
 }
+MANIFEST_READ_ERROR_PREFIX = "[manifest read error: "
 
 
 def command_output(command: list[str]) -> str:
@@ -156,9 +157,11 @@ def sha256_if_readable_file(path: Path) -> str | None:
 
 def read_manifest(path: Path) -> tuple[str | None, dict[str, str]]:
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = path.read_bytes().decode("utf-8")
     except OSError:
         return None, {}
+    except UnicodeDecodeError as error:
+        return f"{MANIFEST_READ_ERROR_PREFIX}{path.name} is not valid UTF-8: {error}]", {}
     values = {}
     for line in raw.splitlines():
         key, separator, value = line.partition("=")
@@ -291,6 +294,8 @@ def manifest_input_errors(
 
     if not build_manifest_text:
         errors.append("build-manifest.txt is missing")
+    elif build_manifest_text.startswith(MANIFEST_READ_ERROR_PREFIX):
+        errors.append(build_manifest_text[1:-1])
     else:
         compare_manifest_digest(
             errors,
@@ -301,6 +306,8 @@ def manifest_input_errors(
 
     if not guest_manifest_text:
         errors.append("guest-manifest.txt is missing")
+    elif guest_manifest_text.startswith(MANIFEST_READ_ERROR_PREFIX):
+        errors.append(guest_manifest_text[1:-1])
     else:
         for key in (
             "arm64_guest_kernel_release",
@@ -350,7 +357,7 @@ def main() -> int:
     report = {
         "runner_label": os.environ.get("XNULINUX_RUNNER_LABEL", "local"),
         "host": host,
-        "ram_capacity": ram_capacity(host, "python_runner_after_preparation_before_qemu"),
+        "ram_capacity": ram_capacity(host, "python_runner_start_before_input_hashing"),
         "qemu_version": "unavailable",
         "profile": PROFILE,
         "inputs": input_hashes,

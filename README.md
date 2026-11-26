@@ -1,17 +1,20 @@
 # xnulinux
 
-Run Darwin userspace on Linux. The active portability target is an x86-64 PC using QEMU TCG to boot an ARM64 Linux guest, then xnulinux's FKI/XNU path to reach the PureDarwin console.
+Run macOS on Intel and AMD x86_64 PCs through QEMU/KVM while preserving xnulinux's direct ARM64 hosted-XNU path. The x86_64 target is a user-prepared macOS Tahoe 26 guest, the latest macOS release compatible with Intel; the ARM64 kernel modules are not loaded on the x86_64 host.
 
 On ARM64, xnulinux builds XNU, the open-source kernel of macOS, from Apple's published sources and runs it as a loadable kernel
 module (`xnu.ko`) inside an unmodified arm64 Linux kernel. The hosted XNU drives the CPU and MMU directly, so macOS
 processes run natively next to Linux processes on the same CPUs. Linux lends XNU its memory, timers, files, network and
 GPU through a small interface module (`fki.ko`).
 
-On x86_64 PCs, QEMU TCG runs the ARM64 Linux guest; `fki.ko` and `xnu.ko` run inside that guest. Firmware, Linux userspace,
-the XNU module probe, and a PureDarwin console are separate validation stages.
+On x86_64 PCs, the primary target is a macOS Tahoe 26 x86_64 guest under QEMU/KVM. The project launcher and automated
+checks are experimental until the guest reaches the desktop on physical Intel and AMD hosts and passes host-integrity
+and clean-shutdown checks.
 
-A separate experimental path runs a user-prepared Tahoe 26 guest with QEMU/KVM. It does not load the ARM64-only project
-modules on x86_64 and does not count as validation of the x86-64 → ARM64 Linux → PureDarwin target.
+QEMU TCG can also run an ARM64 Linux guest on an x86_64 PC, where `fki.ko` and `xnu.ko` run inside that guest. This is a
+complementary development profile for PureDarwin, not a macOS/KVM result. Firmware, Linux userspace, the XNU module
+probe, the PureDarwin console, and a macOS desktop are separate validation stages; see
+[`docs/portability-validation.md`](docs/portability-validation.md).
 
 On a supported ARM64 host with a stock Ubuntu kernel, `insmod xnu.ko` boots a macOS 27 system disk made by Apple's own installer to the
 desktop: loginwindow, WindowServer, Dock, Finder, Safari and Chrome.
@@ -97,9 +100,12 @@ Working on two arm64 Linux setups:
 | Intel x86_64 with VT-x/KVM and required CPU features | macOS Tahoe 26 x86_64 | Experimental QEMU/KVM launcher; physical Intel desktop boot and host-integrity acceptance remain. |
 | AMD x86_64 with AMD-V/KVM and required CPU features | macOS Tahoe 26 x86_64 | Experimental QEMU/KVM launcher; requires AMD OpenCore kernel patches and physical AMD acceptance. |
 
-The x86_64 launcher and test harness are present, but neither x86_64 host row is a support claim yet. TCG runs validate
-only a disposable Linux guest; support requires a Tahoe desktop boot and Linux host-integrity checks on physical Intel
-and AMD hardware. See [`tests/x86_64/README.md`](tests/x86_64/README.md) for setup and current evidence.
+The x86_64 launcher and test harness are present, but neither x86_64 host row is a support claim yet. Tahoe desktop boots
+and Linux host-integrity checks still need physical Intel and AMD validation. The x86_64 TCG smoke boots Linux only; the
+separate ARM64 module-probe workflow reaches XNU's firmware-loader request but not a PureDarwin console. Neither TCG
+result establishes Tahoe/KVM support. See
+[`tests/x86_64/README.md`](tests/x86_64/README.md) and [`docs/portability-validation.md`](docs/portability-validation.md)
+for setup and stage-specific evidence.
 
 Shipping it as a hosted service (what is distributed, what a user installs to run Apple's macOS) is in
 [`docs/hosted-service.md`](docs/hosted-service.md).
@@ -153,7 +159,7 @@ the system volume, AMFI is patched and SIP relaxed, and memory access is slower 
 6. GPU (optional, on the Mac): `gpu/venus/build-darwin.sh` builds the hosted Vulkan driver, `gpu/xnu-cpu-metal/` the
    Metal plugin (see its README).
 
-### Experimental x86_64 guest
+### x86_64 macOS guest (QEMU/KVM)
 
 This path requires a bootable image prepared separately by the user. QEMU writes macOS changes to a persistent qcow2
 overlay under `$XDG_STATE_HOME/xnulinux/x86_64` when `XDG_STATE_HOME` is set, or `~/.local/state/xnulinux/x86_64`

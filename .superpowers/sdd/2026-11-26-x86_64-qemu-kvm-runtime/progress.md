@@ -10,7 +10,7 @@ Task 1: Ruling: Bind a persistent overlay to a source-image SHA-256 recorded in 
 
 Task 1: Ruling: Pass the local Apple SMC OSK through a mode-0600 temporary QEMU config instead of process arguments or environment — this reduces exposure through process listings and environment inspection — cost if wrong: QEMU must support `-readconfig` for the Apple SMC device configuration.
 
-Project workflow ruling: A green PR is ready for review but is not permission to merge. Do not merge, enable auto-merge, or change review gates without explicit user authorization.
+Project workflow ruling: The owner explicitly authorized merging PRs once all required automated checks are green, without waiting for human review. Pending or failed required checks still block a merge.
 
 Pre-flight: Task 1 produces launcher flags and disk/state paths consumed by Task 3 documentation; Task 2 produces the TCG smoke invocation and evidence consumed by Task 3. No direct code interfaces are shared by Tasks 1 and 2. Task 4 consumes Task 3's evidence matrix and real hardware requirements.
 
@@ -18,6 +18,6 @@ Task 1: complete — fake-QEMU tests cover preflight errors, CPU/KVM gating, TCG
 
 Task 2: complete — fake harness tests pass; the disposable Debian 6.12.118 guest booted with QEMU 10.0.13 TCG. This is Linux-only development evidence.
 
-Task 3: in progress — split support documentation, continuous PR-comment coordination, explicit-authorization merge policy, PR template, and x86_64 launcher CI are in place. Local shell tests and Linux 6.12 ARM64 cross-build pass; GitHub's Ubuntu 7.0 ARM64 build exposed and is rerunning the 6.19 API compatibility fix.
+Task 3: in progress — documentation separates the x86_64 Tahoe 26 QEMU/KVM guest from the complementary ARM64 TCG/PureDarwin profile, preserves ARM64 direct hosting, records visible PR-comment coordination, and applies the owner's green-check merge authorization. The current x86_64 launcher and ARM64 module checks for this PR are queued; local launcher and TCG harness checks are recorded in the PR.
 
-Task 4: pending physical Intel/AMD and user-prepared Tahoe disk acceptance for the separate QEMU/KVM macOS experiment; this is not the active PureDarwin portability target.
+Task 4: pending physical Intel and AMD Tahoe 26 desktop boots, host-integrity/shutdown checks, and a user-prepared Tahoe disk. The ARM64 TCG/PureDarwin route is complementary and does not replace this x86_64 acceptance.

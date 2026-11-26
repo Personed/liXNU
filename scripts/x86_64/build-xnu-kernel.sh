@@ -275,7 +275,6 @@ verify_trustcache_header() {
   local sdk_root="$1"
   local sdk_header="$sdk_root/usr/local/include/TrustCache/API.h"
   local sdk_framework_header="$sdk_root/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/TrustCache/API.h"
-  local sdk_public_header="$sdk_root/usr/include/TrustCache/API.h"
   if [[ "$KDK_PRESENT" == true ]]; then
     [[ -s "$KDK_TRUSTCACHE_HEADER" ]] \
       || fail "matching KDK TrustCache API header disappeared: $KDK_TRUSTCACHE_HEADER"
@@ -287,13 +286,11 @@ verify_trustcache_header() {
   elif [[ -s "$sdk_framework_header" ]]; then
     TRUSTCACHE_HEADER="$sdk_framework_header"
     TRUSTCACHE_HEADER_SOURCE='pinned-xcode-sdk'
-  elif [[ -s "$sdk_public_header" ]]; then
-    TRUSTCACHE_HEADER="$sdk_public_header"
-    TRUSTCACHE_HEADER_SOURCE='pinned-xcode-sdk'
   else
-    printf 'trustcache_header_status=missing\nchecked_sdk_paths=%s|%s|%s\n' \
-      "$sdk_header" "$sdk_framework_header" "$sdk_public_header" >> "$KDK_DIAGNOSTIC_TARGET"
-    fail "XNU source requires real TrustCache/API.h, absent from the macOS $SDK_VERSION SDK and no matching KDK is available; no header stub will be used (checked $sdk_header, $sdk_framework_header, and $sdk_public_header)"
+    local sdk_usr_include_header="$sdk_root/usr/include/TrustCache/API.h"
+    printf 'trustcache_header_status=missing\nchecked_target_search_paths=%s|%s\nunsupported_public_sdk_path=%s\n' \
+      "$sdk_header" "$sdk_framework_header" "$sdk_usr_include_header" >> "$KDK_DIAGNOSTIC_TARGET"
+    fail "XNU source requires real TrustCache/API.h in the target's explicit include paths; none exists in the macOS $SDK_VERSION SDK and no matching KDK is available. A copy under usr/include is not accepted because this target uses -nostdlibinc and does not search that tree; no header stub will be used (checked $sdk_header and $sdk_framework_header; unsupported path $sdk_usr_include_header)"
   fi
   TRUSTCACHE_HEADER_SHA256="$(shasum -a 256 "$TRUSTCACHE_HEADER" | awk '{print $1}')"
   [[ "$TRUSTCACHE_HEADER_SHA256" =~ ^[[:xdigit:]]{64}$ ]] \

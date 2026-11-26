@@ -12,7 +12,7 @@ Darwin userspace ran. A PureDarwin shell does not establish macOS compatibility.
 | FKI configuration | FKI loads with the requested `carve_base` and `carve_mb`; reading those parameters confirms configuration only, not that the reserved pages can be allocated. |
 | FKI carve-out allocation | A probe requests a known size and records the returned `region.pa` and `region.size`; use the returned length because FKI may round allocations up to 2 MiB. Verify `[region.pa, region.pa + region.size)` is fully inside `[carve_base, carve_base + (carve_mb << 20))`. Then free and repeat without reloading FKI, verifying both the physical start and returned length are reused. Record the request, returned interval, and configured bounds. This validates allocation and reuse for the tested profile only. |
 | XNU module probe | `xnu.ko` resolves its FKI dependencies and reaches the expected missing-image error. This checks the module and loader path without a real collection; it does not show that XNU allocated from the carve-out. |
-| XNU uses the carve-out | With a compatible collection loaded, capture `xnu: contiguous DRAM at phys` and `xnu: contiguous DRAM size` plus evidence that XNU executed in the same boot attempt (for example, `xnu: XNU enters user space` or hosted Darwin console output after `arm_init`). Mark this stage only when the complete returned DRAM interval lies inside the configured carve-out. The DRAM allocation log alone proves allocation, not that XNU ran; the separate FKI probe above does not establish this stage. |
+| XNU uses the carve-out | With a compatible collection loaded, preserve the same-attempt kernel log containing `xnu: contiguous DRAM at phys` and `xnu: contiguous DRAM size`, plus evidence that XNU executed in that boot attempt (for example, `xnu: XNU enters user space` or hosted Darwin console output after `arm_init`). Mark this stage only when the complete returned DRAM interval lies inside the configured carve-out. Capturing only the filtered `fki: darwin console:` stream omits the DRAM interval; the DRAM allocation log alone proves allocation, not that XNU ran. The separate FKI probe above does not establish this stage. |
 | PureDarwin userspace | The real, paired PureDarwin disk and free kernel collection boot; execute a command on the Darwin console and observe the result. Record a clean halt separately. |
 | macOS desktop | A user-provided compatible macOS disk and collection reach an interactive desktop; record input, rendering backend, and networking separately. |
 
@@ -74,9 +74,11 @@ Report the profile alongside the stage:
    of the collection and pristine disk. Use the disk's matching UUID file.
    [#4], [#5] and [#7] track work on build and image preparation; a fixture disk
    used to test extraction or partitioning is not a bootable test image.
-4. In one Linux terminal, capture output that originates from the hosted console:
+4. In one Linux terminal, capture the complete live kernel log from the boot attempt.
+   Keep this unfiltered log so the XNU DRAM interval and execution messages are not
+   discarded; the `fki: darwin console:` lines are included in the same capture.
    ```sh
-   sudo journalctl -kf -n 0 -o cat | grep --line-buffered 'fki: darwin console:'
+   sudo journalctl -kf -n 0 -o cat | tee /var/tmp/xnulinux-kernel.log
    ```
    In a second terminal at the checkout, point the boot script to the absolute
    paths for your disk and UUID file. Set `RAM_MB` to a tested value that fits

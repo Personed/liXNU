@@ -10,9 +10,11 @@ The launcher needs Python 3, `qemu-system-aarch64`, and a matching pair of AArch
 variable-store images. Use one writable copy of the variables image per VM. The defaults are 4
 guest CPUs and 16 GiB of guest RAM. Allow additional RAM for the physical host.
 
-The current complete PureDarwin reference profile assigns 16 GiB to the ARM64 guest. Plan for at
-least 20 GiB of physical host RAM and 4 GiB available before starting QEMU. This is a planning
-screen from virtualized CI results, not a measured minimum; the physical RAM floor is not known.
+The current complete PureDarwin reference profile assigns 16 GiB to the ARM64 guest. Before
+preparing its artifacts, record the total and available RAM visible to the operating system that
+will run QEMU. The CI planning screen is at least 20 GiB total and 4 GiB available. On a
+virtualized host, these values describe the runner OS and do not establish the outer machine's
+physical RAM. This is a planning screen, not a measured minimum; the physical RAM floor is unknown.
 See the [validation matrix](portability-validation.md) for the evidence and limits.
 
 ## Tested host and guest architectures
@@ -29,9 +31,12 @@ Use an ARM64 Ubuntu Server ISO and a disk big enough for the Linux build environ
 PureDarwin or macOS disk. On Ubuntu or Debian, install `qemu-system-arm`, `qemu-efi-aarch64` and
 `qemu-utils`. For a graphical QEMU window, install `qemu-system-gui` too if your distribution
 packages it separately. On macOS, install QEMU with Homebrew (`brew install qemu`). On Windows,
-install a Windows QEMU distribution that includes AArch64 system emulation. The native Windows
-build is available from the [QEMU download page](https://www.qemu.org/download/#windows). Add
-QEMU’s executable directory to `PATH` before running the launcher.
+install a Windows QEMU distribution that includes AArch64 system emulation. By default, Windows
+`--graphical` mode selects SDL, so that QEMU build needs SDL support; otherwise omit `--graphical`
+to run the guest headless. If the build exposes another display backend, select it explicitly with
+`--display-backend`. The native Windows build is available from the
+[QEMU download page](https://www.qemu.org/download/#windows). Add QEMU’s executable directory to
+`PATH` before running the launcher.
 
 On macOS and Windows, `qemu-system-aarch64 -L help` lists directories where QEMU looks for data.
 Use the AArch64 code image and ARM variables template shipped with the same QEMU distribution,

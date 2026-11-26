@@ -183,6 +183,16 @@ static void append_chained_fixups_valid(unsigned char *file)
 	put_u16(segment + 22, 0x10); /* structurally valid page offset */
 }
 
+static void append_chained_fixups_with_import(unsigned char *file)
+{
+	append_chained_fixups_valid(file);
+	put_u32(file + COMMANDS_END + 12, 80);
+	put_u32(file + 512 + 8, 64);
+	put_u32(file + 512 + 12, 68);
+	put_u32(file + 512 + 16, 1);
+	put_u32(file + 512 + 20, 1);
+}
+
 static void append_chained_fixups_multi_valid(unsigned char *file)
 {
 	unsigned char *payload = file + 512;
@@ -745,6 +755,9 @@ int main(void)
 	failures += expect_duplicate_thread_rejected();
 	failures += expect_metadata("chained-fixup command is flagged",
 				    append_chained_fixups_valid,
+				    XNU_MACHO_X86_64_HAS_CHAINED_FIXUPS, 1, 0);
+	failures += expect_metadata("chained-fixup import extent is bounded",
+				    append_chained_fixups_with_import,
 				    XNU_MACHO_X86_64_HAS_CHAINED_FIXUPS, 1, 0);
 	failures += expect_multi_chained_fixups();
 	failures += expect_segment_plan_capacity();

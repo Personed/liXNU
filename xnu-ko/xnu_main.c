@@ -2343,17 +2343,18 @@ static void xnu_cleanup(void)
 
 static int __init xnu_init(void)
 {
-	const void *data; unsigned long size;
+	const void *data; unsigned long size, caps;
 	int err;
 
 	if (fki_version() != FKI_VERSION)
 		return -22;
 	if (ram_mb <= 0 || ram_mb > 65536)
 		return -22;
-	el0_mode = !!(fki_caps() & FKI_CAP_EL0);
-	logkv("xnu: FKI caps", fki_caps());
-	if (el0_mode && !(fki_caps() & FKI_CAP_PAC)) {
-		logs("xnu: EL0 mode requires FKI_CAP_PAC");
+	caps = fki_caps();
+	el0_mode = !!(caps & FKI_CAP_EL0);
+	logkv("xnu: FKI caps", caps);
+	if (!(caps & FKI_CAP_PAC)) {
+		logs("xnu: FKI_CAP_PAC is required");
 		return -95;
 	}
 	/* every random number XNU takes comes from Linux's generator (the boot seeds, LINUX64_CALL_RANDOM): seeded first */

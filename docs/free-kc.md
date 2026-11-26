@@ -43,9 +43,15 @@ kernel has; and a kext's load tag.
    `nix build 'git+https://github.com/AFK-surf/PureDarwin?submodules=1&rev=b3b4b2812fdd1c5c251dc3089b5a1a9e00d29970#image-arm64-virt-minimal'` (PureDarwin's
    binary cache, https://hydra.lab004.dev, has its toolchain and what the fork did not change; the images there are
    upstream's).
-2. `scripts/mk-puredarwin-disk.sh root.tar.gz pd.img > pd.conf` (Linux or macOS) makes the HFS+ disk and prints its UUIDs.
+2. Run the following on Linux or macOS to make the HFS+ disk and save its UUIDs after a successful build.
+
+   ```sh
+   scripts/mk-puredarwin-disk.sh root.tar.gz pd.img > pd.conf.new && mv pd.conf.new pd.conf
+   ```
+
    On Linux, install `hfsprogs` and `sfdisk` (the `fdisk` package on Debian and Ubuntu). The Linux kernel needs loop devices
-   and writable HFS+ support. The script uses root privileges for those operations and writes a non-journaled volume.
+   and writable HFS+ support. The script uses root privileges for those operations and writes a non-journaled volume. After
+   an unclean shutdown, check the unmounted HFS+ partition with `fsck.hfsplus` on Linux before booting it again.
 3. In the VM, after `scripts/vm-xnu-rebuild.sh`: `scripts/free-kc/build.sh`, which writes `/lib/firmware/xnu/kc-free.bin`.
 4. Boot it: `MAC_CONF=pd.conf DISK=pd.img IMAGE=xnu/kc-free.bin TRUSTCACHE= GPU=off scripts/xnulinux-boot.sh`. The console
    (`CONSOLE_IN`) is PureDarwin's zsh. Its `halt` and `reboot` end the run.

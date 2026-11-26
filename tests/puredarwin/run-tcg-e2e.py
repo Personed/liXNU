@@ -156,6 +156,8 @@ def main() -> int:
     required = (
         f"fki: {args.fki_carve_mb} MiB at {carve_base_hex} for the foreign kernel's DRAM",
         "xnu: contiguous DRAM at phys 0x",
+        "xnu: bootstrap window write probe passed",
+        "xnu: bootstrap window execute probe passed",
         "fki: darwin console: XNULINUX_USERLAND_OK",
         "xnu: the hosted system halted",
         "XNULINUX_E2E_PUREDARWIN_USERLAND_OK",
@@ -233,6 +235,13 @@ def main() -> int:
         match = kmsg_prefix.match(line)
         messages.append(match.group(1) if match else line)
     missing = [marker for marker in required if not any(marker in line for line in messages)]
+    tcr2_logged = any("xnu: host TCR2_EL1 " in line for line in messages)
+    pie_logged = any("xnu: host TCR2_EL1.PIE " in line for line in messages)
+    tcr2_unsupported = any(
+        "xnu: host TCR2_EL1 unavailable; using direct permissions" in line for line in messages
+    )
+    if not (tcr2_unsupported or (tcr2_logged and pie_logged)):
+        missing.append("TCR2_EL1 read and PIE-bit result (or unsupported-feature fallback)")
     darwin_line = "fki: darwin console: Darwin"
     if darwin_line not in messages:
         missing.append("exact Darwin uname output line")

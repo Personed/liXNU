@@ -36,12 +36,26 @@ Report the profile alongside the stage:
    run this on a production host. Start with one hosted CPU and GPU disabled
    so basic userspace boot does not depend on SMP or the graphics bridge.
 2. Follow [host preparation](hosted-service.md#3-operator-preparing-a-host) for the
-   Linux kernel, headers and FKI carve-out. Inside that ARM64 Linux instance, collect
+   Linux kernel, headers and FKI carve-out. Before rebooting into the reserved memory
+   configuration, build FKI in the same checkout that the FKI service will use:
+   ```sh
+   make -C "/lib/modules/$(uname -r)/build" M="$PWD/fki-ko" modules
+   ```
+   This assumes you will reboot into the same kernel; if selecting a different
+   kernel, build against its headers instead. After reboot, verify the service
+   succeeded and check the active carve-out against the values used to configure
+   it. Stop here if FKI did not load or the values do not match.
+   ```sh
+   systemctl is-active xnulinux-fki.service
+   cat /sys/module/fki/parameters/carve_base /sys/module/fki/parameters/carve_mb
+   ```
+   Inside that ARM64 Linux instance, collect
    `uname -rm`, `getconf PAGE_SIZE`, `lscpu` (including PAC features) and the FKI
    carve-out values. Record the outer host, hypervisor and accelerator separately
    if running a VM. Do not copy memory offsets from another board or VM.
-3. Follow [building the free collection and disk](free-kc.md#using-it) for a real
-   PureDarwin image and an `xnu/kc-free.bin` built from compatible revisions.
+3. Follow only the preparation steps (1–3) of [building the free collection and disk](free-kc.md#using-it)
+   for a real PureDarwin image and an `xnu/kc-free.bin` built from compatible revisions.
+   Skip its boot command; start capturing the console before booting in step 4 below.
    Record the repository revision(s), the PureDarwin revision and SHA-256 digests
    of the collection and pristine disk. Use the disk's matching UUID file.
    [#4], [#5] and [#7] track work on build and image preparation; a fixture disk

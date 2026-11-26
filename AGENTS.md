@@ -44,6 +44,8 @@ Do not leave parallel agents to infer ownership from the code. Use the PR commen
 
 ## Validation
 
+The commands below describe checks present on current `main`. The legacy #36 TCG branch predates the native x86_64 test harness, including `tests/x86_64/test-xnu-stub-vm.sh`; agents working on that branch should use the checks actually present there and must not treat its TCG jobs as native x86_64 acceptance. Confirm command availability in the checked-out tree before running a command from a stacked PR.
+
 Keep x86_64 and ARM64 kernel header trees separate, and pass the architecture explicitly to Kbuild. Run the x86_64 commands on an x86_64 Linux host with matching headers; the ARM64 commands below run on an ARM64 Linux host with matching headers. The x86_64 FKI build compiles only the host backend; the x86_64 XNU target is a refusal stub, not a runtime implementation. The stub-load script starts its own disposable VM and taints only that guest kernel. On Debian/Ubuntu, module builds need `build-essential` and matching kernel headers; the stub VM test needs `qemu-system-x86`, `busybox-static`, `cpio`, `kmod`, and `sudo`, plus APT download access to the matching `linux-image-unsigned-$KERNEL_RELEASE` package. CI covers the x86_64 FKI build, the x86_64 fail-closed XNU test, and the ARM64 module build.
 
 ```sh

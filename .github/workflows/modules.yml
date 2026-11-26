@@ -113,3 +113,5 @@ jobs:
           missing=$(git ls-files '*.c' '*.h' '*.cpp' '*.mm' '*.m' '*.rs' '*.S' '*.s' '*.sh' '*.py' '*.metal' '*.comp' '*Makefile' |
             while read -r f; do head -3 "$f" | grep -q SPDX-License-Identifier || echo "$f"; done)
           [ -z "$missing" ] || { echo "no SPDX-License-Identifier:"; echo "$missing"; exit 1; }
+      - name: Resolve relative PureDarwin workspace paths
+        run: python3 tests/host/test_free_kc_dvm_path.py

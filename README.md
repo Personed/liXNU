@@ -94,11 +94,12 @@ Working on two arm64 Linux setups:
 
 ### Architecture support
 
-| Linux host | Hosted macOS | Status |
+| Linux host | Guest target | Status |
 |---|---|---|
-| ARM64 with PAC and 4 KiB pages | macOS 27 ARM64 | Existing supported path; tested on Apple Silicon Linux VMs and NVIDIA DGX Spark as described above. |
-| Intel x86_64 with VT-x/KVM and required CPU features | macOS Tahoe 26 x86_64 | Experimental QEMU/KVM launcher; physical Intel desktop boot and host-integrity acceptance remain. |
-| AMD x86_64 with AMD-V/KVM and required CPU features | macOS Tahoe 26 x86_64 | Experimental QEMU/KVM launcher; requires AMD OpenCore kernel patches and physical AMD acceptance. |
+| ARM64 with PAC and 4 KiB pages | macOS 27 ARM64 (direct hosted XNU) | Existing supported path; tested on Apple Silicon Linux VMs and NVIDIA DGX Spark as described above. |
+| Intel x86_64 with VT-x/KVM and required CPU features | macOS Tahoe 26 x86_64 | Primary x86_64 target; experimental QEMU/KVM launcher until physical Intel desktop boot and host-integrity acceptance. |
+| AMD x86_64 with AMD-V/KVM and required CPU features | macOS Tahoe 26 x86_64 | Primary x86_64 target; experimental QEMU/KVM launcher, AMD OpenCore patches, and physical AMD acceptance required. |
+| Intel/AMD x86_64 with QEMU TCG | ARM64 Linux (complementary development profile) | Linux and XNU module-probe evidence only; PureDarwin console validation is tracked separately and this profile does not establish Tahoe/KVM support. |
 
 The x86_64 launcher and test harness are present, but neither x86_64 host row is a support claim yet. Tahoe desktop boots
 and Linux host-integrity checks still need physical Intel and AMD validation. The x86_64 TCG smoke boots Linux only; the

@@ -122,10 +122,22 @@ for every run:
   image_sha=$(awk -F= '$1 == "arm64_guest_image_sha256" {print $2; exit}' /path/to/guest-manifest.txt)
   initramfs_sha=$(awk -F= '$1 == "arm64_guest_initramfs_sha256" {print $2; exit}' /path/to/guest-manifest.txt)
   disk_sha=$(awk -F= '$1 == "puredarwin_disk_sha256" {print $2; exit}' /path/to/build-manifest.txt)
-  test -n "$image_sha" && test -n "$initramfs_sha" && test -n "$disk_sha" || {
-    echo "could not read Image, initramfs, and disk hashes from the paired manifests" >&2
+  valid_sha256() {
+    [ "${#1}" -eq 64 ] || return 1
+    case "$1" in *[!0123456789abcdefABCDEF]*) return 1 ;; esac
+  }
+  valid_sha256 "$image_sha" && valid_sha256 "$initramfs_sha" && valid_sha256 "$disk_sha" || {
+    echo "paired manifests must provide three complete 64-digit SHA-256 values" >&2
     exit 1
   }
+  if [ "${CHECK_RUN_140:-0}" = 1 ]; then
+    test "$image_sha" = "02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6" && \
+    test "$initramfs_sha" = "431c6a2dcdbb77fc1131a8359149a59ad5f4aa5867eff3cf182175cf8a24e322" && \
+    test "$disk_sha" = "84fc7065d5a9bfb87a8db4fe1c3e7c5f485a0c1b23cdcb7beccdd426f03528a1" || {
+      echo "manifest hashes do not identify the run #140 input set" >&2
+      exit 1
+    }
+  fi
   printf '%s  %s\n' "$image_sha" /path/to/Image \
     "$initramfs_sha" /path/to/initramfs.cpio.gz \
     "$disk_sha" /path/to/pd.img > "$input_hashes" || exit 1
@@ -153,6 +165,9 @@ for every run:
 The guest writes to the HFS+ disk. Keep the downloaded `pd.img` as the pristine input;
 the checksum preflight confirms the Image, initramfs, and disk match their paired manifests
 before QEMU starts, and the final command confirms none of those original inputs changed.
+Export `CHECK_RUN_140=1` before running the block to require the exact Image, initramfs,
+and disk hashes from run #140's table below. Leave it unset for a regenerated artifact set;
+those files must still come from the same workflow run and match that run's manifests.
 The plain `cp` works with BusyBox and GNU coreutils without the nonportable
 `--reflink` option. Reserve the logical size of `pd.img` as a conservative
 space budget; sparse-file or reflink behavior may make the actual allocated copy smaller.

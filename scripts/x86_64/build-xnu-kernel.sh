@@ -12,18 +12,18 @@ usage() {
 Usage: build-xnu-kernel.sh [--check]
 
 Build the pinned Tahoe 26 XNU source as an x86_64 macOS development kernel.
-The build uses pinned XNU/libdispatch revisions and Xcode 26.1.1 with its
-bundled macOS 26.1 SDK. It does not use or modify a macOS system disk.
+The build uses pinned AvailabilityVersions, XNU, and libdispatch revisions
+with Xcode 26.1.1's macOS 26.1 SDK. It does not use or modify a system disk.
 
 Environment:
   XNU_X86_BUILD_DIR  Absolute build directory with no spaces (default: ${TMPDIR:-/tmp}/xnulinux-x86_64-xnu-build)
   XNU_X86_JOBS       Parallel jobs (default: logical CPU count)
 
---check validates the pinned source checkouts, bundled SDK, built x86_64
-libfirehose_kernel archive, Xcode tools, and target without downloading or
-building. The default action builds kernel.development and writes the result
-manifest next to it. XNU's Makefiles cannot safely handle build paths with
-spaces, so such paths are rejected.
+--check validates pinned checkouts, the staged SDK dependencies, the built
+x86_64 libfirehose_kernel archive, Xcode tools, and target without downloading
+or building. The default action builds kernel.development and writes the
+result manifest next to it. XNU's Makefiles cannot safely handle build paths
+with spaces, so such paths are rejected.
 USAGE
 }
 
@@ -42,6 +42,9 @@ readonly XNU_TAG='xnu-12377.121.6'
 readonly LIBDISPATCH_URL='https://github.com/apple-oss-distributions/libdispatch.git'
 readonly LIBDISPATCH_COMMIT='701f4d1a24ae9c6863901bbbb22624b7d1b87321'
 readonly LIBDISPATCH_TAG='libdispatch-1542.100.32'
+readonly AVAILABILITY_URL='https://github.com/apple-oss-distributions/AvailabilityVersions.git'
+readonly AVAILABILITY_COMMIT='149b1777f3e8c2133042d8e188f72e3adf6a7110'
+readonly AVAILABILITY_TAG='AvailabilityVersions-157.2'
 readonly KERNEL_VERSION='25.5.0'
 readonly SOURCE_VERSION='12377.121.6'
 readonly SDK_VERSION='26.1'
@@ -52,7 +55,7 @@ HOST_ARCH="$(uname -m)"
 [[ "$HOST_OS" == Darwin ]] || fail 'the pinned Apple build tools require a macOS build host'
 [[ "$HOST_ARCH" == x86_64 ]] || fail "run this x86_64 artifact build on an Intel macOS host (found $HOST_ARCH)"
 
-for tool in git make xcrun xcodebuild sysctl python3 shasum; do
+for tool in git make xcrun xcodebuild sysctl python3 shasum ditto; do
   command -v "$tool" >/dev/null 2>&1 || fail "required host tool not found: $tool"
 done
 
@@ -69,12 +72,21 @@ BUILD_ROOT="$(cd "$BUILD_ROOT_INPUT" && pwd -P)"
 [[ "$BUILD_ROOT" != *" "* ]] || fail 'XNU build paths cannot contain spaces; choose XNU_X86_BUILD_DIR without spaces'
 SOURCE_DIR="$BUILD_ROOT/source"
 LIBDISPATCH_SOURCE_DIR="$BUILD_ROOT/libdispatch-source"
-SDK_DIR=''
+AVAILABILITY_SOURCE_DIR="$BUILD_ROOT/availability-versions"
 OUT_DIR="$BUILD_ROOT/out"
+BASE_SDK_DIR=''
+SDK_DIR="$OUT_DIR/sdk/MacOSX26.1.sdk"
 OBJROOT="$OUT_DIR/obj"
 SYMROOT="$OUT_DIR/sym"
 DSTROOT="$OUT_DIR/dst"
 LOG="$OUT_DIR/xnu-build.log"
+AVAILABILITY_BUILD_DIR="$OUT_DIR/availability"
+AVAILABILITY_DSTROOT="$AVAILABILITY_BUILD_DIR/dst"
+AVAILABILITY_LOG="$OUT_DIR/availability-build.log"
+XNU_HEADERS_BUILD_DIR="$OUT_DIR/xnu-headers"
+XNU_HEADERS_OBJROOT="$XNU_HEADERS_BUILD_DIR/obj"
+XNU_HEADERS_DSTROOT="$XNU_HEADERS_BUILD_DIR/dst"
+XNU_HEADERS_LOG="$OUT_DIR/xnu-header-install.log"
 LIBDISPATCH_BUILD_DIR="$OUT_DIR/libdispatch"
 LIBDISPATCH_LOG="$OUT_DIR/libdispatch-build.log"
 LIBDISPATCH_DSTROOT="$LIBDISPATCH_BUILD_DIR/dst"
@@ -99,8 +111,22 @@ verify_sdk() {
   local version
   version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["Version"])' "$SDK_DIR/SDKSettings.json")"
   [[ "$version" == "$SDK_VERSION" ]] || fail "SDK at $SDK_DIR is $version; expected $SDK_VERSION"
-  [[ -x "$SDK_DIR/System/DriverKit/usr/local/libexec/availability.pl" ]] \
-    || fail "macOS $SDK_VERSION SDK is missing DriverKit availability.pl required by XNU"
+  [[ -x "$SDK_DIR/usr/local/libexec/availability.pl" ]] \
+    || fail "macOS $SDK_VERSION SDK is missing AvailabilityVersions availability.pl required by XNU"
+  [[ -s "$SDK_DIR/usr/local/include/os/atomic_private.h" ]] \
+    || fail 'SDK overlay is missing XNU private header os/atomic_private.h'
+  [[ -s "$SDK_DIR/usr/local/include/firehose/tracepoint_private.h" ]] \
+    || fail 'SDK overlay is missing XNU private firehose headers'
+  [[ -s "$SDK_DIR/usr/local/lib/kernel/libfirehose_kernel.a" ]] \
+    || fail 'SDK overlay is missing the staged libfirehose_kernel archive'
+}
+
+verify_sdk_version() {
+  local sdk_root="$1"
+  [[ -f "$sdk_root/SDKSettings.json" ]] || fail "missing macOS SDK settings at $sdk_root"
+  local version
+  version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["Version"])' "$sdk_root/SDKSettings.json")"
+  [[ "$version" == "$SDK_VERSION" ]] || fail "SDK at $sdk_root is $version; expected $SDK_VERSION"
 }
 
 verify_libdispatch_source() {
@@ -116,32 +142,49 @@ verify_libdispatch_source() {
     || fail 'pinned libdispatch source does not define the libfirehose_kernel target'
 }
 
+verify_availability_source() {
+  [[ -d "$AVAILABILITY_SOURCE_DIR/.git" || -f "$AVAILABILITY_SOURCE_DIR/.git" ]] \
+    || fail "missing pinned AvailabilityVersions source at $AVAILABILITY_SOURCE_DIR"
+  local actual
+  actual="$(git -C "$AVAILABILITY_SOURCE_DIR" rev-parse HEAD)"
+  [[ "$actual" == "$AVAILABILITY_COMMIT" ]] \
+    || fail "AvailabilityVersions source is $actual; expected $AVAILABILITY_COMMIT ($AVAILABILITY_TAG)"
+  [[ -z "$(git -C "$AVAILABILITY_SOURCE_DIR" status --porcelain)" ]] \
+    || fail 'refusing to build from a modified AvailabilityVersions source tree'
+  [[ -f "$AVAILABILITY_SOURCE_DIR/availability.dsl" && -f "$AVAILABILITY_SOURCE_DIR/Makefile" ]] \
+    || fail 'pinned AvailabilityVersions source is missing its build inputs'
+}
+
 verify_firehose_archive() {
-  [[ -s "$LIBDISPATCH_ARCHIVE" ]] || fail "missing built libfirehose_kernel archive at $LIBDISPATCH_ARCHIVE"
+  local archive="$1"
+  [[ -s "$archive" ]] || fail "missing libfirehose_kernel archive at $archive"
   local actual_archs
-  actual_archs="$(xcrun lipo -archs "$LIBDISPATCH_ARCHIVE")"
+  actual_archs="$(xcrun lipo -archs "$archive")"
   [[ "$actual_archs" == x86_64 ]] \
     || fail "libfirehose_kernel architecture is '$actual_archs'; expected exactly x86_64"
 }
 
 verify_xcode_and_sdk() {
-  local actual_xcode
-  actual_xcode="$(xcodebuild -version | awk '/^Xcode / { print $2; exit }')"
-  [[ "$actual_xcode" == "$XCODE_VERSION" ]] || fail "Xcode is $actual_xcode; expected $XCODE_VERSION"
-  SDK_DIR="$(xcrun --sdk macosx --show-sdk-path)"
-  [[ -n "$SDK_DIR" && -d "$SDK_DIR" ]] || fail 'Xcode did not resolve its macOS SDK'
-  verify_sdk
+  ACTUAL_XCODE_VERSION="$(xcodebuild -version | tr '\n' ' ')"
+  [[ "$ACTUAL_XCODE_VERSION" == "Xcode $XCODE_VERSION "* ]] || fail "Xcode does not match pinned version $XCODE_VERSION"
+  BASE_SDK_DIR="$(xcrun --sdk macosx --show-sdk-path)"
+  [[ -n "$BASE_SDK_DIR" && -d "$BASE_SDK_DIR" ]] || fail 'Xcode did not resolve its macOS SDK'
+  verify_sdk_version "$BASE_SDK_DIR"
 }
 
 if (( CHECK_ONLY )); then
   verify_source
   verify_libdispatch_source
+  verify_availability_source
   verify_xcode_and_sdk
+  verify_sdk
   xcodebuild -version
   xcrun --find clang >/dev/null
   xcrun --find ld >/dev/null
   xcrun --find iig >/dev/null
-  verify_firehose_archive
+  xcrun --find cmake >/dev/null
+  xcrun --find ninja >/dev/null
+  verify_firehose_archive "$SDK_DIR/usr/local/lib/kernel/libfirehose_kernel.a"
   printf 'int xnu_x86_64_target_probe;\n' |
     xcrun clang -target x86_64-apple-macosx26.0 -mkernel -ffreestanding -fsyntax-only -x c -
   printf 'XNU source, macOS SDK %s, and Xcode tools are ready for X86_64/NONE.\n' "$SDK_VERSION"
@@ -172,14 +215,67 @@ if [[ ! -d "$LIBDISPATCH_SOURCE_DIR/.git" && ! -f "$LIBDISPATCH_SOURCE_DIR/.git"
 fi
 verify_libdispatch_source
 
-ACTUAL_XCODE_VERSION="$(xcodebuild -version | tr '\n' ' ')"
-[[ "$ACTUAL_XCODE_VERSION" == "Xcode $XCODE_VERSION "* ]] || fail "Xcode does not match pinned version $XCODE_VERSION"
+if [[ ! -d "$AVAILABILITY_SOURCE_DIR/.git" && ! -f "$AVAILABILITY_SOURCE_DIR/.git" ]]; then
+  [[ ! -d "$AVAILABILITY_SOURCE_DIR" || -z "$(find "$AVAILABILITY_SOURCE_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]] \
+    || fail "refusing to clone into a non-empty AvailabilityVersions directory: $AVAILABILITY_SOURCE_DIR"
+  mkdir -p "$AVAILABILITY_SOURCE_DIR"
+  git -C "$AVAILABILITY_SOURCE_DIR" init -q
+  git -C "$AVAILABILITY_SOURCE_DIR" remote add origin "$AVAILABILITY_URL"
+  git -C "$AVAILABILITY_SOURCE_DIR" fetch --depth 1 origin "$AVAILABILITY_COMMIT"
+  git -C "$AVAILABILITY_SOURCE_DIR" checkout -q --detach FETCH_HEAD
+fi
+verify_availability_source
+
 verify_xcode_and_sdk
 CLANG="$(xcrun --find clang)"
 LD="$(xcrun --find ld)"
 IIG="$(xcrun --find iig)"
+xcrun --find cmake >/dev/null
+xcrun --find ninja >/dev/null
 JOBS="${XNU_X86_JOBS:-$(sysctl -n hw.logicalcpu)}"
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || fail 'XNU_X86_JOBS must be a positive integer'
+
+rm -rf -- "$SDK_DIR"
+mkdir -p "$(dirname "$SDK_DIR")"
+ditto "$BASE_SDK_DIR" "$SDK_DIR"
+verify_sdk_version "$SDK_DIR"
+
+mkdir -p "$AVAILABILITY_BUILD_DIR/obj" "$AVAILABILITY_BUILD_DIR/sym" "$AVAILABILITY_DSTROOT"
+printf 'Building AvailabilityVersions %s for the pinned macOS SDK\n' "$AVAILABILITY_TAG"
+if make -C "$AVAILABILITY_SOURCE_DIR" install \
+  SRCROOT="$AVAILABILITY_SOURCE_DIR" \
+  OBJROOT="$AVAILABILITY_BUILD_DIR/obj" SYMROOT="$AVAILABILITY_BUILD_DIR/sym" \
+  DSTROOT="$AVAILABILITY_DSTROOT" >"$AVAILABILITY_LOG" 2>&1; then
+  tail -n 20 "$AVAILABILITY_LOG"
+else
+  tail -n 100 "$AVAILABILITY_LOG" >&2
+  fail "AvailabilityVersions build failed; full log: $AVAILABILITY_LOG"
+fi
+[[ -x "$AVAILABILITY_DSTROOT/usr/local/libexec/availability.pl" ]] \
+  || fail 'AvailabilityVersions install did not produce availability.pl'
+ditto "$AVAILABILITY_DSTROOT" "$SDK_DIR"
+
+mkdir -p "$XNU_HEADERS_OBJROOT" "$XNU_HEADERS_DSTROOT"
+printf 'Installing private headers from XNU %s before Firehose build\n' "$XNU_TAG"
+if make -C "$SOURCE_DIR" installhdrs \
+  SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$SDK_DIR" \
+  SDKVERSION="$SDK_VERSION" PLATFORM=MacOSX \
+  ARCH_CONFIGS=X86_64 MACHINE_CONFIGS=NONE KERNEL_CONFIGS=DEVELOPMENT \
+  RC_DARWIN_KERNEL_VERSION="$KERNEL_VERSION" RC_ProjectSourceVersion="$SOURCE_VERSION" \
+  OBJROOT="$XNU_HEADERS_OBJROOT" SYMROOT="$XNU_HEADERS_BUILD_DIR/sym" DSTROOT="$XNU_HEADERS_DSTROOT" \
+  MAKEJOBS="-j$JOBS" >"$XNU_HEADERS_LOG" 2>&1; then
+  tail -n 20 "$XNU_HEADERS_LOG"
+else
+  tail -n 100 "$XNU_HEADERS_LOG" >&2
+  fail "XNU installhdrs failed; full log: $XNU_HEADERS_LOG"
+fi
+ditto "$XNU_HEADERS_DSTROOT" "$SDK_DIR"
+[[ -s "$SDK_DIR/usr/local/include/os/atomic_private.h" ]] \
+  || fail 'XNU installhdrs did not stage usr/local/include/os/atomic_private.h'
+[[ -s "$SDK_DIR/usr/local/include/firehose/tracepoint_private.h" ]] \
+  || fail 'XNU installhdrs did not stage usr/local/include/firehose/tracepoint_private.h'
+[[ -x "$SDK_DIR/usr/local/libexec/availability.pl" ]] \
+  || fail 'XNU header installation removed AvailabilityVersions availability.pl'
 
 mkdir -p "$LIBDISPATCH_BUILD_DIR/obj" "$LIBDISPATCH_BUILD_DIR/sym" "$LIBDISPATCH_DSTROOT"
 printf 'Building libfirehose_kernel from %s for x86_64\n' "$LIBDISPATCH_TAG"
@@ -196,17 +292,23 @@ else
   tail -n 100 "$LIBDISPATCH_LOG" >&2
   fail "libdispatch firehose_kernel build failed; full log: $LIBDISPATCH_LOG"
 fi
-verify_firehose_archive
+verify_firehose_archive "$LIBDISPATCH_ARCHIVE"
 FIREHOSE_ARCHIVE_SHA256="$(shasum -a 256 "$LIBDISPATCH_ARCHIVE" | awk '{print $1}')"
+ditto "$LIBDISPATCH_DSTROOT/usr/local" "$SDK_DIR/usr/local"
+verify_sdk
+verify_firehose_archive "$SDK_DIR/usr/local/lib/kernel/libfirehose_kernel.a"
 
 cat >"$OUT_DIR/x86_64-build.env" <<EOF
 source=$XNU_URL@$XNU_COMMIT
 source_tag=$XNU_TAG
+availability_source=$AVAILABILITY_URL@$AVAILABILITY_COMMIT
+availability_tag=$AVAILABILITY_TAG
 libdispatch_source=$LIBDISPATCH_URL@$LIBDISPATCH_COMMIT
 libdispatch_tag=$LIBDISPATCH_TAG
 firehose_archive=$LIBDISPATCH_ARCHIVE
 firehose_archive_sha256=$FIREHOSE_ARCHIVE_SHA256
 sdk=$SDK_DIR
+sdk_base=$BASE_SDK_DIR
 sdk_version=$SDK_VERSION
 platform=MacOSX
 arch_config=X86_64
@@ -226,7 +328,6 @@ if make -C "$SOURCE_DIR" build \
   SDKVERSION="$SDK_VERSION" PLATFORM=MacOSX \
   ARCH_CONFIGS=X86_64 MACHINE_CONFIGS=NONE KERNEL_CONFIGS=DEVELOPMENT \
   RC_DARWIN_KERNEL_VERSION="$KERNEL_VERSION" RC_ProjectSourceVersion="$SOURCE_VERSION" \
-  LDFLAGS_KERNEL_SDK="-L$SDK_DIR/usr/local/lib/kernel -L$SDK_DIR/usr/local/lib/kernel/platform -L$LIBDISPATCH_DSTROOT/usr/local/lib/kernel" \
   OBJROOT="$OBJROOT" SYMROOT="$SYMROOT" DSTROOT="$DSTROOT" \
   MAKEJOBS="-j$JOBS" >"$LOG" 2>&1; then
   tail -n 20 "$LOG"
@@ -244,7 +345,8 @@ cp -L "$KERNEL" "$PACKAGE_KERNEL"
 
 python3 - "$PACKAGE_KERNEL" "$RESULT" "$XNU_COMMIT" "$XNU_TAG" "$SOURCE_VERSION" \
   "$KERNEL_VERSION" "$SDK_VERSION" "$XCODE_VERSION" "$ARCHS" \
-  "$LIBDISPATCH_COMMIT" "$LIBDISPATCH_TAG" "$FIREHOSE_ARCHIVE_SHA256" <<'PY'
+  "$LIBDISPATCH_COMMIT" "$LIBDISPATCH_TAG" "$FIREHOSE_ARCHIVE_SHA256" \
+  "$AVAILABILITY_COMMIT" "$AVAILABILITY_TAG" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -266,6 +368,8 @@ result = {
     "libdispatch_commit": sys.argv[10],
     "libdispatch_tag": sys.argv[11],
     "libfirehose_kernel_sha256": sys.argv[12],
+    "availabilityversions_commit": sys.argv[13],
+    "availabilityversions_tag": sys.argv[14],
     "platform": "MacOSX",
     "machine_config": "NONE",
     "kernel_collection_built": False,

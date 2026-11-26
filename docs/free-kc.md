@@ -78,9 +78,9 @@ kernel has; and a kext's load tag.
    volume before booting it again.
 3. In the VM, after `scripts/vm-xnu-rebuild.sh`: `scripts/free-kc/build.sh`, which writes `/lib/firmware/xnu/kc-free.bin`.
 4. Boot it: `MAC_CONF=pd.conf DISK=pd.img IMAGE=xnu/kc-free.bin TRUSTCACHE= GPU=off scripts/xnulinux-boot.sh`. The console
-   (`CONSOLE_IN`) is PureDarwin's zsh. Its `halt` and `reboot` end the run. If this PureDarwin disk is configured for
-   `xnulinux.service`, start the service after checking the disk with `sudo systemctl start xnulinux.service` to restore
-   its supervision and automatic restart.
+   (`CONSOLE_IN`) is PureDarwin's zsh. Its `halt` and `reboot` end the run. For a service-managed boot, use
+   `sudo systemctl start xnulinux.service` instead of the manual command, after configuring the service for this disk;
+   this restores its supervision and automatic restart after a disk check.
 
 ## Apple's kexts, linked on the user's machine
 

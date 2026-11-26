@@ -197,6 +197,7 @@ jobs:
       KERNEL_ABI: 7.0.0-44
       KERNEL_RELEASE: 7.0.0-44-generic
       KERNEL_PACKAGE_VERSION: "7.0.0-44.44~24.04.1"
+      KERNEL_APT_SNAPSHOT: "20261126T000000Z"
     steps:
       - uses: actions/checkout@v4
       - name: Download the source-built PureDarwin collection
@@ -206,10 +207,10 @@ jobs:
           path: ${{ runner.temp }}/puredarwin-e2e-inputs
       - name: Install matching ARM64 kernel headers and image tools
         run: |
-          sudo apt-get update -qq
+          sudo apt-get --snapshot="$KERNEL_APT_SNAPSHOT" update -qq
           headers="linux-headers-$KERNEL_RELEASE"
           common_headers="linux-hwe-7.0-headers-$KERNEL_ABI"
-          sudo apt-get install -y -qq \
+          sudo apt-get --snapshot="$KERNEL_APT_SNAPSHOT" install -y -qq \
             "$headers=$KERNEL_PACKAGE_VERSION" \
             "$common_headers=$KERNEL_PACKAGE_VERSION" \
             busybox-static cpio kmod xz-utils zstd
@@ -234,7 +235,7 @@ jobs:
           cd "$RUNNER_TEMP/linux-packages"
           image_package="linux-image-unsigned-$KERNEL_RELEASE"
           modules_package="linux-modules-$KERNEL_RELEASE"
-          apt-get download \
+          apt-get --snapshot="$KERNEL_APT_SNAPSHOT" download \
             "$image_package=$KERNEL_PACKAGE_VERSION" \
             "$modules_package=$KERNEL_PACKAGE_VERSION"
           image_deb_sha=

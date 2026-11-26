@@ -223,6 +223,8 @@ jobs:
           done
           echo "KDIR=/usr/src/$headers" >> "$GITHUB_ENV"
           echo "Pinned ARM64 kernel release: $KERNEL_RELEASE ($KERNEL_PACKAGE_VERSION)"
+      - name: Test VirtIO module format handling
+        run: bash tests/puredarwin/test-prepare-guest-virtio-modules.sh
       - name: Build FKI and XNU against the guest kernel
         run: |
           make -s -C "$KDIR" M="$GITHUB_WORKSPACE/fki-ko" modules
@@ -276,13 +278,14 @@ jobs:
           test -d "$modules"
           kernel_config="kernel/boot/config-$KERNEL_RELEASE"
           grep -q '^CONFIG_ARM64_4K_PAGES=y' "$kernel_config"
-          if [ -z "$(find "$modules" -type f -name 'virtio_mmio.ko*' -print -quit)" ]; then
+          source "$GITHUB_WORKSPACE/tests/puredarwin/virtio-modules.sh"
+          if [ -z "$(virtio_module_path "$modules" virtio_mmio)" ]; then
             grep -q '^CONFIG_VIRTIO_MMIO=y' "$kernel_config" || {
               echo 'virtio_mmio has no module and is not built into the pinned kernel' >&2
               exit 1
             }
           fi
-          if [ -z "$(find "$modules" -type f -name 'virtio_blk.ko*' -print -quit)" ]; then
+          if [ -z "$(virtio_module_path "$modules" virtio_blk)" ]; then
             grep -q '^CONFIG_VIRTIO_BLK=y' "$kernel_config" || {
               echo 'virtio_blk has no module and is not built into the pinned kernel' >&2
               exit 1

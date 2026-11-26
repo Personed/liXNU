@@ -293,11 +293,21 @@ static void append_chained_fixups_two_segments(unsigned char *file,
 static void append_chained_fixups_lower_segment_valid(unsigned char *file)
 {
 	append_chained_fixups_two_segments(file, 2);
+	put_u32(file + 512 + 28 + 12 + 16, 1);
+	put_u32(file + 512 + 28 + 36 + 16, 1);
 }
 
 static void append_chained_fixups_mixed_formats(unsigned char *file)
 {
 	append_chained_fixups_two_segments(file, 6);
+}
+
+static void append_chained_fixups_conflicting_max_valid_pointer(
+	unsigned char *file)
+{
+	append_chained_fixups_two_segments(file, 2);
+	put_u32(file + 512 + 28 + 12 + 16, 1);
+	put_u32(file + 512 + 28 + 36 + 16, 2);
 }
 
 static void append_chained_fixups_ctf_omission(unsigned char *file)
@@ -975,6 +985,10 @@ int main(void)
 	failures += expect_rejected("mixed chained pointer formats",
 				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
 				    FILE_BYTES, append_chained_fixups_mixed_formats);
+	failures += expect_rejected("conflicting chained max_valid_pointer values",
+				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+				    FILE_BYTES,
+				    append_chained_fixups_conflicting_max_valid_pointer);
 	failures += expect_rejected("nonzero omitted segment before LINKEDIT",
 				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
 				    FILE_BYTES, append_chained_fixups_ctf_nonzero);

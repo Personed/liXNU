@@ -66,8 +66,10 @@ struct xnu_macho_x86_64_info {
  * pool after the header is required and the import table extent is checked;
  * individual import name offsets and string contents are not validated.
  * Dyld page-count prefixes are preserved; x86_64 MULTI/LAST starts are
- * unsupported. The sole segment-count exception accepts one zero-VM segment
- * immediately before a final __LINKEDIT only when its starts slot is empty.
+ * unsupported. Nonzero max_valid_pointer values must agree across nonempty
+ * starts records. The sole segment-count exception accepts one zero-VM
+ * segment immediately before a final __LINKEDIT only when its starts slot is
+ * empty.
  * Dyld-info extents are only bounds-checked and flagged. Unknown optional
  * commands are counted. Callers must not infer loader/fixup support from
  * success. On every failure with a non-NULL output pointer, zero the complete

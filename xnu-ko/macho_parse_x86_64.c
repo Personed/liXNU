@@ -217,7 +217,8 @@ static int parse_chained_starts_in_segment(
 	const unsigned char *starts, unsigned long starts_size,
 	xnu_macho_u32 starts_table_size, xnu_macho_u32 starts_offset,
 	struct xnu_macho_x86_64_segment *segment,
-	xnu_macho_u64 preferred_load_address)
+	xnu_macho_u64 preferred_load_address,
+	xnu_macho_u32 *max_valid_pointer_out)
 {
 	const unsigned char *record;
 	xnu_macho_u32 record_size;
@@ -240,6 +241,7 @@ static int parse_chained_starts_in_segment(
 	pointer_format = read_u16le(record + 6);
 	segment_offset = read_u64le(record + 8);
 	page_count = read_u16le(record + 20);
+	*max_valid_pointer_out = read_u32le(record + 16);
 	min_size = DYLD_CHAINED_STARTS_IN_SEGMENT_HEADER_SIZE +
 		   (unsigned long)page_count * 2UL;
 	if (!page_count || record_size < min_size || (record_size & 1U) ||
@@ -304,7 +306,9 @@ static int parse_chained_fixups(const unsigned char *file,
 	unsigned long range_end[XNU_MACHO_X86_64_MAX_SEGMENTS];
 	unsigned long range_count = 0;
 	xnu_macho_u16 image_pointer_format = 0;
+	xnu_macho_u32 image_max_valid_pointer = 0;
 	int have_image_pointer_format = 0;
+	int have_image_max_valid_pointer = 0;
 	int has_zero_vm_segment_omission = 0;
 
 	if (!file_range_ok(file_size, data_offset, data_size) ||
@@ -376,6 +380,7 @@ static int parse_chained_fixups(const unsigned char *file,
 		struct xnu_macho_x86_64_segment *segment = &out->segments[i];
 		unsigned long end;
 		unsigned long j;
+		xnu_macho_u32 max_valid_pointer;
 		int err;
 
 		if (has_zero_vm_segment_omission &&
@@ -387,9 +392,18 @@ static int parse_chained_fixups(const unsigned char *file,
 						     starts_table_size,
 						     segment_info_offset,
 						     segment,
-						     preferred_load_address);
+						     preferred_load_address,
+						     &max_valid_pointer);
 		if (err)
 			return err;
+		if (max_valid_pointer) {
+			if (!have_image_max_valid_pointer) {
+				image_max_valid_pointer = max_valid_pointer;
+				have_image_max_valid_pointer = 1;
+			} else if (max_valid_pointer != image_max_valid_pointer) {
+				return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+			}
+		}
 		if (!have_image_pointer_format) {
 			image_pointer_format =
 				(xnu_macho_u16)segment->chained_pointer_format;

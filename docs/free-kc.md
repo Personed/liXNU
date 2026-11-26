@@ -39,7 +39,9 @@ kernel has; and a kext's load tag.
 
 ## Using it
 
-1. `scripts/puredarwin-root.sh IMAGE root.tar.gz` (Linux) unpacks the root of a PureDarwin arm64 image:
+1. `scripts/puredarwin-root.sh IMAGE root.tar.gz` archives the PureDarwin arm64 root on Linux, including x86-64.
+   It requires `fdisk`, `util-linux`, `python3` and kernel support for ext4 and loop devices. It opens the source
+   image read-only and preserves numeric owners in the archive. Build the input image with
    `nix build 'git+https://github.com/AFK-surf/PureDarwin?submodules=1&rev=b3b4b2812fdd1c5c251dc3089b5a1a9e00d29970#image-arm64-virt-minimal'` (PureDarwin's
    binary cache, https://hydra.lab004.dev, has its toolchain and what the fork did not change; the images there are
    upstream's).

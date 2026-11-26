@@ -10,14 +10,14 @@ fi
 
 KDIR=$(cd "$1" && pwd)
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
+for tool in apt-get cat chmod cpio dpkg-deb find grep gzip install mkdir mktemp mknod qemu-system-x86_64 rm sort sudo timeout; do
+  command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
+done
 KERNEL_RELEASE=$(cat "$KDIR/include/config/kernel.release")
 test -n "$KERNEL_RELEASE" || { echo "kernel release metadata is missing from KDIR" >&2; exit 1; }
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 
-for tool in apt-get cat cpio dpkg-deb find gzip grep install mknod qemu-system-x86_64 sort sudo timeout; do
-  command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
-done
 test -s "$REPO/xnu-ko/xnu.ko" || { echo "build xnu-ko/xnu.ko before running this test" >&2; exit 1; }
 
 (
@@ -89,7 +89,7 @@ INITRD="$STAGE/xnu-stub-initramfs.cpio.gz"
 
 LOG="$STAGE/qemu-serial.log"
 set +e
-timeout 240 qemu-system-x86_64 -machine q35,accel=tcg -cpu max -smp 2 -m 1024 -kernel "$KERNEL" -initrd "$INITRD" -append 'console=ttyS0,115200 rdinit=/init panic=1' -display none -serial stdio -monitor none -no-reboot > "$LOG" 2>&1
+timeout 240 qemu-system-x86_64 -machine q35,accel=tcg -cpu max -smp 2 -m 1024 -kernel "$KERNEL" -initrd "$INITRD" -append 'console=ttyS0,115200 rdinit=/init panic=1 loglevel=7' -display none -serial stdio -monitor none -no-reboot > "$LOG" 2>&1
 QEMU_RC=$?
 set -e
 cat "$LOG"
@@ -97,6 +97,10 @@ if [ "$QEMU_RC" -ne 0 ]; then
   echo "QEMU disposable-VM test failed with status $QEMU_RC" >&2
   exit "$QEMU_RC"
 fi
+grep -F 'xnu: native x86_64 world switch is not implemented; refusing to load' "$LOG" >/dev/null || {
+  echo "disposable VM did not log that the xnu stub initializer ran" >&2
+  exit 1
+}
 grep -F 'XNU_STUB_VM_TEST_PASS' "$LOG" >/dev/null || {
   echo "disposable VM did not report the xnu stub test marker" >&2
   exit 1

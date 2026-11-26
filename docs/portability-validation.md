@@ -57,7 +57,7 @@ Report the profile alongside the stage:
   functional boot and capacity separately. A runner below either limit remains
   capacity-limited even if QEMU overcommits and reaches the console.
 - **Separate native x86-64 hosted XNU on Intel/AMD Linux:** this experiment targets Tahoe 26.
-  The x86_64 FKI host-backend build is tracked in [#48](https://github.com/Personed/xnulinux/pull/48).
+  Its design is mapped in [#49](https://github.com/Personed/xnulinux/pull/49), and the x86_64 FKI host-backend build is tracked in [#48](https://github.com/Personed/xnulinux/pull/48).
   [#47](https://github.com/Personed/xnulinux/pull/47) adds a fail-closed XNU module target.
   The FKI backend advertises no XNU execution capability; the architecture-specific XNU entry/world
   switch and physical desktop acceptance are still pending.

@@ -101,7 +101,7 @@ Working on two arm64 Linux setups:
 | ARM64 with PAC and 4 KiB pages | macOS 27 ARM64 (direct hosted XNU) | Existing supported path; tested on Apple Silicon Linux VMs and NVIDIA DGX Spark as described above. |
 | Intel/AMD x86_64 with QEMU TCG | ARM64 Linux → FKI/XNU → PureDarwin console | Active x86-64 portability target; full acceptance is tracked in #36 and #46. The profile uses 16 GiB guest RAM plus host overhead and does not claim every PC or practical TCG speed. |
 | Intel/AMD x86_64 with QEMU/KVM | User-prepared macOS Tahoe 26 guest | Separate experimental path; physical desktop and host-integrity acceptance remain unverified. |
-| Intel/AMD x86_64 native backend prototype | No hosted-XNU runtime yet | Separate work: #48 builds the FKI backend and #47's XNU module fails closed with `EOPNOTSUPP`; neither executes XNU on x86_64. |
+| Intel/AMD x86_64 native backend prototype | No hosted-XNU runtime yet | Separate work: #49 maps the port, #48 builds the FKI backend, and #47's XNU module fails closed with `EOPNOTSUPP`; none executes XNU on x86_64. |
 
 QEMU TCG does not require VT-x/AMD-V. The end-to-end workflow in #36 builds a real PureDarwin disk and free collection,
 boots ARM64 Linux on x86-64, and requires a Darwin console command, guest-issued halt, module unload, and Linux power-off.

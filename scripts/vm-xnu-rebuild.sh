@@ -60,6 +60,21 @@ if [ -e out/kc/kc27.bin ]; then
     echo "kernel slots moved: linking the kernel again"
     JOBS="${JOBS:-12}" bash k27/build-kernel27.sh 2>&1 | tail -3
   fi
+elif [ "${BUILD_NATIVE_KEXTS:-0}" = 1 ]; then
+  # The free collection has no Apple kc27.bin to drive kc27-layout.py. Fit the
+  # kernel's marker segments to the source-built __TEXT_EXEC before making its
+  # free collection; kclink places each segment at its own vmaddr.
+  segaddrs_before=$(mktemp)
+  cp k27/segaddrs.sh "$segaddrs_before"
+  python3 "$POC/scripts/free-kc/fit_kernel_segments.py" out/k27/kernel-k27.macho k27/segaddrs.sh
+  if ! cmp -s "$segaddrs_before" k27/segaddrs.sh; then
+    echo "free collection kernel slots moved: linking the kernel again"
+    rm -f "$segaddrs_before"
+    JOBS="${JOBS:-12}" bash k27/build-kernel27.sh 2>&1 | tee out/k27/xnulinux-relink.log | tail -15
+  else
+    rm -f "$segaddrs_before"
+  fi
+  python3 "$POC/scripts/free-kc/fit_kernel_segments.py" --check out/k27/kernel-k27.macho k27/segaddrs.sh
 fi
 if [ -e out/kc/kc27.bin ] || [ "${BUILD_NATIVE_KEXTS:-0}" = 1 ]; then
   # xnulinux's own kexts (kexts/*/NAME.json + NAME.cpp), built against the k27 kernel's objects and linked into the collection

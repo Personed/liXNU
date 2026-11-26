@@ -128,7 +128,7 @@ class TestCliAndInstaller(unittest.TestCase):
             fixture_installer = scripts / "install.sh"
             shutil.copy2(INSTALLER, fixture_installer)
             fixture_cli = scripts / "xnulinux"
-            fixture_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fixture_cli.write_text("#!/bin/sh\nprintf 'fixture-doctor-ok\\n'\n", encoding="utf-8")
             fixture_cli.chmod(0o755)
 
             prefix = pathlib.Path(tmp) / "system-prefix"
@@ -165,6 +165,11 @@ class TestCliAndInstaller(unittest.TestCase):
             self.assertTrue(installed.is_file())
             self.assertEqual(installed.stat().st_mode & 0o777, 0o755)
             self.assertIn(str(checkout / "scripts" / "xnulinux"), installed.read_text(encoding="utf-8"))
+            launched = subprocess.run(
+                [str(installed), "doctor"], cwd=public_root, capture_output=True, text=True
+            )
+            self.assertEqual(launched.returncode, 0, launched.stderr)
+            self.assertEqual(launched.stdout, "fixture-doctor-ok\n")
 
 
 if __name__ == "__main__":

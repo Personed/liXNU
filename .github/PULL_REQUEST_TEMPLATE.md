@@ -18,7 +18,7 @@
 
 - [ ] ARM64 behavior remains covered when shared module code changes.
 - [ ] No Apple system images, firmware, or local SMC OSK values are included.
-- [ ] The x86_64 target is the native FKI/XNU port for Tahoe 26 on Linux; QEMU/KVM and TCG results are labeled as complementary experiments, not native-port acceptance.
+- [ ] The active x86-64 PC target is QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin console; native Tahoe hosting and QEMU/KVM remain separate experiments.
 - [ ] Every related agent has visible scope, interface, and result updates in PR comments.
 - [ ] Each applicable automated review finding has a reply in its thread with the fix and validation, or an evidence-based reason it is duplicate, superseded, or inapplicable.
-- [ ] Required automated checks are green before merge; the owner authorized merging without waiting for human review.
+- [ ] Do not merge or enable auto-merge without explicit owner authorization for this PR.

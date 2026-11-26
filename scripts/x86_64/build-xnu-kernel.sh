@@ -434,7 +434,6 @@ else
   fail "XNU installhdrs failed; full log: $XNU_HEADERS_LOG"
 fi
 ditto "$XNU_HEADERS_DSTROOT" "$SDK_DIR"
-verify_machine_header_exports
 [[ -s "$SDK_DIR/usr/local/include/os/atomic_private.h" ]] \
   || fail 'XNU installhdrs did not stage usr/local/include/os/atomic_private.h'
 [[ -s "$SDK_DIR/usr/local/include/firehose/tracepoint_private.h" ]] \

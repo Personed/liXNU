@@ -135,6 +135,7 @@ Guest-issued shutdown / QEMU exit result:
 
 ARM64 hosted macOS desktop (only when applicable):
 macOS product version / build:
+Linux host distribution / kernel / page size / PAC / userspace type:
 Compatible disk and XNU collection revision / digests:
 Interactive desktop reached / display backend:
 Keyboard and mouse input / networking result:

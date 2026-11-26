@@ -15,8 +15,16 @@ class SmokeMarkerTests(unittest.TestCase):
         console = "xnulinux QEMU smoke test passed[    6.206859] reboot: Power down\n"
         self.assertTrue(reports_smoke_success(console))
 
+    def test_shutdown_line_without_kernel_timestamp(self):
+        console = "xnulinux QEMU smoke test passedreboot: Power down\n"
+        self.assertTrue(reports_smoke_success(console))
+
     def test_arbitrary_suffix_rejected(self):
         self.assertFalse(reports_smoke_success("xnulinux QEMU smoke test passedFAILURE\n"))
+
+    def test_arbitrary_timestamped_suffix_rejected(self):
+        console = "xnulinux QEMU smoke test passed[    6.206859] unrelated output\n"
+        self.assertFalse(reports_smoke_success(console))
 
     def test_failure_marker_rejected(self):
         self.assertFalse(reports_smoke_success("xnulinux QEMU smoke test failed\n"))

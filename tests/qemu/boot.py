@@ -12,7 +12,9 @@ from tempfile import TemporaryDirectory
 
 def reports_smoke_success(log: str) -> bool:
     marker = "xnulinux QEMU smoke test passed"
-    shutdown_append = re.compile(re.escape(marker) + r"\[\s*\d+(?:\.\d+)?\] .+")
+    shutdown_append = re.compile(
+        re.escape(marker) + r"(?:\[\s*\d+(?:\.\d+)?\]\s*)?reboot: Power down"
+    )
     return any(line == marker or shutdown_append.fullmatch(line) for line in log.splitlines())
 
 

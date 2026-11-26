@@ -56,6 +56,7 @@ jobs:
           assert manifest["host_sys_unistd_headers_match"] is True, manifest
           assert manifest["host_sys_unistd_base_sha256"] == manifest["host_sys_unistd_overlay_sha256"], manifest
           assert manifest["host_tool_base_unistd_probe"] == "passed", manifest
+          assert manifest["xnu_required_header_trees_verified"] is True, manifest
           PY
       - uses: actions/upload-artifact@v4
         with:
@@ -82,6 +83,7 @@ jobs:
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/host-sdk-diagnostic.log
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/host-tool-unistd-base-probe.log
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/host-tool-unistd-overlay-probe.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/xnu-staged-header-trees.log
           if-no-files-found: ignore
           retention-days: 5
   cross-build-on-arm64-host:
@@ -124,6 +126,7 @@ jobs:
           assert manifest["host_sys_unistd_headers_match"] is True, manifest
           assert manifest["host_sys_unistd_base_sha256"] == manifest["host_sys_unistd_overlay_sha256"], manifest
           assert manifest["host_tool_base_unistd_probe"] == "passed", manifest
+          assert manifest["xnu_required_header_trees_verified"] is True, manifest
           PY
       - uses: actions/upload-artifact@v4
         with:
@@ -150,5 +153,6 @@ jobs:
             ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/host-sdk-diagnostic.log
             ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/host-tool-unistd-base-probe.log
             ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/host-tool-unistd-overlay-probe.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/xnu-staged-header-trees.log
           if-no-files-found: ignore
           retention-days: 5

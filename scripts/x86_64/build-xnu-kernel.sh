@@ -75,7 +75,7 @@ case "$HOST_PROCESS_TRANSLATED" in
   *) fail "unexpected sysctl.proc_translated value: $HOST_PROCESS_TRANSLATED" ;;
 esac
 
-for tool in git make xcrun xcodebuild sysctl python3 shasum ditto; do
+for tool in git make xcrun xcodebuild sysctl python3 shasum ditto rsync; do
   command -v "$tool" >/dev/null 2>&1 || fail "required host tool not found: $tool"
 done
 
@@ -99,6 +99,9 @@ HOST_CLANG=''
 HOST_OS_VERSION=''
 HOST_SYS_UNISTD_BASE_SHA256=''
 HOST_SYS_UNISTD_OVERLAY_SHA256=''
+XNU_REQUIRED_HEADER_TREES_VERIFIED='false'
+HOST_TOOL_UNISTD_BASE_PROBE_LOG="$OUT_DIR/host-tool-unistd-base-probe.log"
+HOST_TOOL_UNISTD_OVERLAY_PROBE_LOG="$OUT_DIR/host-tool-unistd-overlay-probe.log"
 SDK_DIR="$OUT_DIR/sdk/MacOSX26.1.sdk"
 XNU_KERNEL_FRAMEWORK_DIR="$SDK_DIR/System/Library/Frameworks/Kernel.framework"
 XNU_KERNEL_PRIVATE_HEADERS="$XNU_KERNEL_FRAMEWORK_DIR/PrivateHeaders"
@@ -124,6 +127,7 @@ RESULT="$OUT_DIR/build-result.json"
 SDK_PUBLIC_AVAILABILITY_SHA256_FILE="$OUT_DIR/sdk-public-availability.sha256"
 SDK_PUBLIC_AVAILABILITY_SHA256=''
 HOST_SDK_DIAGNOSTIC_LOG="$OUT_DIR/host-sdk-diagnostic.log"
+XNU_HEADER_TREES_DIAGNOSTIC_LOG="$OUT_DIR/xnu-staged-header-trees.log"
 
 sdk_availability_headers_sha256() {
   local sdk_root="$1" header material=''
@@ -173,6 +177,7 @@ verify_sdk() {
   verify_machine_header_exports
   verify_public_availability_header
   verify_public_sys_unistd_header
+  verify_required_target_header_trees
 }
 
 verify_machine_header_exports() {
@@ -218,6 +223,53 @@ verify_public_sys_unistd_header() {
     || fail 'target SDK overlay changed Xcode public sys/unistd.h'
 }
 
+count_header_tree_files() {
+  local header_tree="$1"
+  if [[ -d "$header_tree" ]]; then
+    find -L "$header_tree" -type f -name '*.h' -print 2>/dev/null | wc -l | awk '{print $1}'
+  else
+    printf '0\n'
+  fi
+}
+
+verify_required_target_header_trees() {
+  local label suffix file_count
+  while IFS='|' read -r label suffix; do
+    [[ -n "$label" ]] || continue
+    file_count="$(count_header_tree_files "$SDK_DIR/$suffix")"
+    [[ "$file_count" =~ ^[1-9][0-9]*$ ]] \
+      || fail "required XNU include tree $suffix has no staged header files"
+  done <<'TREES'
+kernel_usr_local|usr/local/include/kernel
+iBoot_usr_local|usr/local/include/iBoot
+Kernel_framework_AppleFeatures|System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/AppleFeatures
+Kernel_framework_platform|System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/platform
+TREES
+  XNU_REQUIRED_HEADER_TREES_VERIFIED='true'
+}
+
+verify_required_xnu_header_trees() {
+  local label suffix base_count install_count overlay_count
+  : > "$XNU_HEADER_TREES_DIAGNOSTIC_LOG"
+  while IFS='|' read -r label suffix; do
+    [[ -n "$label" ]] || continue
+    base_count="$(count_header_tree_files "$BASE_SDK_DIR/$suffix")"
+    install_count="$(count_header_tree_files "$XNU_HEADERS_DSTROOT/$suffix")"
+    overlay_count="$(count_header_tree_files "$SDK_DIR/$suffix")"
+    printf '%s base_files=%s installhdrs_files=%s overlay_files=%s\n' \
+      "$label" "$base_count" "$install_count" "$overlay_count" \
+      >> "$XNU_HEADER_TREES_DIAGNOSTIC_LOG"
+    [[ "$overlay_count" =~ ^[1-9][0-9]*$ ]] \
+      || fail "required XNU include tree $suffix has no staged header files; see $XNU_HEADER_TREES_DIAGNOSTIC_LOG"
+  done <<'TREES'
+kernel_usr_local|usr/local/include/kernel
+iBoot_usr_local|usr/local/include/iBoot
+Kernel_framework_AppleFeatures|System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/AppleFeatures
+Kernel_framework_platform|System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/platform
+TREES
+  verify_required_target_header_trees
+}
+
 run_host_tool_unistd_probe() {
   local sdk_root="$1" output_file="${2:-/dev/stderr}"
   printf '#include <unistd.h>\nint xnu_host_unistd_probe;\n' |
@@ -236,8 +288,6 @@ verify_host_tool_unistd_probe() {
 record_host_sdk_diagnostics() {
   local base_unistd="$BASE_SDK_DIR/usr/include/sys/unistd.h"
   local overlay_unistd="$SDK_DIR/usr/include/sys/unistd.h"
-  local base_probe_log="$OUT_DIR/host-tool-unistd-base-probe.log"
-  local overlay_probe_log="$OUT_DIR/host-tool-unistd-overlay-probe.log"
   local headers_match='false' overlay_probe='failed'
   [[ -s "$base_unistd" ]] || fail "base Xcode SDK is missing $base_unistd"
   [[ -s "$overlay_unistd" ]] || fail "XNU SDK overlay is missing $overlay_unistd"
@@ -247,9 +297,9 @@ record_host_sdk_diagnostics() {
     headers_match='true'
   fi
 
-  : > "$base_probe_log"
-  verify_host_tool_unistd_probe "$BASE_SDK_DIR" 'base Xcode' "$base_probe_log"
-  if run_host_tool_unistd_probe "$SDK_DIR" "$overlay_probe_log"; then
+  : > "$HOST_TOOL_UNISTD_BASE_PROBE_LOG"
+  verify_host_tool_unistd_probe "$BASE_SDK_DIR" 'base Xcode' "$HOST_TOOL_UNISTD_BASE_PROBE_LOG"
+  if run_host_tool_unistd_probe "$SDK_DIR" "$HOST_TOOL_UNISTD_OVERLAY_PROBE_LOG"; then
     overlay_probe='passed'
   fi
 
@@ -275,7 +325,7 @@ record_host_sdk_diagnostics() {
   if [[ "$overlay_probe" == failed ]]; then
     {
       printf '\n--- overlay host-tool unistd probe failure ---\n'
-      cat "$overlay_probe_log"
+      cat "$HOST_TOOL_UNISTD_OVERLAY_PROBE_LOG"
     } >> "$HOST_SDK_DIAGNOSTIC_LOG"
   fi
   printf 'Host-tool SDK diagnostics: base sys/unistd.h %s; overlay %s; base probe passed, overlay probe %s\n' \
@@ -645,7 +695,8 @@ fi
 verify_availability_source
 
 verify_xcode_and_sdk
-verify_host_tool_unistd_probe "$BASE_SDK_DIR" 'base Xcode'
+: > "$HOST_TOOL_UNISTD_BASE_PROBE_LOG"
+verify_host_tool_unistd_probe "$BASE_SDK_DIR" 'base Xcode' "$HOST_TOOL_UNISTD_BASE_PROBE_LOG"
 CLANG="$(xcrun --find clang)"
 LD="$(xcrun --find ld)"
 IIG="$(xcrun --find iig)"
@@ -715,10 +766,12 @@ XNU_PRIVATE_INCLUDE_DSTROOT="$XNU_HEADERS_DSTROOT/usr/local/include"
   || fail 'XNU installhdrs did not produce Kernel.framework headers'
 [[ -d "$XNU_PRIVATE_INCLUDE_DSTROOT" ]] \
   || fail 'XNU installhdrs did not produce usr/local/include private headers'
-# Keep the SDK's public usr/include tree from installhdrs out of the target overlay.
+# Merge only XNU's private trees; retain base SDK headers such as iBoot,
+# AppleFeatures, and platform that are also required by MakeInc.def.
 mkdir -p "$SDK_DIR/System/Library/Frameworks" "$SDK_DIR/usr/local"
-ditto "$XNU_KERNEL_FRAMEWORK_DSTROOT" "$XNU_KERNEL_FRAMEWORK_DIR"
-ditto "$XNU_PRIVATE_INCLUDE_DSTROOT" "$SDK_DIR/usr/local/include"
+rsync -a "$XNU_KERNEL_FRAMEWORK_DSTROOT/" "$XNU_KERNEL_FRAMEWORK_DIR/"
+rsync -a "$XNU_PRIVATE_INCLUDE_DSTROOT/" "$SDK_DIR/usr/local/include/"
+verify_required_xnu_header_trees
 [[ -s "$SDK_DIR/usr/local/include/os/atomic_private.h" ]] \
   || fail 'XNU installhdrs did not stage usr/local/include/os/atomic_private.h'
 [[ -s "$SDK_DIR/usr/local/include/firehose/tracepoint_private.h" ]] \
@@ -783,6 +836,7 @@ host_sys_unistd_base_sha256=$HOST_SYS_UNISTD_BASE_SHA256
 host_sys_unistd_overlay_sha256=$HOST_SYS_UNISTD_OVERLAY_SHA256
 host_sys_unistd_headers_match=$([[ "$HOST_SYS_UNISTD_BASE_SHA256" == "$HOST_SYS_UNISTD_OVERLAY_SHA256" ]] && printf true || printf false)
 host_tool_base_unistd_probe=passed
+xnu_required_header_trees_verified=$XNU_REQUIRED_HEADER_TREES_VERIFIED
 sdk_version=$SDK_VERSION
 platform=MacOSX
 arch_config=X86_64
@@ -830,7 +884,8 @@ python3 - "$PACKAGE_KERNEL" "$RESULT" "$XNU_COMMIT" "$XNU_TAG" "$SOURCE_VERSION"
   "$AVAILABILITY_COMMIT" "$AVAILABILITY_TAG" "$AVAILABILITY_TOOL_SHA256" \
   "$SDK_PUBLIC_AVAILABILITY_SHA256" "$MACHINE_CPU_NUMBER_SHA256" "$I386_CPU_NUMBER_SHA256" \
   "$HOST_ARCH" "$BUILD_HOST_MODE" "$HOST_PROCESS_ARCH" "$HOST_PROCESS_TRANSLATED" \
-  "$BASE_SDK_DIR" "$HOST_SYS_UNISTD_BASE_SHA256" "$HOST_SYS_UNISTD_OVERLAY_SHA256" <<'PY'
+  "$BASE_SDK_DIR" "$HOST_SYS_UNISTD_BASE_SHA256" "$HOST_SYS_UNISTD_OVERLAY_SHA256" \
+  "$XNU_REQUIRED_HEADER_TREES_VERIFIED" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -853,6 +908,7 @@ result = {
     "host_sys_unistd_overlay_sha256": sys.argv[25],
     "host_sys_unistd_headers_match": sys.argv[24] == sys.argv[25],
     "host_tool_base_unistd_probe": "passed",
+    "xnu_required_header_trees_verified": sys.argv[26] == "true",
     "xnu_commit": sys.argv[3],
     "xnu_tag": sys.argv[4],
     "xnu_source_version": sys.argv[5],

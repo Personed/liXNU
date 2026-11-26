@@ -79,6 +79,8 @@ off cleanly. TCG runs on every CI attempt; the script adds a KVM run when `/dev/
 This is a host-only call/return test. It does not enter XNU, change `fki.h`, enable FKI capabilities, change CR3 or GS,
 install or replace Linux IDT, page-fault, general-protection, or syscall handlers, or run C under foreign host state.
 Passing it does not establish native XNU runtime support or prove the proposed early exception/syscall bridge.
+The separate [test-only entry/return contract](../../docs/x86_64-entry-return-contract.md) defines the next gates and
+lists the Tahoe artifact and ABI evidence still required before a synthetic one-CPU entry envelope can be implemented.
 
 `build-fki.sh KDIR` now builds the x86_64 FKI host backend. `build-xnu-objects.sh KDIR` compiles `macho.o` and `adt.o`
 as validation objects without linking them into `xnu.ko`; on x86_64 `macho_rebase()` returns `-EOPNOTSUPP` rather than

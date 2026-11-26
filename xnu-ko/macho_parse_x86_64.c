@@ -189,12 +189,6 @@ static int relative_range_ok(unsigned long region_size, xnu_macho_u32 offset,
 	       size <= region_size - (unsigned long)offset;
 }
 
-static int ranges_overlap(unsigned long first_start, unsigned long first_end,
-			  unsigned long second_start, unsigned long second_end)
-{
-	return first_start < second_end && second_start < first_end;
-}
-
 static int x86_chained_pointer_format_supported(xnu_macho_u16 pointer_format)
 {
 	return pointer_format == DYLD_CHAINED_PTR_64 ||
@@ -203,17 +197,27 @@ static int x86_chained_pointer_format_supported(xnu_macho_u16 pointer_format)
 	       pointer_format == DYLD_CHAINED_PTR_X86_64_KERNEL_CACHE;
 }
 
-static int chained_start_offset_ok(xnu_macho_u16 start, xnu_macho_u16 page_size)
+static int chained_start_file_range_ok(
+	const struct xnu_macho_x86_64_segment *segment,
+	xnu_macho_u32 page_index, xnu_macho_u16 start,
+	xnu_macho_u16 page_size)
 {
-	/* All accepted x86_64 chained pointer formats store an eight-byte word. */
-	return start < page_size && page_size - start >= 8;
+	xnu_macho_u64 segment_offset =
+		(xnu_macho_u64)page_index * page_size + start;
+
+	/* Accepted x86_64 chained pointers occupy an eight-byte file-backed word. */
+	return start < page_size && page_size - start >= 8 &&
+	       segment_offset <= segment->vmsize &&
+	       segment->vmsize - segment_offset >= 8 &&
+	       segment_offset <= segment->filesize &&
+	       segment->filesize - segment_offset >= 8;
 }
 
 static int parse_chained_starts_in_segment(
 	const unsigned char *starts, unsigned long starts_size,
 	xnu_macho_u32 starts_table_size, xnu_macho_u32 starts_offset,
 	struct xnu_macho_x86_64_segment *segment,
-	xnu_macho_u64 image_vm_low)
+	xnu_macho_u64 preferred_load_address)
 {
 	const unsigned char *record;
 	xnu_macho_u32 record_size;
@@ -222,8 +226,6 @@ static int parse_chained_starts_in_segment(
 	xnu_macho_u16 page_count;
 	xnu_macho_u64 segment_offset;
 	unsigned long min_size;
-	unsigned long extra_start_count;
-	unsigned long total_start_count;
 	xnu_macho_u64 pages_in_segment;
 	xnu_macho_u32 i;
 
@@ -247,8 +249,8 @@ static int parse_chained_starts_in_segment(
 		return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
 	if (!x86_chained_pointer_format_supported(pointer_format))
 		return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
-	if (!segment->vmsize || segment->vmaddr < image_vm_low ||
-	    segment_offset != segment->vmaddr - image_vm_low)
+	if (!segment->vmsize ||
+	    segment_offset != segment->vmaddr - preferred_load_address)
 		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
 
 	pages_in_segment = segment->vmsize / page_size;
@@ -257,9 +259,6 @@ static int parse_chained_starts_in_segment(
 	if ((xnu_macho_u64)page_count > pages_in_segment)
 		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
 
-	extra_start_count =
-		(record_size - min_size) / 2UL;
-	total_start_count = (unsigned long)page_count + extra_start_count;
 	for (i = 0; i < page_count; i++) {
 		xnu_macho_u16 start =
 			read_u16le(record + DYLD_CHAINED_STARTS_IN_SEGMENT_HEADER_SIZE +
@@ -267,36 +266,10 @@ static int parse_chained_starts_in_segment(
 
 		if (start == DYLD_CHAINED_PTR_START_NONE)
 			continue;
-		if (!(start & DYLD_CHAINED_PTR_START_MULTI)) {
-			if (!chained_start_offset_ok(start, page_size))
-				return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
-			continue;
-		}
-
-		{
-			unsigned long index = start & ~DYLD_CHAINED_PTR_START_MULTI;
-			unsigned long j;
-			int found_last = 0;
-
-			if (index < page_count || index >= total_start_count)
-				return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
-			for (j = index; j < total_start_count; j++) {
-				xnu_macho_u16 multi = read_u16le(
-					record + DYLD_CHAINED_STARTS_IN_SEGMENT_HEADER_SIZE +
-					j * 2UL);
-				xnu_macho_u16 page_start =
-					multi & ~DYLD_CHAINED_PTR_START_LAST;
-
-				if (!chained_start_offset_ok(page_start, page_size))
-					return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
-				if (multi & DYLD_CHAINED_PTR_START_LAST) {
-					found_last = 1;
-					break;
-				}
-			}
-			if (!found_last)
-				return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
-		}
+		if (start & DYLD_CHAINED_PTR_START_MULTI)
+			return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
+		if (!chained_start_file_range_ok(segment, i, start, page_size))
+			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
 	}
 
 	segment->chained_pointer_format = pointer_format;
@@ -309,6 +282,7 @@ static int parse_chained_fixups(const unsigned char *file,
 				unsigned long file_size,
 				xnu_macho_u32 data_offset,
 				xnu_macho_u32 data_size,
+				xnu_macho_u64 preferred_load_address,
 				struct xnu_macho_x86_64_info *out)
 {
 	const unsigned char *payload;
@@ -325,11 +299,13 @@ static int parse_chained_fixups(const unsigned char *file,
 	unsigned long starts_size;
 	unsigned long imports_entry_size = 0;
 	unsigned long imports_table_size = 0;
-	unsigned long imports_range_end = 0;
 	unsigned long i;
 	unsigned long range_start[XNU_MACHO_X86_64_MAX_SEGMENTS];
 	unsigned long range_end[XNU_MACHO_X86_64_MAX_SEGMENTS];
 	unsigned long range_count = 0;
+	xnu_macho_u16 image_pointer_format = 0;
+	int have_image_pointer_format = 0;
+	int has_zero_vm_segment_omission = 0;
 
 	if (!file_range_ok(file_size, data_offset, data_size) ||
 	    data_size < DYLD_CHAINED_FIXUPS_HEADER_SIZE)
@@ -348,79 +324,81 @@ static int parse_chained_fixups(const unsigned char *file,
 	    (starts_offset & 3U) ||
 	    !relative_range_ok(data_size, starts_offset, sizeof(xnu_macho_u32)) ||
 	    imports_offset > data_size || symbols_offset > data_size ||
-	    (imports_offset && imports_offset < DYLD_CHAINED_FIXUPS_HEADER_SIZE) ||
-	    (symbols_offset && symbols_offset < DYLD_CHAINED_FIXUPS_HEADER_SIZE))
+	    starts_offset > imports_offset || imports_offset > symbols_offset)
 		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
-	if (symbols_format > 1U)
+	if (symbols_format != 0U)
 		return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
-	if (imports_count) {
-		switch (imports_format) {
-		case 1: imports_entry_size = 4; break;
-		case 2: imports_entry_size = 8; break;
-		case 3: imports_entry_size = 16; break;
-		default:
-			return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
-		}
-		imports_table_size = (unsigned long)imports_count * imports_entry_size;
-		if (imports_offset < DYLD_CHAINED_FIXUPS_HEADER_SIZE ||
-		    (imports_offset & 3U) ||
-		    !relative_range_ok(data_size, imports_offset,
-				       imports_table_size))
-			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
-		imports_range_end = (unsigned long)imports_offset + imports_table_size;
-	} else if (imports_format > 3U) {
+	switch (imports_format) {
+	case 1: imports_entry_size = 4; break;
+	case 2: imports_entry_size = 8; break;
+	case 3: imports_entry_size = 16; break;
+	default:
 		return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
 	}
-	if (imports_table_size && symbols_offset &&
-	    ranges_overlap(imports_offset, imports_range_end,
-			   symbols_offset, data_size))
+	imports_table_size = (unsigned long)imports_count * imports_entry_size;
+	if ((imports_offset & 3U) ||
+	    !relative_range_ok(symbols_offset, imports_offset, imports_table_size))
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	/* Imports carry name offsets into a nonempty symbols pool. */
+	if (imports_count && symbols_offset >= data_size)
 		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
 
-	starts_size = data_size - starts_offset;
+	starts_size = imports_offset - starts_offset;
+	if (starts_size < sizeof(xnu_macho_u32))
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
 	starts = payload + starts_offset;
 	starts_segment_count = read_u32le(starts);
-	if (starts_segment_count != out->segment_count ||
+	if (starts_segment_count > out->segment_count ||
 	    starts_segment_count > XNU_MACHO_X86_64_MAX_SEGMENTS)
 		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	if (starts_segment_count != out->segment_count) {
+		struct xnu_macho_x86_64_segment *linkedit;
+		struct xnu_macho_x86_64_segment *omitted;
+
+		if (starts_segment_count + 1U != out->segment_count ||
+		    !starts_segment_count)
+			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+		linkedit = &out->segments[out->segment_count - 1U];
+		omitted = &out->segments[starts_segment_count - 1U];
+		/* Match Tahoe dyld's narrow CTF exception: the sole omitted slot is
+		 * the zero-VM segment immediately before a final __LINKEDIT.
+		 */
+		if (!fixed_name_is(linkedit->name, "__LINKEDIT", 10) || omitted->vmsize)
+			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+		has_zero_vm_segment_omission = 1;
+	}
 	starts_table_size = 4U + starts_segment_count * 4U;
 	if (starts_size < starts_table_size)
-		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
-	if ((imports_table_size &&
-	     ranges_overlap(starts_offset, (unsigned long)starts_offset + starts_table_size,
-			imports_offset, imports_range_end)) ||
-	    (symbols_offset &&
-	     ranges_overlap(starts_offset, (unsigned long)starts_offset + starts_table_size,
-			    symbols_offset, data_size)))
 		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
 	out->chained_starts_segment_count = starts_segment_count;
 	for (i = 0; i < starts_segment_count; i++) {
 		xnu_macho_u32 segment_info_offset = read_u32le(starts + 4 + i * 4UL);
 		struct xnu_macho_x86_64_segment *segment = &out->segments[i];
 		unsigned long end;
-		unsigned long absolute_start;
-		unsigned long absolute_end;
 		unsigned long j;
 		int err;
 
+		if (has_zero_vm_segment_omission &&
+		    i == starts_segment_count - 1U && segment_info_offset)
+			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
 		if (!segment_info_offset)
 			continue;
 		err = parse_chained_starts_in_segment(starts, starts_size,
 						     starts_table_size,
 						     segment_info_offset,
-						     segment, out->vm_low);
+						     segment,
+						     preferred_load_address);
 		if (err)
 			return err;
+		if (!have_image_pointer_format) {
+			image_pointer_format =
+				(xnu_macho_u16)segment->chained_pointer_format;
+			have_image_pointer_format = 1;
+		} else if (segment->chained_pointer_format != image_pointer_format) {
+			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+		}
 		end = (unsigned long)segment_info_offset +
 		      read_u32le(starts + segment_info_offset);
-		absolute_start = (unsigned long)starts_offset + segment_info_offset;
-		absolute_end = (unsigned long)starts_offset + end;
-		if ((imports_table_size &&
-		     ranges_overlap(absolute_start, absolute_end,
-				    imports_offset, imports_range_end)) ||
-		    (symbols_offset &&
-		     ranges_overlap(absolute_start, absolute_end,
-				    symbols_offset, data_size)))
-			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
 		for (j = 0; j < range_count; j++) {
 			if ((unsigned long)segment_info_offset < range_end[j] &&
 			    range_start[j] < end)
@@ -583,6 +561,8 @@ int xnu_macho_x86_64_parse(const void *input, unsigned long file_size,
 	xnu_macho_u32 symtab_count = 0;
 	xnu_macho_u32 entry_matches = 0;
 	xnu_macho_u64 entry = 0;
+	xnu_macho_u64 preferred_load_address = 0;
+	xnu_macho_u32 text_segment_count = 0;
 	int have_loaded_segment = 0;
 
 	if (!out)
@@ -633,6 +613,11 @@ int xnu_macho_x86_64_parse(const void *input, unsigned long file_size,
 				return reject(out, err);
 			if (out->segment_count >= XNU_MACHO_X86_64_MAX_SEGMENTS)
 				return reject(out, -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP);
+			if (fixed_name_is(segment.name, "__TEXT", 6)) {
+				if (++text_segment_count != 1)
+					return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
+				preferred_load_address = segment.vmaddr;
+			}
 			plan_segment = &out->segments[out->segment_count];
 			export_segment_plan(plan_segment, &segment);
 			out->segment_count++;
@@ -704,9 +689,14 @@ int xnu_macho_x86_64_parse(const void *input, unsigned long file_size,
 	    !have_loaded_segment || out->vm_high <= out->vm_low)
 		return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
 	if (chained_fixups_count) {
-		int err = parse_chained_fixups(file, file_size,
+		int err;
+
+		if (text_segment_count != 1)
+			return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
+		err = parse_chained_fixups(file, file_size,
 					       chained_fixups_data_offset,
-					       chained_fixups_data_size, out);
+					       chained_fixups_data_size,
+					       preferred_load_address, out);
 
 		if (err)
 			return reject(out, err);

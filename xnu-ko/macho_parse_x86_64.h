@@ -62,10 +62,16 @@ struct xnu_macho_x86_64_info {
  * that subset and -ENOEXEC for malformed input. The output contains at most
  * XNU_MACHO_X86_64_MAX_SEGMENTS descriptors in Mach-O command order. Chained-
  * fixup headers and starts tables are structurally validated and summarized,
- * never interpreted or applied. Dyld-info extents are only bounds-checked and
- * flagged. Unknown optional commands are counted. Callers must not infer
- * loader/fixup support from success. On every failure with a non-NULL output
- * pointer, zero the complete output.
+ * never interpreted or applied. For nonzero import counts, a nonempty symbols
+ * pool after the header is required and the import table extent is checked;
+ * individual import name offsets and string contents are not validated.
+ * Dyld page-count prefixes are preserved; x86_64 MULTI/LAST starts are
+ * unsupported. The sole segment-count exception accepts one zero-VM segment
+ * immediately before a final __LINKEDIT only when its starts slot is empty.
+ * Dyld-info extents are only bounds-checked and flagged. Unknown optional
+ * commands are counted. Callers must not infer loader/fixup support from
+ * success. On every failure with a non-NULL output pointer, zero the complete
+ * output.
  */
 int xnu_macho_x86_64_parse(const void *file, unsigned long file_size,
 			   struct xnu_macho_x86_64_info *out);

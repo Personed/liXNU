@@ -32,10 +32,20 @@ This change adds a source-pinned x86 `boot_args` v2/revision-0 layout and a
 core-field fixture builder based on
 `pexpert/pexpert/i386/boot.h` in the pinned XNU commit. It asserts the 4096-byte
 structure and key field offsets, validates EFI memory-map descriptor extents,
-requires 64-bit EFI mode, and rejects any physical range that cannot be
-represented by the source structure's 32-bit address fields. Synthetic tests
-cover valid core fields, malformed lengths, unsupported versions/modes,
-unterminated command lines, and low-address boundary overflow.
+requires 64-bit EFI mode, and applies the source's range semantics per field.
+The memory-map and device-tree bases and lengths are widened before their data
+is traversed (`ml_static_ptovirt()` in
+`osfmk/i386/AT386/model_dep.c` and `pexpert/i386/pe_init.c`), so their
+end-exclusive address may equal 4 GiB: the interval `[0xfffff000, 0x100000000)`
+contains only representable 32-bit physical addresses. The kernel interval is
+stricter: `osfmk/i386/i386_init.c` first evaluates
+`uint32_t lphysfree = kaddr + ksize`, and `osfmk/i386/pmap_common.c` also adds
+those fields before widening. Therefore its end-exclusive sum must not exceed
+`UINT32_MAX`; allowing 4 GiB would wrap XNU's intermediate addition. Synthetic
+tests cover the final 4 KiB page for the memory map and device tree, rejection
+of the same wrapping kernel interval, malformed lengths, unsupported
+versions/modes, unterminated command lines, and intervals extending past the
+32-bit physical-address space.
 
 The builder initializes only a core subset. EFI system-table, runtime-service,
 video, security, and target-specific entry fields remain unset. The helper is

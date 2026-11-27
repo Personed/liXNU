@@ -62,6 +62,8 @@ At the time of this update, the attached executor is a Debian 13 x86-64 VM under
 | Physical AMD x86-64 Linux PC, QEMU TCG | Not tested; some CI runs used AMD EPYC virtual CPUs, which do not establish bare-metal AMD support. |
 | Windows Server 2025 x86-64 hosted VM, QEMU TCG | PR #115 run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996) passed on the same tested stack (`1b3beb5`); QEMU 11.1.0, `cortex-a710`, guest 6 GiB; AMD64 Family 25 Model 17 Stepping 1, 4 logical CPUs; 17,174,360,064 bytes total / 13,685,481,472 available before QEMU; RSS not measured. This is a hosted VM result, not a physical Windows PC result. |
 | Intel macOS 15 hosted runner, QEMU TCG | PR #115 run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996) passed on the same tested stack (`1b3beb5`); macOS 15.7.9, QEMU 11.1.0, `cortex-a710`, guest 6 GiB; Intel Core i7-8700B, 4 logical CPUs; 15,032,385,536 bytes total / 10,482,348,032 available before QEMU; peak RSS 3,643,496 KiB (3.47 GiB). This is a hosted Intel macOS VM result, not a physical-PC result. |
+| Physical Windows 11 x86-64 PC, QEMU TCG | Not tested; the Windows Server 2025 result is from a hosted VM and does not establish Windows client support. |
+| Physical Intel macOS host, QEMU TCG | Not tested; the macOS 15 runner is hosted and does not establish a physical Intel Mac profile. |
 
 Run #172 used the same paired ARM64 Linux guest, initramfs, and PureDarwin disk across
 all three hosts. All six workflow jobs passed: image creation, real HFS+ disk and

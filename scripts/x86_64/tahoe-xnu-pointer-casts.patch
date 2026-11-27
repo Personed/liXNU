@@ -152,3 +152,39 @@ index 6a00f0e957000463bea6ff24f68542ab38807228..78ca0ec4fc689505f4c5459b6cc47762
  
  	if (!task) {
  		goto done;
+diff --git a/bsd/netinet/in_arp.c b/bsd/netinet/in_arp.c
+--- a/bsd/netinet/in_arp.c
++++ b/bsd/netinet/in_arp.c
+@@ -93,7 +93,7 @@
+ 
+ #include <net/sockaddr_utils.h>
+ 
+-static const size_t MAX_HW_LEN = 10;
++enum { MAX_HW_LEN = 10 };
+ 
+ /*
+  * Synchronization notes:
+diff --git a/libkern/c++/OSNumber.cpp b/libkern/c++/OSNumber.cpp
+--- a/libkern/c++/OSNumber.cpp
++++ b/libkern/c++/OSNumber.cpp
+@@ -207,7 +207,7 @@ void
+ OSNumber::addValue(signed long long inValue)
+ {
+ 	if ((size == 63) || (size == 31)) {
+-		fpValue += inValue;
++		fpValue += (double)inValue;
+ 	} else {
+ 		value = ((value + inValue) & sizeMask);
+ 	}
+diff --git a/osfmk/kern/btlog.c b/osfmk/kern/btlog.c
+--- a/osfmk/kern/btlog.c
++++ b/osfmk/kern/btlog.c
+@@ -1750,7 +1750,7 @@ uint32_t
+ btlog_guess_top(btlogu_t btlu, vm_address_t bt[], uint32_t *len)
+ {
+ 	struct btlog_hash *btlh = btlu.btlh;
+-	const unsigned RECS = 8;
++	enum { RECS = 8 };
+ 	struct btlog_record recs[RECS] = {0};
+ 	bt_stack_t bts;
+ 

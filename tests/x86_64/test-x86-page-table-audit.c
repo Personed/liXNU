@@ -113,6 +113,12 @@ static void test_bootstrap_tree(void)
 	assert(xnu_x86_page_table_audit(&boot, base, OWNED_BYTES) == 0);
 	directory[0] = PRESENT_RW | LARGE;
 	assert(xnu_x86_page_table_audit(&boot, base, OWNED_BYTES) == -ERANGE);
+
+	/* Remove the low path so only the high alias sees this leaf. */
+	boot_pages[0] = 0;
+	assert(xnu_x86_page_table_audit(&boot, base, OWNED_BYTES) == -ERANGE);
+	directory[0] = 0;
+	assert(xnu_x86_page_table_audit(&boot, base, OWNED_BYTES) == 0);
 }
 
 int main(void)

@@ -21,6 +21,8 @@ struct xnu_x86_page_table_snapshot {
  * or 2 MiB leaf must fit in the caller's owned physical region. The
  * snapshot itself must be sourced wholly from that region. The selected
  * profile uses plain physical addresses, NX, and zero absent entries.
+ * The walk returns -E2BIG after 8192 table visits. Each path to a shared
+ * page counts as a visit, including the low and high bootstrap aliases.
  *
  * This checks physical coverage. The caller still owns pinning, mapping
  * permissions and virtual layout, and must keep the verified tables stable

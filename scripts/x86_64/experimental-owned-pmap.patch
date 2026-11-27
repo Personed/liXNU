@@ -1,5 +1,5 @@
 diff --git a/osfmk/i386/i386_init.c b/osfmk/i386/i386_init.c
-index d66e3f8..7773d7e 100644
+index d66e3f8..44ad514 100644
 --- a/osfmk/i386/i386_init.c
 +++ b/osfmk/i386/i386_init.c
 @@ -115,6 +115,13 @@ extern void xcpm_bootstrap(void);
@@ -16,7 +16,7 @@ index d66e3f8..7773d7e 100644
  #if DEBUG || DEVELOPMENT
  #define DBG(x, ...)          kprintf(x, ##__VA_ARGS__)
  #define dyldLogFunc(x, ...) kprintf(x, ##__VA_ARGS__)
-@@ -177,6 +184,32 @@ int insn_copyin_count;
+@@ -177,6 +184,33 @@ int insn_copyin_count;
  char *physfree;
  void idt64_remap(void);
  
@@ -30,6 +30,7 @@ index d66e3f8..7773d7e 100644
 +	uintptr_t first_free = (uintptr_t)physfree;
 +
 +	if (args->Version != kBootArgsVersion || args->Revision != kBootArgsRevision0 ||
++	    !args->PhysicalMemorySize || args->PhysicalMemorySize > K64_MAXMEM ||
 +	    !linux_hosted_boot_memory_init(&linux_hosted_memory,
 +	    args->bootMemStart, args->bootMemSize) ||
 +	    !linux_hosted_boot_contains(&linux_hosted_memory, first_free, PAGE_SIZE)) {
@@ -49,7 +50,7 @@ index d66e3f8..7773d7e 100644
  TUNABLE(bool, restore_boot, "-restore", false);
  
  /*
-@@ -187,6 +220,12 @@ static void *
+@@ -187,6 +221,12 @@ static void *
  ALLOCPAGES(int npages)
  {
  	uintptr_t tmp = (uintptr_t)physfree;
@@ -62,7 +63,7 @@ index d66e3f8..7773d7e 100644
  	bzero(physfree, npages * PAGE_SIZE);
  	physfree += npages * PAGE_SIZE;
  	tmp += VM_MIN_KERNEL_ADDRESS & ~LOW_4GB_MASK;
-@@ -244,6 +283,16 @@ physmap_init_L2(uint64_t *physStart, pt_entry_t **l2ptep)
+@@ -244,6 +284,16 @@ physmap_init_L2(uint64_t *physStart, pt_entry_t **l2ptep)
  	}
  
  	for (i = 0; i < NPDPG; i++) {
@@ -79,7 +80,7 @@ index d66e3f8..7773d7e 100644
  		physmapL2[i] = *physStart
  		    | INTEL_PTE_PS
  		    | INTEL_PTE_VALID
-@@ -396,9 +445,19 @@ Idle_PTs_init(void)
+@@ -396,9 +446,19 @@ Idle_PTs_init(void)
  	IdlePDPT = ALLOCPAGES(1);               /* level 3 */
  	IdlePML4 = ALLOCPAGES(1);               /* level 4 */
  
@@ -99,7 +100,7 @@ index d66e3f8..7773d7e 100644
  
  	/* IdlePTD */
  	fillkpt(IdlePTD,
-@@ -722,6 +781,9 @@ vstart(vm_offset_t boot_args_start)
+@@ -722,6 +782,9 @@ vstart(vm_offset_t boot_args_start)
  		kernelBootArgs = (boot_args *)boot_args_start;
  		lphysfree = kernelBootArgs->kaddr + kernelBootArgs->ksize;
  		physfree = (void *)(uintptr_t)((lphysfree + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
@@ -109,7 +110,7 @@ index d66e3f8..7773d7e 100644
  
  		pal_serial_init();
  
-@@ -1172,6 +1234,14 @@ doublemap_init(uint8_t randL3)
+@@ -1172,6 +1235,14 @@ doublemap_init(uint8_t randL3)
  	unsigned long hdescsz = hdescseg->vmsize;
  	unsigned long hdescszr = round_page_64(hdescsz);
  	vm_offset_t hdescc = hdescb, hdesce = hdescb + hdescszr;

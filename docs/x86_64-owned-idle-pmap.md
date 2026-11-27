@@ -11,7 +11,8 @@ The loader supplies the bounds of one Linux-owned physical reservation in
 `bootMemStart` and `bootMemSize`. The entire range consists of 2 MiB
 leaves below 4 GiB. The loader must hold it until final XNU shutdown and
 place the image, boot arguments, EFI map and ADT before the first
-bootstrap allocation. It must validate the EFI allocator boundary and the
+bootstrap allocation. The advertised physical memory must be nonzero
+and within `K64_MAXMEM`. The loader must validate the EFI allocator boundary and the
 initial `BootPTD` separately. The patch checks these addresses at the
 start of `vstart()`, before the page table allocator runs.
 

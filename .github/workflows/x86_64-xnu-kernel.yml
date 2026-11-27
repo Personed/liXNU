@@ -47,6 +47,10 @@ jobs:
             --source-root "$source_root" \
             --patch xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch \
             --apply
+      - name: Check compatibility patch after applying the CPUID guard
+        run: |
+          git -C "$RUNNER_TEMP/xnu-source" apply --check --whitespace=error \
+            "$GITHUB_WORKSPACE/scripts/x86_64/tahoe-xnu-pointer-casts.patch"
   build-kernel:
     runs-on: macos-26-intel
     timeout-minutes: 120

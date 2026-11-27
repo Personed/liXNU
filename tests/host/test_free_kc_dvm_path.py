@@ -353,7 +353,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
             )
 
     def test_xnu_rebuild_builds_required_puredarwin_kexts_without_kernelcache(self):
-        def run_rebuild(fail_kext=None):
+        def run_rebuild(fail_kext=None, fail_layout_check=False):
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 dvm = root / "Droid VM workspace"
@@ -371,6 +371,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                 kernel_builder.write_text(
                     "#!/bin/sh\n"
                     "mkdir -p out/k27\n"
+                    "printf 'build\\n' >> \"$EVENT_CAPTURE\"\n"
                     "printf 'fixture kernel\\n' > out/k27/kernel-k27.macho\n",
                     encoding="utf-8",
                 )
@@ -391,6 +392,16 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                 python = fake_bin / "python3"
                 python.write_text(
                     "#!/bin/sh\n"
+                    "if [ \"$1\" = \"$POC/scripts/free-kc/fit_kernel_segments.py\" ]; then\n"
+                    "  if [ \"${2:-}\" = --check ]; then\n"
+                    "    printf 'check %s %s %s\\n' \"$2\" \"$3\" \"$4\" >> \"$EVENT_CAPTURE\"\n"
+                    "    [ \"${FAIL_LAYOUT_CHECK:-0}\" != 1 ] || exit 42\n"
+                    "    exit 0\n"
+                    "  fi\n"
+                    "  printf 'fit %s %s\\n' \"$2\" \"$3\" >> \"$EVENT_CAPTURE\"\n"
+                    "  echo 'relink kernel: fixture layout changed'\n"
+                    "  exit 0\n"
+                    "fi\n"
                     "[ \"$1\" = scripts/build-native-kext.py ] || exit 88\n"
                     "printf 'CALL\\0' >> \"$KEXT_CAPTURE\"\n"
                     "printf '%s\\0' \"$@\" >> \"$KEXT_CAPTURE\"\n"
@@ -410,16 +421,24 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
 
                 capture = root / "kext-builds.txt"
                 capture.touch()
+                event_capture = root / "rebuild-events.txt"
+                event_capture.touch()
                 env = os.environ.copy()
                 env.update(
                     {
                         "DVM": str(dvm),
+                        "EVENT_CAPTURE": str(event_capture),
                         "KEXT_CAPTURE": str(capture),
                         "KEXT_OBJ": "objects with spaces",
                         "PATH": str(fake_bin) + os.pathsep + env["PATH"],
                         "POC": str(poc),
                     }
                 )
+                env.pop("BUILD_NATIVE_KEXTS", None)
+                if fail_layout_check:
+                    env["FAIL_LAYOUT_CHECK"] = "1"
+                else:
+                    env.pop("FAIL_LAYOUT_CHECK", None)
                 if fail_kext is None:
                     env.pop("FAIL_KEXT", None)
                 else:
@@ -438,7 +457,8 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                     [value.decode() for value in call.split(b"\0") if value]
                     for call in capture.read_bytes().split(b"CALL\0")[1:]
                 ]
-                return result, calls, poc
+                events = event_capture.read_text(encoding="utf-8").splitlines()
+                return result, calls, poc, events
 
         def expected_kext_args(poc, name):
             return [
@@ -451,20 +471,51 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                 "objects with spaces",
             ]
 
-        result, calls, poc = run_rebuild()
+        result, calls, poc, events = run_rebuild()
         self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(
+            events,
+            [
+                "build",
+                "fit out/k27/kernel-k27.macho k27/segaddrs.sh",
+                "build",
+                "check --check out/k27/kernel-k27.macho k27/segaddrs.sh",
+            ],
+        )
         self.assertEqual(
             calls,
             [expected_kext_args(poc, name) for name in ("XnuCPU", "XnuDisk", "XnuDrm")],
         )
 
-        result, calls, poc = run_rebuild(fail_kext="XnuDisk")
+        result, calls, poc, events = run_rebuild(fail_kext="XnuDisk")
         self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(
+            events,
+            [
+                "build",
+                "fit out/k27/kernel-k27.macho k27/segaddrs.sh",
+                "build",
+                "check --check out/k27/kernel-k27.macho k27/segaddrs.sh",
+            ],
+        )
         self.assertEqual(
             calls,
             [expected_kext_args(poc, name) for name in ("XnuCPU", "XnuDisk")],
         )
         self.assertIn("kext XnuDisk is required for the PureDarwin collection", result.stdout)
+
+        result, calls, _poc, events = run_rebuild(fail_layout_check=True)
+        self.assertEqual(result.returncode, 42, result.stdout)
+        self.assertEqual(
+            events,
+            [
+                "build",
+                "fit out/k27/kernel-k27.macho k27/segaddrs.sh",
+                "build",
+                "check --check out/k27/kernel-k27.macho k27/segaddrs.sh",
+            ],
+        )
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

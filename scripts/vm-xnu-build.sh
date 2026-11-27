@@ -86,7 +86,7 @@ patch_cctools() {
     grep -n -B3 'thread_state_data_t\[' "$T"
   done
 }
-python3 scripts/setup-env.py toolchain --jobs 12
+python3 scripts/setup-env.py toolchain --jobs "${JOBS:-12}"
 patch_cctools
 # libclang_rt.cc_kext comes from the CLTools package (unpacked only; Darling is not needed for it)
 A=toolchains/linux/appleclang; mkdir -p $A

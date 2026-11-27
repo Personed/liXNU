@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: x86_64 CR3 switch
+on:
+  pull_request:
+    paths:
+      - .github/workflows/x86_64-cr3-switch.yml
+      - tests/x86_64/cr3-switch/**
+      - tests/x86_64/test-cr3-switch-vm.sh
+      - fki-ko/fki.h
+      - fki-ko/fki_x86_64_cr3.h
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/x86_64-cr3-switch.yml
+      - tests/x86_64/cr3-switch/**
+      - tests/x86_64/test-cr3-switch-vm.sh
+      - fki-ko/fki.h
+      - fki-ko/fki_x86_64_cr3.h
+
+permissions:
+  contents: read
+
+jobs:
+  disposable-vm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install x86_64 build and boot inputs
+        run: |
+          scripts/ci/disable-microsoft-apt-feed.sh
+          sudo apt-get update -qq
+          pkg=$(apt-cache search --names-only '^linux-headers-[0-9.]+-[0-9]+-generic$' | awk '{print $1}' | sort -V | tail -1)
+          test -n "$pkg" || { echo "no x86_64 generic kernel headers found" >&2; exit 1; }
+          release=${pkg#linux-headers-}
+          sudo apt-get install -y -qq build-essential busybox-static python3 qemu-system-x86 "$pkg" >/dev/null
+          stage=$(mktemp -d "$RUNNER_TEMP/cr3-switch.XXXXXX")
+          (
+            cd "$stage"
+            apt-get download "linux-image-unsigned-$release"
+            dpkg-deb -x ./*.deb image
+          )
+          echo "KDIR=/usr/src/$pkg" >> "$GITHUB_ENV"
+          echo "KERNEL=$stage/image/boot/vmlinuz-$release" >> "$GITHUB_ENV"
+      - name: Verify CR3 switch and refusal in QEMU TCG
+        run: bash tests/x86_64/test-cr3-switch-vm.sh "$KDIR" "$KERNEL" "$(command -v busybox)"

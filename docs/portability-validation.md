@@ -244,15 +244,19 @@ All seven boots reached PureDarwin userland, guest halt, XNU/FKI unload, Linux p
 QEMU exit 0. These are hosted-VM observations; they do not establish a physical host-RAM floor.
 Profiles below 6 GiB remain experimental, and this synthetic merge is not current `main` `9317eac`.
 
-| Profile | Host `MemTotal` / `MemAvailable` before downloads (kB) | QEMU / Linux / FKI carve-out / XNU RAM | Peak QEMU RSS | Result |
+| Profile | Host `MemTotal` / `MemAvailable` (kB; sample phase) | QEMU / Linux / FKI carve-out / XNU RAM | Peak QEMU RSS | Result |
 | --- | --- | --- | --- | --- |
-| Standard 6 GiB direct | 16,078,396 / 15,162,388 | QEMU 8.2.2, `cortex-a710`; `mem=2G`, 3,072 MiB at `0xc0000000`, 2,816 MiB | 3,840,560 KiB (3.66 GiB) | Full route passed |
-| 5 GiB | 16,367,500 / 15,396,820 | QEMU 8.2.2, `cortex-a710`; `mem=2G`, 3,072 MiB at `0xc0000000`, 2,816 MiB | 3,840,716 KiB (3.66 GiB) | Experimental full route passed |
-| 4 GiB | 16,367,500 / 15,427,728 | QEMU 8.2.2, `cortex-a710`; `mem=2G`, 1,792 MiB at `0xc0000000`, 1,536 MiB | 2,537,076 KiB (2.42 GiB) | Experimental full route passed |
-| 3 GiB | 16,078,396 / 15,176,416 | QEMU 8.2.2, `cortex-a710`; `mem=1G`, 1,792 MiB at `0x80000000`, 1,536 MiB | 2,506,876 KiB (2.39 GiB) | Experimental full route passed |
-| 2.5 GiB | 16,366,488 / 15,429,628 | QEMU 8.2.2, `cortex-a710`; `mem=512M`, 1,536 MiB at `0x60000000`, 1,280 MiB | 2,235,268 KiB (2.13 GiB) | Experimental full route passed |
-| 2 GiB | 16,367,500 / 15,376,684 | QEMU 8.2.2, `cortex-a710`; `mem=512M`, 1,280 MiB at `0x60000000`, 1,024 MiB | 1,963,028 KiB (1.87 GiB) | Experimental full route passed |
-| Strict PIE, 6 GiB | 16,078,392 / 14,698,976 | QEMU 11.1.0, `-cpu max`; `TCR2_EL1.PIE=1`, XNU PIE mode 1 | 3,631,400 KiB (3.46 GiB) | Strict PIE boot passed |
+| Standard 6 GiB direct | 16,078,396 / 15,162,388 (before downloads) | QEMU 8.2.2, `cortex-a710`; `mem=2G`, 3,072 MiB at `0xc0000000`, 2,816 MiB | 3,840,560 KiB (3.66 GiB) | Full route passed |
+| 5 GiB | 16,367,500 / 15,396,820 (before downloads) | QEMU 8.2.2, `cortex-a710`; `mem=2G`, 3,072 MiB at `0xc0000000`, 2,816 MiB | 3,840,716 KiB (3.66 GiB) | Experimental full route passed |
+| 4 GiB | 16,367,500 / 15,427,728 (before downloads) | QEMU 8.2.2, `cortex-a710`; `mem=2G`, 1,792 MiB at `0xc0000000`, 1,536 MiB | 2,537,076 KiB (2.42 GiB) | Experimental full route passed |
+| 3 GiB | 16,078,396 / 15,176,416 (before downloads) | QEMU 8.2.2, `cortex-a710`; `mem=1G`, 1,792 MiB at `0x80000000`, 1,536 MiB | 2,506,876 KiB (2.39 GiB) | Experimental full route passed |
+| 2.5 GiB | 16,366,488 / 15,429,628 (before downloads) | QEMU 8.2.2, `cortex-a710`; `mem=512M`, 1,536 MiB at `0x60000000`, 1,280 MiB | 2,235,268 KiB (2.13 GiB) | Experimental full route passed |
+| 2 GiB | 16,367,500 / 15,376,684 (before downloads) | QEMU 8.2.2, `cortex-a710`; `mem=512M`, 1,280 MiB at `0x60000000`, 1,024 MiB | 1,963,028 KiB (1.87 GiB) | Experimental full route passed |
+| Strict PIE, 6 GiB | 16,078,392 / 14,698,976 (at QEMU launch, after downloads and build) | QEMU 11.1.0, `-cpu max`; `TCR2_EL1.PIE=1`, XNU PIE mode 1 | 3,631,400 KiB (3.46 GiB) | Strict PIE boot passed |
+
+The six direct and experimental memory-profile jobs recorded host capacity before artifact
+downloads. The strict PIE job sampled at QEMU launch, after downloads and QEMU build; its
+value is shown with that later phase and should not be compared as a pre-download snapshot.
 
 Per-profile artifacts from run #186: [standard](https://github.com/Personed/liXNU/actions/runs/46004186107/artifacts/15203454277),
 [PIE](https://github.com/Personed/liXNU/actions/runs/46004186107/artifacts/15203584963),
@@ -267,14 +271,15 @@ The paired run #186 inputs are [guest ZIP](https://github.com/Personed/liXNU/act
 (SHA-256 `6edd870db5d8cfd23fc45bb2fd02c9489c98a0d792e49d29ef22a57d46faf687`) and
 [disk ZIP](https://github.com/Personed/liXNU/actions/runs/46004186107/artifacts/15202825945)
 (SHA-256 `5948892ba98e89bdaaa3ea6a0e9289faf423bcfd15a034818519ac8198bb25a8`). These archive
-digests verify the complete ZIPs, not individual files inside them. The guest manifest
-records the ARM64 Linux `Image` SHA-256
+digests verify the complete ZIPs, not individual files inside them. The guest manifest records the ARM64 Linux `Image` SHA-256
 `02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6` and
 `initramfs.cpio.gz` SHA-256
-`2b20a4e96765e8b20033682fa510c20535957b296ebc0ac44821cf5f2a5b5715`. The individual
-`pd.img` SHA-256 was not available in the retained boot logs or artifact metadata for this
-update; the disk ZIP digest does not substitute for it. A future run should emit all three
-extracted-file hashes alongside the host-capacity snapshot.
+`2b20a4e96765e8b20033682fa510c20535957b296ebc0ac44821cf5f2a5b5715`. The guest ZIP's
+`build-manifest.txt` records the `pd.img` SHA-256
+`9b9b9c2970c17ebf7f9db72560ff291b2664d9537d206a8609ed48367843691a`. These per-file values
+come from the published manifests; the retained boot logs do not show a separate re-hash
+after extraction. Keep these file hashes distinct from the guest and disk ZIP archive
+digests.
 
 The local run used `tests/puredarwin/run-tcg-e2e.py` at PR #99's rebased head
 [`e1b70f8`](https://github.com/Personed/xnulinux/commit/e1b70f8e35a944eb374e2d37653d0b8cd6bc7420).

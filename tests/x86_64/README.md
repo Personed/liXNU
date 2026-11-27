@@ -83,17 +83,22 @@ pattern test. The test also checks Linux syscalls before and after each ioctl. T
 power off cleanly. TCG runs on every CI attempt; the script adds a KVM run when
 `/dev/kvm` and host XSAVE/AVX are available.
 
-The exception-recovery probe is a separate disposable-VM test for controlled `#PF`/`#GP` recovery. It needs the same
-kind of matching x86_64 kernel headers passed as `KDIR`, QEMU 8.2 or newer, `busybox-static`, `cpio` and the normal
-module-build tools. CI selects a generic Ubuntu header package with `apt-cache search`; the VM script reads
+The boundary probe described above is a host-only call/return test. It does not enter XNU, change `fki.h`, enable FKI
+capabilities, change CR3 or GS, inspect supervisor XSS state, install or replace an IDT or exception handler, or run C
+under foreign host state. Passing it does not establish native XNU runtime support or prove the proposed early
+exception/syscall bridge.
+
+The separate exception-recovery probe runs only in a disposable x86_64 VM and temporarily loads a test-owned shadow
+IDT on the selected vCPU to test controlled `#PF`/`#GP` recovery. It needs the same kind of matching x86_64 kernel
+headers passed as `KDIR`, QEMU 8.2 or newer, `busybox-static`, `cpio` and the normal module-build tools. When not
+running as root, `sudo` must be installed and usable because the script uses it to create and set permissions on
+`/dev/console` and `/dev/null` in the temporary initramfs; running as root skips that `sudo` path. CI selects a generic
+Ubuntu header package with `apt-cache search`; the VM script reads
 `include/config/kernel.release` under `KDIR` and uses `apt-get download` plus `dpkg-deb` to extract the matching
 `linux-image-unsigned-$KERNEL_RELEASE` package and `busybox-static` into its temporary initramfs. On Debian/Ubuntu,
 therefore, the configured APT indexes must contain both the unsigned kernel image for the exact `KDIR` release and
 `busybox-static`; missing or mismatched packages are a not-run environment failure, not a recovery pass.
 
-This is a host-only call/return test. It does not enter XNU, change `fki.h`, enable FKI capabilities, change CR3 or GS,
-inspect supervisor XSS state, install or replace Linux IDT, page-fault, general-protection, or syscall handlers, or run C under foreign host state.
-Passing it does not establish native XNU runtime support or prove the proposed early exception/syscall bridge.
 The separate [test-only entry/return contract](../../docs/x86_64-entry-return-contract.md) defines the remaining gates
 and lists the Tahoe artifact and ABI evidence still required before any XNU handoff can be considered.
 

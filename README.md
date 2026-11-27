@@ -141,8 +141,8 @@ architecture, page size, headers for the running kernel, and the compiler select
 reports when Linux does not advertise address pointer authentication. Use the [host-preparation guide](docs/hosted-service.md#3-operator-preparing-a-host)
 for FKI carve-out setup; booting XNU also depends on the FKI backend and its memory setup.
 
-- An arm64 Linux host with PAC (`FEAT_PAuth`), 4K pages, and at least 16 GB of RAM (8 GB reserved for the hosted
-  kernel). Tested on:
+- An arm64 Linux host with PAC (`FEAT_PAuth`), 4K pages, and Linux running at EL1. The documented 16 GB host / 8 GB
+  reserved configuration is setup guidance, not a measured minimum; no host RAM floor has been established. Tested on:
   - **NVIDIA DGX Spark** (bare-metal Ubuntu 24.04.5 LTS aarch64, Linux `7.0.0-1025-nvidia`; the recorded desktop used
     CPU rendering; an optional GB10/Venus backend is documented in [the DGX guide](tools/dgx-spark/README.md)).
   - **Apple Silicon Mac (M1 or later)** running an arm64 Linux VM (`krunkit` for GPU access via virtio-gpu Venus, or

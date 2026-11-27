@@ -315,3 +315,85 @@ SYM_FUNC_START(x86_boundary_probe_terminal)
 	hlt
 	jmp .Lterminal_halt
 SYM_FUNC_END(x86_boundary_probe_terminal)
+
+/* Vector-identifying terminal entries for unclassified synchronous exceptions. */
+.macro BPX_TERMINAL vector
+	.globl x86_boundary_probe_terminal_\vector
+	.type x86_boundary_probe_terminal_\vector, @function
+x86_boundary_probe_terminal_\vector:
+	movq $\vector, x86_boundary_probe_exception_control+BPX_OFF_FAULT_VECTOR(%rip)
+	movl $0x44, %eax
+	jmp x86_boundary_probe_terminal
+	.size x86_boundary_probe_terminal_\vector, .-x86_boundary_probe_terminal_\vector
+.endm
+
+BPX_TERMINAL 0
+BPX_TERMINAL 1
+BPX_TERMINAL 2
+BPX_TERMINAL 3
+BPX_TERMINAL 4
+BPX_TERMINAL 5
+BPX_TERMINAL 6
+BPX_TERMINAL 7
+BPX_TERMINAL 8
+BPX_TERMINAL 9
+BPX_TERMINAL 10
+BPX_TERMINAL 11
+BPX_TERMINAL 12
+BPX_TERMINAL 13
+BPX_TERMINAL 14
+BPX_TERMINAL 15
+BPX_TERMINAL 16
+BPX_TERMINAL 17
+BPX_TERMINAL 18
+BPX_TERMINAL 19
+BPX_TERMINAL 20
+BPX_TERMINAL 21
+BPX_TERMINAL 22
+BPX_TERMINAL 23
+BPX_TERMINAL 24
+BPX_TERMINAL 25
+BPX_TERMINAL 26
+BPX_TERMINAL 27
+BPX_TERMINAL 28
+BPX_TERMINAL 29
+BPX_TERMINAL 30
+BPX_TERMINAL 31
+
+.pushsection .rodata,"a",@progbits
+	.globl x86_boundary_probe_terminal_vectors
+	.align 8
+x86_boundary_probe_terminal_vectors:
+	.quad x86_boundary_probe_terminal_0
+	.quad x86_boundary_probe_terminal_1
+	.quad x86_boundary_probe_terminal_2
+	.quad x86_boundary_probe_terminal_3
+	.quad x86_boundary_probe_terminal_4
+	.quad x86_boundary_probe_terminal_5
+	.quad x86_boundary_probe_terminal_6
+	.quad x86_boundary_probe_terminal_7
+	.quad x86_boundary_probe_terminal_8
+	.quad x86_boundary_probe_terminal_9
+	.quad x86_boundary_probe_terminal_10
+	.quad x86_boundary_probe_terminal_11
+	.quad x86_boundary_probe_terminal_12
+	.quad x86_boundary_probe_terminal_13
+	.quad x86_boundary_probe_terminal_14
+	.quad x86_boundary_probe_terminal_15
+	.quad x86_boundary_probe_terminal_16
+	.quad x86_boundary_probe_terminal_17
+	.quad x86_boundary_probe_terminal_18
+	.quad x86_boundary_probe_terminal_19
+	.quad x86_boundary_probe_terminal_20
+	.quad x86_boundary_probe_terminal_21
+	.quad x86_boundary_probe_terminal_22
+	.quad x86_boundary_probe_terminal_23
+	.quad x86_boundary_probe_terminal_24
+	.quad x86_boundary_probe_terminal_25
+	.quad x86_boundary_probe_terminal_26
+	.quad x86_boundary_probe_terminal_27
+	.quad x86_boundary_probe_terminal_28
+	.quad x86_boundary_probe_terminal_29
+	.quad x86_boundary_probe_terminal_30
+	.quad x86_boundary_probe_terminal_31
+.popsection

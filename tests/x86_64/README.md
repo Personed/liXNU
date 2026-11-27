@@ -88,8 +88,9 @@ the KVM/host run. That explicit fallback is complementary local validation only;
 substitute for the CI TCG profile.
 
 This is a host-only call/return and controlled-exception test. It does not enter XNU, change `fki.h`, enable FKI capabilities, change CR3 or GS,
-inspect supervisor XSS state, replace syscall handlers, or run C under foreign host state. The shadow-IDT replacement is disposable-VM-only;
-other synchronous vectors currently retain their copied Linux gates rather than dedicated terminal gates, and NMI remains outside the evidence.
+inspect supervisor XSS state, replace syscall handlers, or run C under foreign host state. The shadow-IDT replacement is disposable-VM-only. Other synchronous vectors use vector-identifying
+no-return terminal gates with their original IST indexes (including the required nonzero #DF IST), while NMI remains byte-identical
+and outside the evidence.
 Passing it does not establish native XNU runtime support or prove the proposed early exception/syscall bridge.
 The separate [test-only entry/return contract](../../docs/x86_64-entry-return-contract.md) defines the remaining gates
 and lists the Tahoe artifact and ABI evidence still required before any XNU handoff can be considered.

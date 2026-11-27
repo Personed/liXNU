@@ -134,6 +134,7 @@ void x86_boundary_probe_switch_stack(void *stack_top, struct bp_asm_result *resu
 void x86_boundary_probe_clobber_xstate(void);
 void x86_boundary_probe_gp_handler(void);
 void x86_boundary_probe_pf_handler(void);
+extern const unsigned long x86_boundary_probe_terminal_vectors[32];
 
 struct bp_exception_control x86_boundary_probe_exception_control;
 static DEFINE_MUTEX(bp_ioctl_mutex);
@@ -268,6 +269,15 @@ static int bp_prepare_exception(unsigned int mode,
 	if (!idt_bytes || idt_bytes > PAGE_SIZE)
 		return -EOPNOTSUPP;
 	memcpy(shadow_idt, (const void *)before->idt_base, idt_bytes);
+	if (!gates[X86_TRAP_DF].bits.ist)
+		return -EOPNOTSUPP;
+	for (int vector = 0; vector < 32; vector++) {
+		if (vector == X86_TRAP_NMI || vector == X86_TRAP_PF || vector == X86_TRAP_GP)
+			continue;
+		pack_gate(&gates[vector], GATE_INTERRUPT,
+			  x86_boundary_probe_terminal_vectors[vector], 0,
+			  gates[vector].bits.ist, 0);
+	}
 	pack_gate(&gates[X86_TRAP_PF], GATE_INTERRUPT,
 		  (unsigned long)x86_boundary_probe_pf_handler, 0, 0, 0);
 	pack_gate(&gates[X86_TRAP_GP], GATE_INTERRUPT,
@@ -292,11 +302,10 @@ static int bp_prepare_exception(unsigned int mode,
 
 static bool bp_replaced_gate_byte(size_t byte)
 {
-	size_t pf = X86_TRAP_PF * sizeof(gate_desc);
-	size_t gp = X86_TRAP_GP * sizeof(gate_desc);
+	size_t vector = byte / sizeof(gate_desc);
+	size_t offset = byte % sizeof(gate_desc);
 
-	return (byte >= pf && byte < pf + sizeof(gate_desc)) ||
-	       (byte >= gp && byte < gp + sizeof(gate_desc));
+	return vector < 32 && vector != X86_TRAP_NMI && offset < sizeof(gate_desc);
 }
 
 static bool bp_shadow_idt_matches(const struct bp_host_snapshot *before,
@@ -313,6 +322,34 @@ static bool bp_shadow_idt_matches(const struct bp_host_snapshot *before,
 	return true;
 }
 
+static bool bp_shadow_gates_valid(const struct bp_host_snapshot *before,
+				  const void *shadow_idt)
+{
+	const gate_desc *original = (const gate_desc *)before->idt_base;
+	const gate_desc *shadow = shadow_idt;
+
+	for (int vector = 0; vector < 32; vector++) {
+		if (vector == X86_TRAP_NMI)
+			continue;
+		if (vector == X86_TRAP_PF) {
+			if (gate_offset(&shadow[vector]) != (unsigned long)x86_boundary_probe_pf_handler ||
+			    shadow[vector].bits.ist)
+				return false;
+			continue;
+		}
+		if (vector == X86_TRAP_GP) {
+			if (gate_offset(&shadow[vector]) != (unsigned long)x86_boundary_probe_gp_handler ||
+			    shadow[vector].bits.ist)
+				return false;
+			continue;
+		}
+		if (gate_offset(&shadow[vector]) != x86_boundary_probe_terminal_vectors[vector] ||
+		    shadow[vector].bits.ist != original[vector].bits.ist)
+			return false;
+	}
+	return true;
+}
+
 static bool bp_exception_valid(const struct bp_exception_control *control,
 			       const struct bp_host_snapshot *before,
 			       const void *shadow_idt)
@@ -323,6 +360,7 @@ static bool bp_exception_valid(const struct bp_exception_control *control,
 	u64 expected_proofs = BPX_PROOF_CANARIES | BPX_PROOF_IDTR | BPX_PROOF_RSP;
 
 	if (!bp_shadow_idt_matches(before, shadow_idt) ||
+	    !bp_shadow_gates_valid(before, shadow_idt) ||
 	    control->terminal_code || control->magic != BPX_MAGIC ||
 	    control->state != BPX_STATE_DISARMED || control->recovery_count != 1 ||
 	    control->proof_flags != expected_proofs ||

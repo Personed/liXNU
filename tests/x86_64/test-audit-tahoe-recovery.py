@@ -6,7 +6,9 @@ import importlib.util
 import json
 import subprocess
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +19,89 @@ SPEC.loader.exec_module(audit)
 
 
 class RecoveryDownloadTests(unittest.TestCase):
+    def test_stalled_loopback_read_times_out_and_retries(self):
+        payload = b"loopback-ok"
+        socket_timeout = 0.5
+
+        class RecoveryHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                with self.server.request_lock:
+                    self.server.request_count += 1
+                    request_number = self.server.request_count
+
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                if request_number == 1:
+                    # Keep the first response open after one byte so the child
+                    # blocks while trying to read the remaining response body.
+                    self.wfile.write(payload[:1])
+                    self.wfile.flush()
+                    self.server.second_request.wait(timeout=8)
+                    return
+
+                self.server.second_request.set()
+                self.wfile.write(payload)
+                self.wfile.flush()
+
+            def log_message(self, _format, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), RecoveryHandler)
+        server.request_count = 0
+        server.request_lock = threading.Lock()
+        server.second_request = threading.Event()
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                workspace = Path(temporary)
+                downloader = workspace / "macrecovery.py"
+                url = f"http://127.0.0.1:{server.server_port}/recovery"
+                # This stand-in exercises the launcher/retry path only. Its
+                # zero exit represents a successful pinned CLI verification;
+                # these fixture bytes are not an authenticity test.
+                downloader.write_text(
+                    "from pathlib import Path\n"
+                    "import sys\n"
+                    "from urllib.request import ProxyHandler, build_opener\n"
+                    "args = sys.argv\n"
+                    "out = Path(args[args.index('-o') + 1])\n"
+                    "chunklist = out / 'verified-recovery.chunklist'\n"
+                    "chunklist.touch()\n"
+                    "opener = build_opener(ProxyHandler({}))\n"
+                    f"with opener.open({url!r}) as response:\n"
+                    "    chunklist.write_bytes(response.read())\n"
+                    "(out / 'verified-recovery.dmg').write_bytes(b'fixture-image')\n"
+                    "print('Verifying image with chunklist...', flush=True)\n",
+                    encoding="utf-8",
+                )
+                report = {"apple_chunklist_verified": False}
+                with (
+                    patch.object(audit, "RECOVERY_SOCKET_TIMEOUT_SECONDS", socket_timeout),
+                    patch.object(audit, "RECOVERY_DOWNLOAD_BUDGET_SECONDS", 10),
+                ):
+                    image = audit.download_recovery(report, downloader, workspace)
+
+                self.assertIsNotNone(image)
+                self.assertEqual(image.read_bytes(), b"fixture-image")
+                self.assertEqual(server.request_count, 2)
+                self.assertEqual(report["recovery_download_attempts"], [
+                    {"phase": "chunklist_download", "image_bytes": 0,
+                     "chunklist_bytes": 0, "exit_code": 1,
+                     "failure_class": "network_timeout"},
+                    {"phase": "chunklist_verification", "image_bytes": 13,
+                     "chunklist_bytes": len(payload), "exit_code": 0,
+                     "failure_class": None},
+                ])
+                self.assertTrue(report["apple_chunklist_verified"])
+        finally:
+            server.second_request.set()
+            server.shutdown()
+            server.server_close()
+            server_thread.join(timeout=2)
+
     def test_timeout_retry_uses_remaining_budget_and_a_fresh_directory(self):
         report = {"apple_chunklist_verified": False}
         steps = []

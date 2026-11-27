@@ -586,6 +586,22 @@ def main():
         put_u32(data, offset, value)
         run_case(binary, name, data, 3, options=hib_mode)
 
+    def expect_hib_after_load_commands(report):
+        if report["hib_entry"]["file_offset"] != f"0x{COMMANDS_END:016x}":
+            raise AssertionError("incorrect __HIB entry file offset at load-command boundary")
+
+    section_fileoff = (COMMANDS_END - 1) & ~0xF
+    for name, entry_fileoff, status in (
+        ("HIB entry inside load commands", COMMANDS_END - 1, 3),
+        ("HIB entry immediately after load commands", COMMANDS_END, 0),
+    ):
+        data = make_hib_image()
+        put_u64(data, TEXT_OFF + 40, section_fileoff - 0x100)
+        put_u32(data, SECTION_OFF + 48, section_fileoff)
+        put_u64(data, RIP_OFF, 0x1100 + entry_fileoff - section_fileoff)
+        check = expect_hib_after_load_commands if status == 0 else None
+        run_case(binary, name, data, status, check, options=hib_mode)
+
     overlapping = make_hib_image()
     append_command(overlapping, LC_SEGMENT_64, SEGMENT_COMMAND_SIZE)
     put_name(overlapping, COMMANDS_END + 8, "__DATA")

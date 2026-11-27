@@ -850,6 +850,18 @@ static void export_segment(struct xnu_macho_x86_64_segment *out,
 	out->section_count = in->nsects;
 }
 
+static int fileset_segment_is_linkedit(const unsigned char *name)
+{
+	static const char expected[] = "__LINKEDIT";
+	unsigned long i;
+
+	/* Match the pinned XNU through the first NUL within segname[16]. */
+	for (i = 0; i < sizeof(expected); i++)
+		if (name[i] != expected[i])
+			return 0;
+	return 1;
+}
+
 static int collect_fileset_metadata(const unsigned char *file, unsigned long file_size,
 				    const struct header_region *header,
 				    struct xnu_macho_x86_64_info *nested,
@@ -869,7 +881,7 @@ static int collect_fileset_metadata(const unsigned char *file, unsigned long fil
 
 		if (command == LC_SEGMENT_64) {
 			if (command_size >= LOAD_COMMAND_SIZE + 16 &&
-			    fixed_name_is(file + command_off + LOAD_COMMAND_SIZE, "__LINKEDIT", 10)) {
+			    fileset_segment_is_linkedit(file + command_off + LOAD_COMMAND_SIZE)) {
 				linkedit_count++;
 				linkedit_off = command_off;
 				linkedit_command_size = command_size;
@@ -1121,7 +1133,8 @@ static int parse_image(const void *input, unsigned long file_size,
 		command_off += command_size;
 	}
 	if (hib_entry_fileoff) {
-		if (vm_matches != 1 || hib_matches != 1 || entry_matches)
+		if (vm_matches != 1 || hib_matches != 1 || entry_matches ||
+		    hib_fileoff < command_end)
 			return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
 		*hib_entry_fileoff = hib_fileoff;
 	} else if (entry_matches != 1) {

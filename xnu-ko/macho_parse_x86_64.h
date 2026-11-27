@@ -85,11 +85,13 @@ struct xnu_macho_x86_64_info {
 };
 
 /*
- * Return 0 for the metadata inspection subset, including bounded outer and
- * embedded MH_FILESET header/load-command framing for exactly one
- * com.apple.kernel entry. Fileset segment extents are checked against the
- * complete collection. Each chained-fixups command, if present, must fit
- * within the file and VM range of the same header's unique __LINKEDIT.
+ * Return 0 for the metadata inspection subset, including bounded framing of
+ * the outer MH_FILESET header and load commands and of one embedded
+ * com.apple.kernel header and load commands. Embedded kernel segment extents
+ * are checked against the complete collection. The outer __LINKEDIT extent
+ * is checked only when the outer header declares chained fixups. Each
+ * chained-fixups command, if present, must fit within the file and VM ranges
+ * of its own header's unique __LINKEDIT.
  * Fileset fixup bytes, section payloads and file/member ownership are not
  * validated. segment_count and mapped_segment_count stay zero for filesets.
  * Return -EOPNOTSUPP for a required command, ABI, segment count, page size, or

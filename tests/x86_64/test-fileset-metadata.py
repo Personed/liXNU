@@ -190,6 +190,11 @@ def verify_fixup_extents(binary):
     }
     verify(binary, image, expected)
 
+    # Match the pinned XNU's name comparison through the first NUL.
+    padded_linkedit = bytearray(image)
+    struct.pack_into("<16s", padded_linkedit, outer + 8, b"__LINKEDIT\0tail")
+    verify(binary, padded_linkedit, expected)
+
     # An unrelated outer segment is outside this metadata check, even when
     # the collection has a valid fixup command. Its framing still has to fit.
     unrelated_outer = bytearray(image)
@@ -216,6 +221,8 @@ def verify_fixup_extents(binary):
         ("<Q", outer + 48, 63),  # File extent alone is one byte too short.
         ("<I", outer_fixups + 12, 27),  # Fixups header would be truncated.
         ("<Q", outer + 32, 63),  # VM extent is one byte too short.
+        ("<I", outer + 64, 1),  # Section record is missing from outer __LINKEDIT.
+        ("<16s", outer + 8, b"__LINKEDITX"),  # Shared prefix without NUL is not a match.
         ("<I", nested + 12, 33),  # Fixups extend past the containing file.
         ("<16s", nested_linkedit + 8, b"__DATA"),  # Missing matching __LINKEDIT.
     ):
@@ -232,6 +239,10 @@ def verify_fixup_extents(binary):
     struct.pack_into("<II", duplicate_linkedit, member + 16, 3, 88 + 72)
     duplicate_linkedit[nested_linkedit + 72 : nested_linkedit + 144] = image[nested_linkedit : nested_linkedit + 72]
     verify(binary, duplicate_linkedit, rejected)
+
+    mixed_padding = bytearray(duplicate_linkedit)
+    struct.pack_into("<16s", mixed_padding, nested_linkedit + 72 + 8, b"__LINKEDIT\0tail")
+    verify(binary, mixed_padding, rejected)
 
 
 def main():

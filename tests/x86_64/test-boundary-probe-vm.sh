@@ -3,14 +3,29 @@
 # Run the x86_64 register/host-state probe only in a disposable Linux VM.
 set -euo pipefail
 
-if [ "$#" -ne 1 ] || [ ! -f "$1/Makefile" ]; then
-  echo "usage: $0 KDIR" >&2
+if { [ "$#" -ne 1 ] && [ "$#" -ne 3 ]; } || [ ! -f "$1/Makefile" ]; then
+  echo "usage: $0 KDIR [KERNEL_IMAGE BUSYBOX_STATIC]" >&2
   exit 2
 fi
 
-KDIR=$(cd "$1" && pwd)
+KDIR=$(cd -- "$1" && pwd)
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
-for tool in apt-cache apt-get cat chmod cp cpio dpkg-deb find gcc grep gzip id install make mkdir mktemp mknod qemu-system-x86_64 rm sort timeout; do
+tools=(cat chmod cp cpio find gcc grep gzip id install make mkdir mktemp mknod qemu-system-x86_64 rm sort timeout)
+if [ "$#" -eq 1 ]; then
+  tools+=(apt-cache apt-get dpkg-deb)
+else
+  KERNEL=$2
+  BUSYBOX=$3
+  if [ ! -f "$KERNEL" ] || [ ! -r "$KERNEL" ] || [ ! -s "$KERNEL" ]; then
+    echo "kernel image must be a readable, nonempty file: $KERNEL" >&2
+    exit 2
+  fi
+  if [ ! -f "$BUSYBOX" ] || [ ! -r "$BUSYBOX" ] || [ ! -s "$BUSYBOX" ] || [ ! -x "$BUSYBOX" ]; then
+    echo "static BusyBox must be a readable, nonempty executable file: $BUSYBOX" >&2
+    exit 2
+  fi
+fi
+for tool in "${tools[@]}"; do
   command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
 if [ "$(id -u)" -ne 0 ]; then
@@ -50,19 +65,39 @@ echo "Using QEMU $QEMU_VERSION for the x86 boundary-probe VM" >&2
 
 KERNEL_RELEASE=$(cat "$KDIR/include/config/kernel.release")
 test -n "$KERNEL_RELEASE" || { echo "kernel release metadata is missing from KDIR" >&2; exit 1; }
-KERNEL_IMAGE_PACKAGE=
-for candidate in "linux-image-unsigned-$KERNEL_RELEASE" "linux-image-$KERNEL_RELEASE-unsigned"; do
-  if apt-cache show "$candidate" 2>/dev/null | grep -F "Package: $candidate" >/dev/null; then
-    KERNEL_IMAGE_PACKAGE=$candidate
-    break
-  fi
-done
-test -n "$KERNEL_IMAGE_PACKAGE" || {
-  echo "no Debian/Ubuntu unsigned kernel image package found for $KERNEL_RELEASE" >&2
-  exit 1
-}
 STAGE=$(mktemp -d)
 trap 'rm -rf -- "$STAGE"' EXIT
+
+if [ "$#" -eq 1 ]; then
+  KERNEL_IMAGE_PACKAGE=
+  for candidate in "linux-image-unsigned-$KERNEL_RELEASE" "linux-image-$KERNEL_RELEASE-unsigned"; do
+    if apt-cache show "$candidate" 2>/dev/null | grep -F "Package: $candidate" >/dev/null; then
+      KERNEL_IMAGE_PACKAGE=$candidate
+      break
+    fi
+  done
+  test -n "$KERNEL_IMAGE_PACKAGE" || {
+    echo "no Debian/Ubuntu unsigned kernel image package found for $KERNEL_RELEASE; pass KERNEL_IMAGE and BUSYBOX_STATIC explicitly" >&2
+    exit 1
+  }
+
+  (
+    cd "$STAGE"
+    apt-get download "$KERNEL_IMAGE_PACKAGE" busybox-static >/dev/null
+  )
+  IMAGE_DEB=$(find "$STAGE" -maxdepth 1 -name "${KERNEL_IMAGE_PACKAGE}_*.deb" -print -quit)
+  BUSYBOX_DEB=$(find "$STAGE" -maxdepth 1 -name 'busybox-static_*.deb' -print -quit)
+  test -n "$IMAGE_DEB" || { echo "matching unsigned kernel image package not found" >&2; exit 1; }
+  test -n "$BUSYBOX_DEB" || { echo "busybox-static package not found" >&2; exit 1; }
+
+  mkdir -p "$STAGE/kernel" "$STAGE/busybox"
+  dpkg-deb -x "$IMAGE_DEB" "$STAGE/kernel"
+  dpkg-deb -x "$BUSYBOX_DEB" "$STAGE/busybox"
+  KERNEL="$STAGE/kernel/boot/vmlinuz-$KERNEL_RELEASE"
+  BUSYBOX=$(find "$STAGE/busybox" -type f -name busybox -perm /111 -print -quit)
+  test -s "$KERNEL" || { echo "matching kernel image not found: $KERNEL" >&2; exit 1; }
+  test -s "$BUSYBOX" || { echo "executable busybox-static binary not found" >&2; exit 1; }
+fi
 
 mkdir -p "$STAGE/build/fki-ko" "$STAGE/build/tests/x86_64/boundary-probe"
 cp -a "$REPO/fki-ko/." "$STAGE/build/fki-ko/"
@@ -75,26 +110,10 @@ gcc -O2 -Wall -Wextra -Werror -mavx -mxsave -static \
   -I"$REPO/tests/x86_64/boundary-probe" \
   -o "$STAGE/build/boundary-probe-test" "$REPO/tests/x86_64/boundary-probe/user_test.c"
 
-(
-  cd "$STAGE"
-  apt-get download "$KERNEL_IMAGE_PACKAGE" busybox-static >/dev/null
-)
-IMAGE_DEB=$(find "$STAGE" -maxdepth 1 -name "${KERNEL_IMAGE_PACKAGE}_*.deb" -print -quit)
-BUSYBOX_DEB=$(find "$STAGE" -maxdepth 1 -name 'busybox-static_*.deb' -print -quit)
-test -n "$IMAGE_DEB" || { echo "matching unsigned kernel image package not found" >&2; exit 1; }
-test -n "$BUSYBOX_DEB" || { echo "busybox-static package not found" >&2; exit 1; }
-
-mkdir -p "$STAGE/kernel" "$STAGE/busybox"
-dpkg-deb -x "$IMAGE_DEB" "$STAGE/kernel"
-dpkg-deb -x "$BUSYBOX_DEB" "$STAGE/busybox"
-KERNEL="$STAGE/kernel/boot/vmlinuz-$KERNEL_RELEASE"
-BUSYBOX=$(find "$STAGE/busybox" -type f -name busybox -perm /111 -print -quit)
-test -s "$KERNEL" || { echo "matching kernel image not found: $KERNEL" >&2; exit 1; }
-test -s "$BUSYBOX" || { echo "executable busybox-static binary not found" >&2; exit 1; }
-
 ROOTFS="$STAGE/rootfs"
 mkdir -p "$ROOTFS/bin" "$ROOTFS/dev" "$ROOTFS/proc" "$ROOTFS/sys"
-install -m 0755 "$BUSYBOX" "$ROOTFS/bin/busybox"
+install -m 0755 -- "$BUSYBOX" "$ROOTFS/bin/busybox"
+printf '%s\n' "$KERNEL_RELEASE" > "$ROOTFS/expected-kernel-release"
 install -m 0755 "$STAGE/build/boundary-probe-test" "$ROOTFS/boundary-probe-test"
 install -m 0644 "$STAGE/build/fki-ko/fki.ko" "$ROOTFS/fki.ko"
 install -m 0644 "$STAGE/build/tests/x86_64/boundary-probe/x86-boundary-probe.ko" \
@@ -109,6 +128,12 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 trap 'echo "x86 boundary probe VM failed"; dmesg; poweroff -f' EXIT
 
+expected_release=$(cat /expected-kernel-release)
+actual_release=$(uname -r)
+if [ "$actual_release" != "$expected_release" ]; then
+  printf 'kernel release mismatch: headers %s, booted kernel %s\n' "$expected_release" "$actual_release" >&2
+  exit 1
+fi
 insmod /fki.ko
 insmod /x86-boundary-probe.ko
 /boundary-probe-test

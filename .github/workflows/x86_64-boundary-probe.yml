@@ -25,4 +25,14 @@ jobs:
           sudo apt-get install -y -qq build-essential busybox-static cpio qemu-system-x86 "$pkg" >/dev/null
           echo "KDIR=/usr/src/$pkg" >> "$GITHUB_ENV"
       - name: Build and run boundary probe in disposable TCG VM
-        run: tests/x86_64/test-boundary-probe-vm.sh "$KDIR"
+        run: |
+          release=$(cat "$KDIR/include/config/kernel.release")
+          stage=$(mktemp -d "$RUNNER_TEMP/x86-boundary.XXXXXX")
+          trap 'rm -rf -- "$stage"' EXIT
+          (
+            cd "$stage"
+            apt-get download "linux-image-unsigned-$release"
+            dpkg-deb -x ./*.deb image
+          )
+          tests/x86_64/test-boundary-probe-vm.sh "$KDIR" \
+            "$stage/image/boot/vmlinuz-$release" "$(command -v busybox)"

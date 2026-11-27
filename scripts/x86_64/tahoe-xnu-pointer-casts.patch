@@ -79,6 +79,32 @@ index 36e5aaa68943ddb69d9e01d30bd098ef892396a6..2d3e4d4dc21252a2feea894e755cc39a
  
  	return true;
  }
+diff --git a/bsd/netinet/in_arp.c b/bsd/netinet/in_arp.c
+index 86354c82557184adb2175c5547e7734e6a09369b..831f9b1c9592e6ec8a109c60399ce71efcdcfa21 100644
+--- a/bsd/netinet/in_arp.c
++++ b/bsd/netinet/in_arp.c
+@@ -93,7 +93,7 @@
+ 
+ #include <net/sockaddr_utils.h>
+ 
+-static const size_t MAX_HW_LEN = 10;
++enum { MAX_HW_LEN = 10 };
+ 
+ /*
+  * Synchronization notes:
+diff --git a/libkern/c++/OSNumber.cpp b/libkern/c++/OSNumber.cpp
+index dc2ed78b0da22b2abbbed71e9db5cc7957e22b6e..b276b52bc93590f7b287e44e63196f99457f5d0c 100644
+--- a/libkern/c++/OSNumber.cpp
++++ b/libkern/c++/OSNumber.cpp
+@@ -207,7 +207,7 @@ void
+ OSNumber::addValue(signed long long inValue)
+ {
+ 	if ((size == 63) || (size == 31)) {
+-		fpValue += inValue;
++		fpValue += (double) inValue;
+ 	} else {
+ 		value = ((value + inValue) & sizeMask);
+ 	}
 diff --git a/libkern/os/log.c b/libkern/os/log.c
 index 419f656575e505a123ad195612202978021c6e07..fd6e8136ec0c360f99445fee6fdc4167779e88d3 100644
 --- a/libkern/os/log.c
@@ -152,3 +178,16 @@ index 6a00f0e957000463bea6ff24f68542ab38807228..78ca0ec4fc689505f4c5459b6cc47762
  
  	if (!task) {
  		goto done;
+diff --git a/osfmk/kern/btlog.c b/osfmk/kern/btlog.c
+index 75d172f13d69239a60e80f13bd01efa1a6de304e..a07d49be31a80df66f05c4bb823540a368e352ef 100644
+--- a/osfmk/kern/btlog.c
++++ b/osfmk/kern/btlog.c
+@@ -1750,7 +1750,7 @@ uint32_t
+ btlog_guess_top(btlogu_t btlu, vm_address_t bt[], uint32_t *len)
+ {
+ 	struct btlog_hash *btlh = btlu.btlh;
+-	const unsigned RECS = 8;
++	enum { RECS = 8 };
+ 	struct btlog_record recs[RECS] = {0};
+ 	bt_stack_t bts;
+ 

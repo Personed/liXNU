@@ -1161,7 +1161,9 @@ if (
   # Keep the pinned checkout pristine, including on compile failure.
   git -C "$SOURCE_DIR" apply --whitespace=error "$XNU_COMPAT_PATCH" || exit 1
   trap 'rc=$?; trap - EXIT; git -C "$SOURCE_DIR" apply --whitespace=error -R "$XNU_COMPAT_PATCH" || exit 1; exit "$rc"' EXIT
-  make -C "$SOURCE_DIR" build \
+  # Report failures in independent subtrees on the same runner. A failed
+  # target still makes make exit nonzero and prevents artifact publication.
+  make -k -C "$SOURCE_DIR" build \
   SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$BASE_SDK_DIR" \
   SDKVERSION="$SDK_VERSION" KDKROOT="$KDKROOT" PLATFORM=MacOSX \
   OTHER_CFLAGS='$(RC_NONARCH_CFLAGS) -isysroot $(SDKROOT)' \

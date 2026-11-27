@@ -18,6 +18,7 @@
 #include <linux/smp.h>
 #include <linux/spinlock.h>
 #include <linux/string.h>
+#include <linux/wait.h>
 
 #include "task_continuation_probe.h"
 
@@ -74,6 +75,7 @@ struct bp_continuation_test {
 	struct completion cancel_acknowledged;
 	struct completion owner_done;
 	struct completion responder_done;
+	wait_queue_head_t release_wait;
 	struct bp_continuation_slot *slot;
 	struct task_struct *owner_task;
 	struct task_struct *responder_task;
@@ -531,7 +533,8 @@ out:
 			ret = cancel_ret;
 	}
 	WRITE_ONCE(test->owner_status, ret);
-	complete(&test->owner_done);
+	complete_all(&test->owner_done);
+	wait_event(test->release_wait, kthread_should_stop());
 	return ret;
 }
 
@@ -693,7 +696,8 @@ static int bp_task_continuation_responder_thread(void *data)
 
 out:
 	WRITE_ONCE(test->responder_status, ret);
-	complete(&test->responder_done);
+	complete_all(&test->responder_done);
+	wait_event(test->release_wait, kthread_should_stop());
 	return ret;
 }
 
@@ -721,6 +725,7 @@ static int bp_task_continuation_run_case(unsigned int owner_cpu,
 	init_completion(&test->cancel_acknowledged);
 	init_completion(&test->owner_done);
 	init_completion(&test->responder_done);
+	init_waitqueue_head(&test->release_wait);
 	test->slot = slot;
 	test->test_case = test_case;
 	test->owner_cpu = owner_cpu;

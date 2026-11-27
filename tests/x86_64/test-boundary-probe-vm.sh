@@ -126,7 +126,13 @@ export PATH=/bin
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
-trap 'echo "x86 boundary probe VM failed"; dmesg; poweroff -f' EXIT
+console_level=
+restore_console_level() {
+  if [ -n "$console_level" ]; then
+    dmesg -n "$console_level"
+  fi
+}
+trap 'restore_console_level || true; echo "x86 boundary probe VM failed"; dmesg; poweroff -f' EXIT
 
 expected_release=$(cat /expected-kernel-release)
 actual_release=$(uname -r)
@@ -136,13 +142,21 @@ if [ "$actual_release" != "$expected_release" ]; then
 fi
 insmod /fki.ko
 insmod /x86-boundary-probe.ko
+# Keep kernel info lines in the ring buffer while userspace prints its markers.
+console_level=$(cut -f1 /proc/sys/kernel/printk)
+case "$console_level" in
+  ''|*[!0-9]*) echo "invalid print level in /proc/sys/kernel/printk" >&2; exit 1 ;;
+esac
+dmesg -n 5
 /boundary-probe-test
+dmesg | grep -F 'x86-boundary-probe:' || true
 test ! -e /sys/module/xnu
 rmmod x86_boundary_probe
 test ! -e /sys/module/x86_boundary_probe
 test ! -e /dev/x86-boundary-probe
 rmmod fki
 test ! -e /sys/module/fki
+restore_console_level
 trap - EXIT
 echo X86_BOUNDARY_PROBE_VM_PASS
 sync

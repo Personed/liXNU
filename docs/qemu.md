@@ -11,7 +11,7 @@ variable-store images. Use one writable copy of the variables image per VM. The 
 guest CPUs and 16 GiB of guest RAM. Allow additional RAM for the physical host.
 
 The 16 GiB default above is for the persistent UEFI VM. For the tested 6 GiB PureDarwin
-profile, see [Boot the PureDarwin ARM64 guest with TCG](#boot-the-puredarwin-arm64-guest-with-tcg).
+profile, follow the direct TCG boot instructions below.
 The historical 16 GiB PureDarwin profile used a CI planning screen of 20 GiB total host RAM
 and 4 GiB available before artifact preparation. On a
 virtualized host, these values describe the runner OS and do not establish the outer machine's

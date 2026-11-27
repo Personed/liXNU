@@ -11,6 +11,8 @@ on:
       - "scripts/x86_64/xnu-trustcache-scan-workspace.sh"
       - "scripts/x86_64/verify-xnu-kdk.py"
       - "scripts/x86_64/verify-xnu-target-build.py"
+      - "scripts/x86_64/summarize-xnu-build-diagnostics.py"
+      - "tests/x86_64/test-xnu-build-diagnostics.py"
   push:
     branches: [main]
     paths:
@@ -20,6 +22,8 @@ on:
       - "scripts/x86_64/xnu-trustcache-scan-workspace.sh"
       - "scripts/x86_64/verify-xnu-kdk.py"
       - "scripts/x86_64/verify-xnu-target-build.py"
+      - "scripts/x86_64/summarize-xnu-build-diagnostics.py"
+      - "tests/x86_64/test-xnu-build-diagnostics.py"
 permissions:
   contents: read
 concurrency:
@@ -79,6 +83,8 @@ jobs:
           PY
       - name: Test read-only --check diagnostic workspace
         run: bash scripts/x86_64/xnu-trustcache-scan-workspace.sh --self-test
+      - name: Test bounded XNU build diagnostic summary
+        run: python3 tests/x86_64/test-xnu-build-diagnostics.py
       - name: Provision the pinned Apple KDK on the Intel runner
         # The checked-in digest pins Dortania's public copy; the package must
         # also pass macOS trust validation as Apple's Software Update signer.
@@ -214,19 +220,7 @@ jobs:
             echo "No XNU compilation log was produced."
             exit 0
           fi
-          awk '
-            /^Undefined symbols/ { in_undefined_symbols = 1 }
-            !/^Undefined symbols|^[[:space:]]/ { in_undefined_symbols = 0 }
-            /: (fatal )?error:|^Undefined symbols|^ld: / ||
-              (in_undefined_symbols && /^[[:space:]]+[^[:space:]]/) {
-              gsub(/[[:cntrl:]]/, " ")
-              printf "  %s\n", substr($0, 1, 500)
-              if (++count == 20) exit
-            }
-            END {
-              if (!count) print "No compiler or linker errors recorded yet."
-            }
-          ' "$log"
+          python3 scripts/x86_64/summarize-xnu-build-diagnostics.py "$log"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

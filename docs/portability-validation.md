@@ -589,11 +589,16 @@ Report the profile alongside the stage:
      KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
    carve_base=$(cat /sys/module/fki/parameters/carve_base)
    carve_mb=$(cat /sys/module/fki/parameters/carve_mb)
+   probe_mark="xnulinux-fki-probe-start-$(cat /proc/sys/kernel/random/uuid)"
+   printf '<6>%s\n' "$probe_mark" | sudo tee /dev/kmsg >/dev/null || {
+     echo "Could not write the FKI probe log marker" >&2
+     exit 1
+   }
    if sudo insmod tests/qemu/fki-carve-probe.ko \
      expected_base="$carve_base" expected_mb="$carve_mb" request_mb=16; then
      sudo rmmod fki-carve-probe
    fi
-   sudo dmesg | grep 'fki-carve-probe:'
+   sudo dmesg | sed -n "/$probe_mark/,\$p" | grep -F 'fki-carve-probe:'
    ```
    Record the two returned intervals and the `same-pa-reuse` result separately. If `insmod` fails after both
    in-bounds markers and `same-pa-reuse: no`, record allocation-in-bounds as passed and reuse as failed. Otherwise

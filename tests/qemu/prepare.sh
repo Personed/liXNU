@@ -125,6 +125,15 @@ dmesg | grep -Fq 'fki-carve-probe: allocation 1 at 0x70000000 with size 16777216
   exit 1
 }
 
+# A later valid request must still work after the rejected allocations, proving
+# that the failure paths released their FKI carve-out reservation.
+insmod /fki-carve-probe.ko request_mb=15
+dmesg | grep -Fq 'fki-carve-probe: expect [0x70000000, 0x80000000), request 15 MiB, aligned allocation 16777216 bytes' || {
+  echo "FKI probe did not run the post-rejection valid request"
+  exit 1
+}
+rmmod fki-carve-probe
+
 # A request above the fallback allocator's largest representable power-of-two
 # size must be rejected before it reaches fki_contig_alloc.
 if insmod /fki-carve-probe.ko request_mb=8796093022209; then

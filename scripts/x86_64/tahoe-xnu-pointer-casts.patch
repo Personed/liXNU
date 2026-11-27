@@ -1,7 +1,16 @@
 diff --git a/bsd/net/classq/classq_fq_codel.c b/bsd/net/classq/classq_fq_codel.c
-index de3c3cb8780b689722be5fbddcb5010d2468fcec..8b42c78decc43765e27da92bef89f6ca08ff9bc7 100644
+index de3c3cb8780b689722be5fbddcb5010d2468fcec..45a8347be6e496e1868ff8340ffa800479b937b0 100644
 --- a/bsd/net/classq/classq_fq_codel.c
 +++ b/bsd/net/classq/classq_fq_codel.c
+@@ -1163,7 +1163,7 @@ static uint64_t
+ codel_control_law(float inv_sqrt, uint64_t t, uint64_t interval)
+ {
+ 	/* Drop becomes more frequeut as drop count increases */
+-	uint64_t val = (uint64_t)(inv_sqrt * interval);
++	uint64_t val = (uint64_t)(inv_sqrt * (float)interval);
+ 	uint64_t result = t + val;
+ 	VERIFY(val > 0 && val <= interval);
+ 	return result;
 @@ -1286,7 +1286,7 @@ fq_codel_dq(void *fqs_p, void *fq_p, pktsched_pkt_t *pkt, uint64_t now)
  				} else if (FQ_IS_ECN_CAPABLE(fq) && pktsched_mark_ecn(pkt) == 0) {
  					fq_cl->fcl_stat.fcl_ce_marked++;
@@ -70,6 +79,19 @@ index 36e5aaa68943ddb69d9e01d30bd098ef892396a6..2d3e4d4dc21252a2feea894e755cc39a
  
  	return true;
  }
+diff --git a/libkern/os/log.c b/libkern/os/log.c
+index 419f656575e505a123ad195612202978021c6e07..fd6e8136ec0c360f99445fee6fdc4167779e88d3 100644
+--- a/libkern/os/log.c
++++ b/libkern/os/log.c
+@@ -1412,7 +1412,7 @@ test_os_log_handles(void)
+ 	h2 = create_verified_os_log("xnu_post", "_subsystem3xnu_post_category3");
+ 	T_ASSERT_NE_PTR(h1, h2, "Subsystem and category cannot be mixed");
+ 
+-	const size_t name_size = sizeof(h1->ol_subsystem.ols_name) / 2;
++	enum { name_size = sizeof(h1->ol_subsystem.ols_name) / 2 };
+ 
+ 	char super_long_sub[name_size] = {
+ 		[0 ... sizeof(super_long_sub) - 1] = 'X'
 diff --git a/osfmk/i386/AT386/model_dep.c b/osfmk/i386/AT386/model_dep.c
 index ab30d3ef11c511eff14327f106f356a3b025f8f3..8840b093986b47d1a5f8b604ad2c53c2d2b3fbcb 100644
 --- a/osfmk/i386/AT386/model_dep.c
@@ -114,3 +136,19 @@ index d7e433d380b5566ef6d99c64625f9977e3b1ab5e..8aae4735b0888561e931c5d95bff3737
  
  		pmap_remove(kernel_pmap, vaddr_cur, vaddr_cur + map_size);
  		while (map_size > 0) {
+diff --git a/osfmk/ipc/mach_kernelrpc.c b/osfmk/ipc/mach_kernelrpc.c
+index 6a00f0e957000463bea6ff24f68542ab38807228..78ca0ec4fc689505f4c5459b6cc4776272e12aa6 100644
+--- a/osfmk/ipc/mach_kernelrpc.c
++++ b/osfmk/ipc/mach_kernelrpc.c
+@@ -278,8 +278,9 @@ _kernelrpc_mach_port_get_attributes_trap(struct _kernelrpc_mach_port_get_attribu
+ #define MACH_PORT_INFO_STACK_LIMIT 80 // current size is 68 == 17 * sizeof(integer_t)
+ 	_Static_assert(sizeof(MACH_PORT_INFO_OUT) < MACH_PORT_INFO_STACK_LIMIT,
+ 	    "mach_port_info_t has grown significantly, reevaluate stack usage");
+-	const mach_msg_type_number_t max_count = (sizeof(MACH_PORT_INFO_OUT) / sizeof(MACH_PORT_INFO_OUT[0]));
+-	typeof(MACH_PORT_INFO_OUT[0]) info[max_count];
++	enum { info_capacity = sizeof(MACH_PORT_INFO_OUT) / sizeof(MACH_PORT_INFO_OUT[0]) };
++	const mach_msg_type_number_t max_count = info_capacity;
++	typeof(MACH_PORT_INFO_OUT[0]) info[info_capacity];
+ 
+ 	if (!task) {
+ 		goto done;

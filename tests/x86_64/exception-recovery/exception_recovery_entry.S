@@ -171,7 +171,7 @@ SYM_FUNC_START(x86_er_inject)
 	popq %r12
 	popq %rbx
 	popq %rbp
-	movl $-95, %eax /* -EOPNOTSUPP */
+	movq $-95, %rax /* -EOPNOTSUPP */
 	ret
 
 .Lreturn_setup_failure:
@@ -183,7 +183,7 @@ SYM_FUNC_START(x86_er_inject)
 	popq %r12
 	popq %rbx
 	popq %rbp
-	movl $-117, %eax /* -EUCLEAN */
+	movq $-117, %rax /* -EUCLEAN */
 	ret
 
 .Lpost_injection:

@@ -112,8 +112,8 @@ Both artifacts expire on 2026-12-27. Sign in to GitHub with an account that can 
 To download from the terminal, authenticate GitHub CLI with `gh auth login`, then run:
 
 ```sh
-gh run download 45911026412 --repo Personed/xnulinux --name puredarwin-e2e-guest --dir artifacts/guest
-gh run download 45911026412 --repo Personed/xnulinux --name puredarwin-e2e-disk --dir artifacts/disk
+gh run download 45989875996 --repo Personed/xnulinux --name puredarwin-e2e-guest --dir artifacts/guest
+gh run download 45989875996 --repo Personed/xnulinux --name puredarwin-e2e-disk --dir artifacts/disk
 ```
 
 Keep the artifacts from that run paired. The guest archive contains `Image`,

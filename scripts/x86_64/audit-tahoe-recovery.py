@@ -26,7 +26,9 @@ RECOVERY_BASENAME = "verified-recovery"
 BOOT_KERNEL_COLLECTION = Path("System/Library/KernelCollections/BootKernelExtensions.kc")
 TARGET_RUNTIME_VERSION = "26.7.3"
 TARGET_RUNTIME_BUILD = "25G342"
-XNU_RELEASE_PATTERN = re.compile(rb"xnu-([0-9]+\.[0-9]+\.[0-9]+(?:~[0-9]+)?)/RELEASE_X86_64\b")
+# Public source releases use three components, but shipping build trains
+# can append more. These strings are observations, not artifact identities.
+XNU_RELEASE_PATTERN = re.compile(rb"xnu-([0-9]+(?:\.[0-9]+){2,}(?:~[0-9]+)?)/RELEASE_X86_64\b")
 
 
 def run(command: list[str], *, timeout: int = 300) -> subprocess.CompletedProcess[str]:

@@ -104,8 +104,12 @@ test ! -e /sys/module/x86_boundary_probe
 test ! -e /dev/x86-boundary-probe
 
 insmod /x86-exception-recovery.ko
+# Keep kernel info lines in the ring buffer so they cannot interrupt
+# userspace marker lines on the shared serial console. Keep warnings visible.
+dmesg -n 5
 /exception-recovery-test 0
 /exception-recovery-test 1
+dmesg -n 7
 rmmod x86_exception_recovery
 test ! -e /sys/module/x86_exception_recovery
 test ! -e /dev/x86-exception-recovery

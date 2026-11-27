@@ -74,10 +74,8 @@ jobs:
           sudo apt-get install -y -qq "$pkg" >/dev/null
           echo "KDIR=/usr/src/$pkg" >> "$GITHUB_ENV"
           echo "release=${pkg#linux-headers-}" >> "$GITHUB_OUTPUT"
-      - name: fki.ko
-        run: make -C "$KDIR" M="$PWD/fki-ko" modules
-      - name: xnu.ko
-        run: make -C "$KDIR" M="$PWD/xnu-ko" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
+      - name: Build ARM64 modules through the CLI
+        run: ARCH=x86_64 scripts/xnulinux build-modules
       - name: FKI carve-out probe
         run: make -C "$KDIR" M="$PWD/tests/qemu" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
       - name: Module licenses

@@ -157,6 +157,23 @@ static void test_last_u32_page_ranges(void)
 	assert(xnu_x86_boot_args_build_core(&args, &in) == -ERANGE);
 }
 
+static void test_validator_rejects_u32_overflow(void)
+{
+	struct xnu_x86_boot_args args;
+	struct xnu_x86_boot_args_core in = valid_input();
+
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+	args.MemoryMap = 0xfffff000U;
+	args.MemoryMapSize = 0x2000U;
+	args.MemoryMapDescriptorSize = 0x1000U;
+	assert(xnu_x86_boot_args_validate(&args) == -ERANGE);
+
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+	args.kaddr = 0xfffff000U;
+	args.ksize = 0x1000U;
+	assert(xnu_x86_boot_args_validate(&args) == -ERANGE);
+}
+
 static void test_reject_unsupported_or_malformed_output(void)
 {
 	struct xnu_x86_boot_args args;
@@ -186,6 +203,7 @@ int main(void)
 	test_malformed_lengths();
 	test_unrepresentable_ranges();
 	test_last_u32_page_ranges();
+	test_validator_rejects_u32_overflow();
 	test_reject_unsupported_or_malformed_output();
 	puts("xnu x86 boot_args layout/validation fixtures passed");
 	return 0;

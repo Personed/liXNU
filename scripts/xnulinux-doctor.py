@@ -129,11 +129,26 @@ def linux_cpu_info(path="/proc/cpuinfo"):
                     break
                 name, separator, value = line.partition(":")
                 key = name.strip().lower()
-                if separator and key in {"vendor_id", "model name", "flags", "features"}:
+                if separator and key in {
+                    "vendor_id",
+                    "model name",
+                    "cpu family",
+                    "model",
+                    "stepping",
+                    "microcode",
+                    "flags",
+                    "features",
+                }:
                     fields[key] = value.strip()
     except OSError:
         return {}
     return fields
+
+
+def cpu_hypervisor_flag(cpu_info):
+    """Return the first reported CPU's hypervisor-flag hint, if available."""
+    flags = cpu_info.get("flags", "").split()
+    return "hypervisor" in flags if flags else None
 
 
 def linux_kernel_config_facts(release, proc_config_path="/proc/config.gz", boot_config_dir="/boot"):
@@ -199,6 +214,11 @@ def collect_facts():
         "linux_cpu_flags": sorted(flags.intersection(X86_64H_FEATURES)),
         "linux_cpu_vendor": cpu_info.get("vendor_id"),
         "linux_cpu_model": cpu_info.get("model name"),
+        "linux_cpu_family": cpu_info.get("cpu family"),
+        "linux_cpu_model_number": cpu_info.get("model"),
+        "linux_cpu_stepping": cpu_info.get("stepping"),
+        "linux_cpu_microcode": cpu_info.get("microcode"),
+        "linux_cpu_hypervisor_flag": cpu_hypervisor_flag(cpu_info),
         "linux_page_size_bytes": linux_page_size,
         "linux_kernel_config_status": kernel_config["status"],
         "linux_kernel_config_source": kernel_config["source"],

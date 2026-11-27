@@ -16,6 +16,8 @@ python3 scripts/xnulinux-doctor.py --json > doctor.json
 Inspect the JSON even if the command exits with status 1 because QEMU is absent. Its readiness checks
 describe the complementary TCG route. Fill in any missing fields in the record below. A CPU vendor or
 model string alone cannot establish that Linux is running directly on the physical system.
+The doctor reads CPU identity and the hypervisor flag from the first Linux `/proc/cpuinfo` entry.
+Use the flag as a virtualization hint. `false` records an absent flag and `null` means unavailable.
 
 | Field | Recorded value |
 | --- | --- |

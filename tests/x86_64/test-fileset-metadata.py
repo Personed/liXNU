@@ -167,7 +167,7 @@ def verify_fixup_extents(binary):
         }
 
     inner_report = fixup_report(nested_va, 704, 736)
-    verify(binary, image, {
+    expected = {
         "status": "accepted",
         "parser_result": 0,
         "file_type": 12,
@@ -187,13 +187,33 @@ def verify_fixup_extents(binary):
                 "section_count": 0,
             }],
         },
+    }
+    verify(binary, image, expected)
+
+    # An unrelated outer segment is outside this metadata check, even when
+    # the collection has a valid fixup command. Its framing still has to fit.
+    unrelated_outer = bytearray(image)
+    struct.pack_into("<II", unrelated_outer, 16, 4, 144 + 72)
+    struct.pack_into("<II16sQQQQIIII", unrelated_outer, outer_fixups + 16,
+                     LC_SEGMENT_64, 72, b"__DATA", outer_va, 64, 9999, 64, 1, 1, 0, 0)
+    verify(binary, unrelated_outer, {
+        **expected, "load_command_count": 4, "load_command_bytes": 216,
+    })
+
+    # With no outer fixups, don't read the outer __LINKEDIT extent.
+    no_outer_fixups = bytearray(image)
+    struct.pack_into("<II", no_outer_fixups, 16, 2, 128)
+    struct.pack_into("<Q", no_outer_fixups, outer + 40, 9999)
+    verify(binary, no_outer_fixups, {
+        **expected, "load_command_count": 2, "load_command_bytes": 128,
+        "chained_fixups": None,
     })
 
     rejected = {"status": "parser_rejected", "parser_result": -8}
     for fmt, offset, value in (
         ("<I", outer_fixups + 8, 511),  # Before __LINKEDIT.
         ("<I", outer_fixups + 8, 736),  # Within the other header's __LINKEDIT.
-        ("<I", outer_fixups + 12, 33),  # File extent is one byte too short.
+        ("<Q", outer + 48, 63),  # File extent alone is one byte too short.
         ("<I", outer_fixups + 12, 27),  # Fixups header would be truncated.
         ("<Q", outer + 32, 63),  # VM extent is one byte too short.
         ("<I", nested + 12, 33),  # Fixups extend past the containing file.

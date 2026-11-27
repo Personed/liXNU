@@ -431,6 +431,7 @@ static long er_run_on_cpu(void *argument)
 	unsigned long irq_flags;
 	long ret;
 	u32 required_flags;
+	u32 gp_msr_low, gp_msr_high;
 	unsigned long required_asm_flags;
 	bool after_valid = false;
 
@@ -484,6 +485,12 @@ static long er_run_on_cpu(void *argument)
 	ret = er_check_fault_address(control->fault_address);
 	if (ret)
 		goto out_restore;
+	if (work->request.vector == X86_EXCEPTION_RECOVERY_GP &&
+	    !rdmsr_safe(ER_GP_MSR_INDEX, &gp_msr_low, &gp_msr_high)) {
+		/* The selected read-only APIC MSR must fault before shadow IDT setup. */
+		ret = -EOPNOTSUPP;
+		goto out_restore;
+	}
 	er_active_state = control;
 	smp_wmb();
 	ret = x86_er_inject(control, work->request.vector);

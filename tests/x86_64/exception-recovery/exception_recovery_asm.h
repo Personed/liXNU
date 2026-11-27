@@ -3,6 +3,7 @@
 #define X86_EXCEPTION_RECOVERY_ASM_H
 
 #define ER_ARM_TOKEN                 0x45584350524f4245
+#define ER_GP_MSR_INDEX              0x80e
 #define ER_SENTINEL_R11              0x4a11f00d4a11f00d
 #define ER_SENTINEL_R12              0x4a12f00d4a12f00d
 #define ER_TEST_STACK_TOP_OFFSET      16368

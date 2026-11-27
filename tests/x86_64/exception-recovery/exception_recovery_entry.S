@@ -131,7 +131,7 @@ SYM_FUNC_START(x86_er_inject)
 	jmp .Lnot_faulted
 
 .Lsetup_gp:
-	movl $0xffffffff, %ecx
+	movl $ER_GP_MSR_INDEX, %ecx
 	movq %rsp, ER_OFF_FAULT_WINDOW_RSP(%r12)
 	movabsq $ER_SENTINEL_R12, %r12
 .Lgp_fault:
@@ -172,7 +172,7 @@ SYM_FUNC_START(x86_er_inject)
 	popq %rbx
 	popq %rbp
 	movq $-95, %rax /* -EOPNOTSUPP */
-	ret
+	RET
 
 .Lreturn_setup_failure:
 	/* No shadow IDT was installed, so this return is still on Linux's IDT. */
@@ -184,7 +184,7 @@ SYM_FUNC_START(x86_er_inject)
 	popq %rbx
 	popq %rbp
 	movq $-117, %rax /* -EUCLEAN */
-	ret
+	RET
 
 .Lpost_injection:
 	/* The recovery stub restored the task-stack RSP before this label. */
@@ -213,7 +213,7 @@ SYM_FUNC_START(x86_er_inject)
 	cmpq ER_OFF_ENVELOPE_RSP(%rax), %rdx
 	jne .Lterminal_restore_failure
 	xorl %eax, %eax
-	ret
+	RET
 .Lterminal_restore_failure:
 	movl $0x4552ff03, %eax
 	jmp .Lterminal_common
@@ -272,7 +272,7 @@ SYM_CODE_START(x86_er_pf_entry)
 	jmp .Lterminal_common
 SYM_CODE_END(x86_er_pf_entry)
 
-/* #GP: read-only invalid RDMSR is the only instruction in its fault window. */
+/* #GP: prevalidated read-only x2APIC reserved-MSR access. */
 SYM_CODE_START(x86_er_gp_entry)
 	ER_PUSH_GPRS
 	movq er_active_state(%rip), %r15

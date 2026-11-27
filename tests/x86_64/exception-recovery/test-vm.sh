@@ -131,7 +131,8 @@ dmesg -n 5
 # replaying the records to the serial console. This makes the diagnostics part
 # of the disposable-VM pass condition rather than best-effort output.
 recovery_diagnostics=/x86-exception-recovery-dmesg.log
-dmesg > "$recovery_diagnostics"
+probe_log=$(dmesg)
+printf '%s\n' "$probe_log" > "$recovery_diagnostics"
 if ! grep -Fq 'x86-exception-recovery:' "$recovery_diagnostics"; then
 	echo "x86 exception recovery VM has no recovery diagnostics to replay" >&2
 	exit 1
@@ -212,4 +213,13 @@ for marker in \
     echo "disposable VM missed required marker: $marker" >&2
     exit 1
   }
+done
+for cpu in 0 1; do
+  for vector in 14 13; do
+    diagnostic_pattern="x86-exception-recovery: cpu=${cpu} vector=${vector} rip=0x[[:xdigit:]]+ error=0x[[:xdigit:]]+ cr2=0x[[:xdigit:]]+ recovery_count=1 idtr_restored=1 gprs=ok ds=0x[[:xdigit:]]+ stacks=ok"
+    if ! grep -Eq "$diagnostic_pattern" "$LOG"; then
+      echo "disposable VM serial log missed successful diagnostic for cpu=$cpu vector=$vector" >&2
+      exit 1
+    fi
+  done
 done

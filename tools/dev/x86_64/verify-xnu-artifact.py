@@ -75,7 +75,7 @@ def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 
 def load_manifest(path: pathlib.Path) -> tuple[dict[str, object], str]:
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(path, flags)
         with os.fdopen(fd, "rb") as stream:

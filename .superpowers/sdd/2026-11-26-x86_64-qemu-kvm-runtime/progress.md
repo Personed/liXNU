@@ -10,7 +10,7 @@ Task 1: Ruling: Bind a persistent overlay to a source-image SHA-256 recorded in 
 
 Task 1: Ruling: Pass the local Apple SMC OSK through a mode-0600 temporary QEMU config instead of process arguments or environment — this reduces exposure through process listings and environment inspection — cost if wrong: QEMU must support `-readconfig` for the Apple SMC device configuration.
 
-Project workflow ruling: A ready PR merges when all automated checks are green; human approval is not a gate. Use auto-merge only when branch rules enforce the relevant checks, otherwise wait for every status check to turn green before merging.
+Project workflow ruling: The owner explicitly authorized merging PRs once all required automated checks are green, without waiting for human review. Pending or failed required checks still block a merge. This QEMU/KVM path is supplemental and does not replace the active native x86_64 FKI/XNU port.
 
 Pre-flight: Task 1 produces launcher flags and disk/state paths consumed by Task 3 documentation; Task 2 produces the TCG smoke invocation and evidence consumed by Task 3. No direct code interfaces are shared by Tasks 1 and 2. Task 4 consumes Task 3's evidence matrix and real hardware requirements.
 
@@ -18,6 +18,6 @@ Task 1: complete — fake-QEMU tests cover preflight errors, CPU/KVM gating, TCG
 
 Task 2: complete — fake harness tests pass; the disposable Debian 6.12.118 guest booted with QEMU 10.0.13 TCG. This is Linux-only development evidence.
 
-Task 3: in progress — split support documentation, continuous PR-comment coordination, no-human-review merge policy, PR template, and x86_64 launcher CI are in place. Local shell tests and Linux 6.12 ARM64 cross-build pass; GitHub's Ubuntu 7.0 ARM64 build exposed and is rerunning the 6.19 API compatibility fix.
+Task 3: in progress — documentation identifies the native x86_64 FKI/XNU port as the target, preserves ARM64 direct hosting, labels QEMU/KVM and TCG as complementary, records PR-comment coordination, and applies the owner's green-check merge authorization. Supplemental TCG status: #36 head `5312b29` passed run #72's Darwin console marker, guest halt, XNU unload, Linux power-off, and QEMU exit checks, but later inspection found overlapping file-backed `__TEXT_EXEC`/`__KLD` ranges. Current head `97727ac` adds a range check and run #74 is rebuilding it; #50 proposes relocating `__KLD`/`__LAST`. PR #46 has not reached its cross-host matrix. The earlier Windows failure used an older guest kernel layout and is not a Windows compatibility result. The proposed 16 GB Windows and 14 GB Intel-macOS runners are below the 16 GiB guest allocation plus host overhead; no lower-memory profile is validated.
 
-Task 4: pending physical Intel/AMD Tahoe 26 and ARM64 macOS 27 acceptance; no hardware or user-prepared Tahoe disk is available in this environment.
+Task 4: pending physical Intel and AMD acceptance for this optional guest launcher. These results remain separate from native x86_64 hosted-XNU acceptance.

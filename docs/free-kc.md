@@ -20,6 +20,7 @@ their install names change (otherwise their first page fails validation in every
 | `com.apple.kec.pthread` | PureDarwin (Apple's libpthread kext) | |
 | `com.apple.iokit.IOStorageFamily`, `HFSEncodings`, `hfs` | PureDarwin (Apple's open-source projects) | |
 
+`scripts/vm-xnu-rebuild.sh` builds XnuCPU, XnuDisk and XnuDrm even when Apple's kernelcache is absent.
 Every kext is compiled from source as arm64e with this kernel's own compile flags (`scripts/free-kc/kcc.py`), and
 linked into the collection by `scripts/kclink` the way xnulinux's own kexts are.
 

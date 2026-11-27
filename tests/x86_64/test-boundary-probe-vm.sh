@@ -1,0 +1,136 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
+# Run the x86_64 register/host-state probe only in a disposable Linux VM.
+set -euo pipefail
+
+if [ "$#" -ne 1 ] || [ ! -f "$1/Makefile" ]; then
+  echo "usage: $0 KDIR" >&2
+  exit 2
+fi
+
+KDIR=$(cd "$1" && pwd)
+REPO=$(cd "$(dirname "$0")/../.." && pwd)
+for tool in apt-get cat chmod cp cpio dpkg-deb find gcc grep gzip id install make mkdir mktemp mknod qemu-system-x86_64 rm sort timeout; do
+  command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
+done
+if [ "$(id -u)" -ne 0 ]; then
+  command -v sudo >/dev/null || { echo "missing required tool: sudo" >&2; exit 1; }
+fi
+KERNEL_RELEASE=$(cat "$KDIR/include/config/kernel.release")
+test -n "$KERNEL_RELEASE" || { echo "kernel release metadata is missing from KDIR" >&2; exit 1; }
+STAGE=$(mktemp -d)
+trap 'rm -rf -- "$STAGE"' EXIT
+
+mkdir -p "$STAGE/build/fki-ko" "$STAGE/build/tests/x86_64/boundary-probe"
+cp -a "$REPO/fki-ko/." "$STAGE/build/fki-ko/"
+cp -a "$REPO/tests/x86_64/boundary-probe/." "$STAGE/build/tests/x86_64/boundary-probe/"
+make -C "$KDIR" ARCH=x86_64 M="$STAGE/build/fki-ko" CONFIG_DEBUG_INFO_BTF_MODULES= modules
+make -C "$KDIR" ARCH=x86_64 M="$STAGE/build/tests/x86_64/boundary-probe" \
+	KBUILD_EXTRA_SYMBOLS="$STAGE/build/fki-ko/Module.symvers" \
+	CONFIG_DEBUG_INFO_BTF_MODULES= modules
+gcc -O2 -Wall -Wextra -Werror -mavx -mxsave -static \
+  -I"$REPO/tests/x86_64/boundary-probe" \
+  -o "$STAGE/build/boundary-probe-test" "$REPO/tests/x86_64/boundary-probe/user_test.c"
+
+(
+  cd "$STAGE"
+  apt-get download "linux-image-unsigned-$KERNEL_RELEASE" busybox-static >/dev/null
+)
+IMAGE_DEB=$(find "$STAGE" -maxdepth 1 -name "linux-image-unsigned-${KERNEL_RELEASE}_*.deb" -print -quit)
+BUSYBOX_DEB=$(find "$STAGE" -maxdepth 1 -name 'busybox-static_*.deb' -print -quit)
+test -n "$IMAGE_DEB" || { echo "matching unsigned kernel image package not found" >&2; exit 1; }
+test -n "$BUSYBOX_DEB" || { echo "busybox-static package not found" >&2; exit 1; }
+
+mkdir -p "$STAGE/kernel" "$STAGE/busybox"
+dpkg-deb -x "$IMAGE_DEB" "$STAGE/kernel"
+dpkg-deb -x "$BUSYBOX_DEB" "$STAGE/busybox"
+KERNEL="$STAGE/kernel/boot/vmlinuz-$KERNEL_RELEASE"
+BUSYBOX=$(find "$STAGE/busybox" -type f -name busybox -print -quit)
+test -s "$KERNEL" || { echo "matching kernel image not found: $KERNEL" >&2; exit 1; }
+test -s "$BUSYBOX" || { echo "busybox-static binary not found" >&2; exit 1; }
+
+ROOTFS="$STAGE/rootfs"
+mkdir -p "$ROOTFS/bin" "$ROOTFS/dev" "$ROOTFS/proc" "$ROOTFS/sys"
+install -m 0755 "$BUSYBOX" "$ROOTFS/bin/busybox"
+install -m 0755 "$STAGE/build/boundary-probe-test" "$ROOTFS/boundary-probe-test"
+install -m 0644 "$STAGE/build/fki-ko/fki.ko" "$ROOTFS/fki.ko"
+install -m 0644 "$STAGE/build/tests/x86_64/boundary-probe/x86-boundary-probe.ko" \
+  "$ROOTFS/x86-boundary-probe.ko"
+cat > "$ROOTFS/init" <<'INIT'
+#!/bin/busybox sh
+set -eu
+export PATH=/bin
+/bin/busybox --install -s /bin
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+trap 'echo "x86 boundary probe VM failed"; dmesg; poweroff -f' EXIT
+
+insmod /fki.ko
+insmod /x86-boundary-probe.ko
+/boundary-probe-test
+test ! -e /sys/module/xnu
+rmmod x86_boundary_probe
+test ! -e /sys/module/x86_boundary_probe
+test ! -e /dev/x86-boundary-probe
+rmmod fki
+test ! -e /sys/module/fki
+trap - EXIT
+echo X86_BOUNDARY_PROBE_VM_PASS
+sync
+poweroff -f
+INIT
+chmod 0755 "$ROOTFS/init"
+if [ "$(id -u)" -eq 0 ]; then
+  mknod "$ROOTFS/dev/console" c 5 1
+  mknod "$ROOTFS/dev/null" c 1 3
+  chmod 0600 "$ROOTFS/dev/console"
+  chmod 0666 "$ROOTFS/dev/null"
+else
+  sudo mknod "$ROOTFS/dev/console" c 5 1
+  sudo mknod "$ROOTFS/dev/null" c 1 3
+  sudo chmod 0600 "$ROOTFS/dev/console"
+  sudo chmod 0666 "$ROOTFS/dev/null"
+fi
+INITRD="$STAGE/boundary-probe-initramfs.cpio.gz"
+(
+  cd "$ROOTFS"
+  find . -print0 | sort -z | cpio --null --create --format=newc --owner=0:0 2>/dev/null
+) | gzip -n -9 > "$INITRD"
+
+run_probe_vm() {
+  local accel="$1"
+  local cpu="$2"
+  local log="$3"
+  local qemu_status
+
+  set +e
+  timeout 300 qemu-system-x86_64 -machine q35 -accel "$accel" -cpu "$cpu" -smp 2 -m 1024 \
+    -kernel "$KERNEL" -initrd "$INITRD" \
+    -append 'console=ttyS0,115200 rdinit=/init panic=1 loglevel=7' \
+    -display none -serial stdio -monitor none -no-reboot > "$log" 2>&1
+  qemu_status=$?
+  set -e
+  cat "$log"
+  if [ "$qemu_status" -ne 0 ]; then
+    echo "QEMU boundary-probe VM failed with status $qemu_status ($accel, cpu=$cpu)" >&2
+    exit "$qemu_status"
+  fi
+  grep -Fq 'X86_BOUNDARY_PROBE_VM_PASS' "$log" || {
+    echo "disposable VM did not report the boundary-probe success marker ($accel)" >&2
+    exit 1
+  }
+  grep -Fq 'reboot: Power down' "$log" || {
+    echo "disposable VM did not power down cleanly ($accel)" >&2
+    exit 1
+  }
+}
+
+run_probe_vm tcg max "$STAGE/tcg.log"
+host_flags=$(grep -m1 '^flags' /proc/cpuinfo || true)
+if [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ] && \
+   [[ " $host_flags " == *' xsave '* ]] && [[ " $host_flags " == *' avx '* ]]; then
+  run_probe_vm kvm host "$STAGE/kvm.log"
+else
+  echo 'skipping optional KVM boundary-probe run: KVM/XSAVE/AVX is unavailable'
+fi

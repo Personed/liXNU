@@ -6,7 +6,7 @@
 /* Run fn(arg) where Linux may run it (a Linux-compliant stack), keeping the caller's exception mask. */
 void fki_linux_runs_ext(void (*fn)(void *), void *arg);
 
-/* Architecture backend hooks (fki_arm64.c / fki_l4h.c). */
+/* Architecture backend hooks (fki_arm64.c / fki_l4h.c / fki_x86_64.c). */
 int fki_arch_init(void);
 void fki_arch_exit(void);
 void fki_arch_linux_runs(void (*fn)(void *), void *arg);

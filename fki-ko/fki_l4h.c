@@ -261,6 +261,8 @@ struct fki_kmem_chunk {
 	unsigned long large_slot;
 	struct page **small_pgs;	/* 512 entries when !is_large */
 	unsigned long *small_slots;	/* 512 entries when !is_large */
+	unsigned long alias_large_slot;		/* the chunk's second mapping (fki_kmem_alias), when is_large */
+	unsigned long *alias_small_slots;	/* the same, 512 entries when !is_large */
 };
 
 #define FKI_AS_SLOT_BITS	30
@@ -318,6 +320,8 @@ struct fki_kmem {
 	unsigned long high_va;
 	fki_u64 pa_base;
 	unsigned long size;
+	unsigned long alias_va;		/* fki_kmem_alias: the first alias_size bytes are mapped here as well */
+	unsigned long alias_size;
 	unsigned long nchunks;
 	struct fki_kmem_chunk *chunks;
 	struct list_head pts;
@@ -436,6 +440,24 @@ static int xpa_to_gpa(struct fki_kmem *km, fki_u64 xpa, unsigned long *gpa_out)
 	return 0;
 }
 
+static void kmem_unalias_chunk(struct fki_kmem_chunk *ch)
+{
+	unsigned long j;
+
+	if (ch->alias_large_slot) {
+		l4h_slot_delete(ch->alias_large_slot);
+		ch->alias_large_slot = 0;
+	}
+	if (ch->alias_small_slots) {
+		for (j = 0; j < 512; j++) {
+			if (ch->alias_small_slots[j])
+				l4h_slot_delete(ch->alias_small_slots[j]);
+		}
+		kfree(ch->alias_small_slots);
+		ch->alias_small_slots = NULL;
+	}
+}
+
 static void kmem_cleanup(struct fki_kmem *km)
 {
 	struct fki_pt_node *node, *tmp;
@@ -458,6 +480,7 @@ static void kmem_cleanup(struct fki_kmem *km)
 		for (i = 0; i < km->nchunks; i++) {
 			struct fki_kmem_chunk *ch = &km->chunks[i];
 
+			kmem_unalias_chunk(ch);
 			if (ch->is_large) {
 				if (ch->large_slot)
 					l4h_slot_delete(ch->large_slot);
@@ -665,6 +688,98 @@ fail:
 }
 EXPORT_SYMBOL(fki_kmem_alloc);
 
+/* The second mapping of one 2 MiB chunk, at cva: a large frame where the first is one. */
+static int kmem_alias_chunk(struct fki_kmem *km, struct fki_kmem_chunk *ch, unsigned long cva)
+{
+	const int prot = L4H_PROT_READ | L4H_PROT_WRITE | L4H_PROT_EXEC;
+	unsigned long flags, j;
+	int err = 0;
+
+	if (ch->is_large) {
+		unsigned long lf = l4h_large_frame(ch->large_gpa);
+		unsigned long slot = lf ? l4h_cap_copy(lf, L4H_RIGHTS_ALL) : 0;
+
+		if (!slot)
+			return -ENOMEM;
+		spin_lock_irqsave(&km->lock, flags);
+		err = map_high_frame(km, slot, cva, prot | L4H_PROT_LARGE);
+		spin_unlock_irqrestore(&km->lock, flags);
+		if (err) {
+			l4h_slot_delete(slot);
+			return err;
+		}
+		ch->alias_large_slot = slot;
+		return 0;
+	}
+	ch->alias_small_slots = kcalloc(512, sizeof(*ch->alias_small_slots), GFP_KERNEL);
+	if (!ch->alias_small_slots)
+		return -ENOMEM;
+	for (j = 0; j < 512 && !err; j++) {
+		unsigned long slot = l4h_cap_copy(L4H_FRAME_CPTR(page_to_phys(ch->small_pgs[j])),
+						  L4H_RIGHTS_ALL);
+
+		if (!slot) {
+			err = -ENOMEM;
+			break;
+		}
+		spin_lock_irqsave(&km->lock, flags);
+		err = map_high_frame(km, slot, cva + (j << PAGE_SHIFT), prot);
+		spin_unlock_irqrestore(&km->lock, flags);
+		if (err)
+			l4h_slot_delete(slot);
+		else
+			ch->alias_small_slots[j] = slot;
+	}
+	if (err)
+		kmem_unalias_chunk(ch);
+	return err;
+}
+
+int fki_kmem_alias(struct fki_region *r, unsigned long va, unsigned long size)
+{
+	struct fki_kmem *km;
+	unsigned long va_end, km_va_end, old_n, n, i, flags;
+	int err = 0;
+
+	if (!r || ((va | size) & (SZ_2M - 1)) || check_add_overflow(va, size, &va_end))
+		return -EINVAL;
+	mutex_lock(&fki_kmem_mutex);
+	km = r->handle;
+	if (!km || rcu_access_pointer(active_kmem) != km) {
+		mutex_unlock(&fki_kmem_mutex);
+		return -ENODEV;
+	}
+	n = size >> 21;
+	old_n = km->alias_size >> 21;
+	km_va_end = km->high_va + km->size;	/* fki_kmem_alloc checked the sum */
+	if (n > km->nchunks || (va < km_va_end && va_end > km->high_va) ||
+	    (old_n && va != km->alias_va)) {
+		mutex_unlock(&fki_kmem_mutex);
+		return -EINVAL;
+	}
+	for (i = old_n; i < n && !err; i++)
+		err = kmem_alias_chunk(km, &km->chunks[i], va + (i << 21));
+	if (err) {
+		/* back to what it was: i - 1 is the chunk that failed, and it has undone itself */
+		n = old_n;
+		i--;
+	} else {
+		i = old_n;
+	}
+	spin_lock_irqsave(&km->lock, flags);
+	km->alias_va = va;
+	km->alias_size = n << 21;
+	spin_unlock_irqrestore(&km->lock, flags);
+	if (i > n) {
+		while (i-- > n)
+			kmem_unalias_chunk(&km->chunks[i]);
+		l4h_vspace_flush(L4H_CPTR(L4H_SLOT_HIGH_VSPACE));
+	}
+	mutex_unlock(&fki_kmem_mutex);
+	return err;
+}
+EXPORT_SYMBOL(fki_kmem_alias);
+
 static void fki_as_drain_list(struct fki_kmem *km);
 
 void fki_kmem_free(struct fki_region *r)
@@ -739,11 +854,24 @@ static int prot_to_l4h(int prot)
 	return p;
 }
 
+/* The region's second mapping (fki_kmem_alias), which is as permanent as the aperture. */
+static bool high_overlaps_alias(struct fki_kmem *km, unsigned long va, unsigned long va_end)
+{
+	return km->alias_size && va < km->alias_va + km->alias_size && va_end > km->alias_va;
+}
+
+static bool high_in_alias(struct fki_kmem *km, unsigned long va, unsigned long va_end)
+{
+	return km->alias_size && va >= km->alias_va && va_end <= km->alias_va + km->alias_size;
+}
+
 static bool high_overlaps_aperture(struct fki_kmem *km, unsigned long va, unsigned long va_end)
 {
 	unsigned long km_va_end, ap_start, ap_end;
 
 	if (check_add_overflow(km->high_va, km->size, &km_va_end))
+		return true;
+	if (high_overlaps_alias(km, va, va_end))
 		return true;
 	ap_start = round_down(km->high_va, SZ_2M);
 	ap_end = round_up(km_va_end, SZ_2M);
@@ -865,6 +993,12 @@ int fki_high_map(unsigned long va, fki_u64 xpa, unsigned long size, int prot)
 	/* Initial linear aperture is already mapped RWX (with 2 MiB large frames). */
 	if (va >= km->high_va && va_end <= km_va_end &&
 	    xpa >= km->pa_base && (va - km->high_va) == (unsigned long)(xpa - km->pa_base)) {
+		fki_kmem_put(km);
+		return 0;
+	}
+	/* So is its second mapping (fki_kmem_alias). */
+	if (high_in_alias(km, va, va_end) &&
+	    xpa >= km->pa_base && (va - km->alias_va) == (unsigned long)(xpa - km->pa_base)) {
 		fki_kmem_put(km);
 		return 0;
 	}
@@ -1109,7 +1243,11 @@ static void fki_high_unmap_km(struct fki_kmem *km, unsigned long va, unsigned lo
 		for (cur_va = lo[i]; cur_va < hi[i]; cur_va += PAGE_SIZE) {
 			unsigned long vpn = cur_va >> PAGE_SHIFT;
 			unsigned long idx = 0;
-			struct fki_high_txn *txn = fki_high_txn_find_locked(km, cur_va, &idx);
+			struct fki_high_txn *txn;
+
+			if (high_overlaps_alias(km, cur_va, cur_va + PAGE_SIZE))
+				continue;
+			txn = fki_high_txn_find_locked(km, cur_va, &idx);
 
 			if (txn) {
 				if (txn->pages[idx].stashed) {
@@ -1209,6 +1347,8 @@ int fki_high_txn_begin(unsigned long va, unsigned long size, void **handle_out)
 		void *old;
 
 		if (cur_va >= ap_lo && cur_va < ap_hi)
+			continue;
+		if (high_overlaps_alias(km, cur_va, cur_va + PAGE_SIZE))
 			continue;
 		old = xa_load(&km->dyn_slots, vpn);
 		if (!old)
@@ -1346,10 +1486,13 @@ static bool high_range_readable_locked(struct fki_kmem *km, unsigned long va, un
 		return false;
 	if (va >= km->high_va && end <= km_end)
 		return true;
+	if (high_in_alias(km, va, end))
+		return true;
 	page_va = va & PAGE_MASK;
 	last_page = (end - 1) & PAGE_MASK;
 	for (;; page_va += PAGE_SIZE) {
 		if (!(page_va >= km->high_va && page_va < km_end) &&
+		    !high_overlaps_alias(km, page_va, page_va + PAGE_SIZE) &&
 		    !xa_load(&km->dyn_slots, page_va >> PAGE_SHIFT))
 			return false;
 		if (page_va == last_page)

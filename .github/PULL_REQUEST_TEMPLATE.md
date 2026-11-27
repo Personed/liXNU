@@ -18,6 +18,7 @@
 
 - [ ] ARM64 behavior remains covered when shared module code changes.
 - [ ] No Apple system images, firmware, or local SMC OSK values are included.
-- [ ] TCG evidence is labeled as development-only.
+- [ ] The active x86-64 PC target is QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin console; native Tahoe hosting and QEMU/KVM remain separate experiments.
 - [ ] Every related agent has visible scope, interface, and result updates in PR comments.
-- [ ] Merge when automated checks are green without waiting for human review; use GitHub auto-merge when repository settings permit it.
+- [ ] Each applicable automated review finding has a reply in its thread with the fix and validation, or an evidence-based reason it is duplicate, superseded, or inapplicable.
+- [ ] Do not merge or enable auto-merge without explicit owner authorization for this PR.

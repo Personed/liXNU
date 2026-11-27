@@ -29,7 +29,7 @@ void xnu_world_upcall(void);
 /* Pure EL0 host variants (FKI_CAP_EL0): no EL1 system instructions; slot from TPIDRRO_EL0. */
 long xnu_world_call_el0(unsigned long fn, unsigned long arg);
 void xnu_world_upcall_el0(void);
-/* Where an XNU fault that cannot be handled returns to (still with XNU's keys): back to Linux's, then xnu_world_abort. */
+/* Where an XNU fault that cannot be handled returns to (still with XNU's keys and user half): back to Linux's, then out. */
 void xnu_world_fault_abort(void);
 /* Linux-world handler: return 0 to resume XNU, nonzero to end the run. */
 long xnu_hook(unsigned long stage, unsigned long a1, unsigned long a2);

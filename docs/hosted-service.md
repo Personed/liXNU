@@ -27,7 +27,7 @@ artifact comes with its source.
 |---|---|---|---|
 | `fki.ko` | `fki-ko/` | GPL-2.0-only | the foreign kernel interface: CPUs, memory carve-out, faults, IPIs, host calls |
 | `xnu.ko` | `xnu-ko/` | APSL-2.0 | loads and runs the kernel collection. It is a non-GPL module that taints the kernel, like ZFS: ship its **source** and build it on the host against the running kernel (`xnulinux-boot.sh` does this on every boot, and a DKMS package would do it on kernel updates). Do not ship it prebuilt inside a kernel package |
-| `xnudrmd` | `gpu/xnu-drm/xnudrmd.c` | GPL-2.0-only | the GPU bridge's Linux service (virtio-gpu Venus render nodes only so far) |
+| GPU bridge | `gpu/xnu-drm/xnudrmd.c`, `xnudrmd_virgl.c` | GPL-2.0-only | host-specific backends: virtio-gpu/Venus on krunkit; virglrenderer/Venus on the DGX Spark GB10 (see [`tools/dgx-spark/README.md`](../tools/dgx-spark/README.md)) |
 | boot and service scripts | `scripts/xnulinux-boot.sh`, `install-service.sh`, `vm-install-fki-service.sh`, `vm-net-up.sh` | GPL-2.0-only | `xnulinux.service`, `xnulinux-fki.service`, `/etc/xnulinux.conf` |
 | kernel command line | `vm-install-fki-service.sh` | | `mem=`, `nokaslr`, `log_buf_len=`; the carve-out (`carve_base`, `carve_mb`) sized for each host model |
 | on Mac hosts | `scripts/krun-vm.sh`, `install-krun-agent.sh`, krunkit (Apache-2.0) | | the Linux VM with virtio-gpu Venus; a launchd agent keeps it running |
@@ -82,12 +82,25 @@ We ship these. The user's disk script installs them into their own macOS disk:
 1. **Host OS.** arm64 Ubuntu, either directly on the hardware or as a VM. On an Apple Silicon Mac the VM runs under
    krunkit (krunkit, libkrun, virglrenderer, MoltenVK and gvproxy under `$KRUN`; `scripts/krun-vm.sh`,
    `scripts/install-krun-agent.sh`), which gives it the host GPU through virtio-gpu Venus.
-2. **Memory.** `scripts/vm-install-fki-service.sh` with `LINUX_MEM`, `CARVE_BASE` and `CARVE_MB` for that host's
-   physical memory map. The carve-out is RAM Linux never manages. The hosted kernel's `RAM_MB` has to fit inside it
-   (8 GB → `RAM_MB=7900`). Reboot once.
+2. **Memory.** Run `scripts/vm-install-fki-service.sh` once before the first reboot, while `/proc/iomem` still shows the
+   full physical RAM map and before an earlier `mem=` limit has hidden the carve-out. It detects `LINUX_MEM`,
+   `CARVE_BASE` and `CARVE_MB` by default, accepts those values as environment overrides, checks their final geometry
+   before changing GRUB or installing the FKI service, and prints a suggested `RAM_MB` for the guest. Use that guest
+   memory size in `/etc/xnulinux.conf`; the installation command prints the same recommendation outside `--dry-run`.
+   The automatic suggestion remains capped at 7900 MiB. Explicit `RAM_MB` must be decimal without leading zeroes and
+   cannot exceed the smaller of the carve-out's available size or the XNU module limit of 65,536 MiB. The carve-out
+   is RAM Linux never manages. After reboot, `mem=` may hide the
+   reserved range from `/proc/iomem`; do not rerun memory detection against that reduced map. To change the layout,
+   temporarily boot without the old `mem=` limit, run the setup again with the complete physical map, and reboot.
 3. **Kit.** Unpack it to `/opt/xnulinux/kit`, and install `kc-free.bin` as `/lib/firmware/xnu/kc-free.bin`.
-4. **Default system.** Put the PureDarwin disk at `/var/lib/xnulinux/pd.img` with its `pd.conf`. Configure
-   `/etc/xnulinux.conf` as follows, then run `scripts/install-service.sh`:
+4. **Default system.** Put the PureDarwin disk at `/var/lib/xnulinux/pd.img` with its `pd.conf`. Set `RAM_MB` in
+   `/etc/xnulinux.conf` to the numeric recommendation printed by `scripts/vm-install-fki-service.sh`, then run
+   `scripts/install-service.sh`. That number depends on the host's carve-out; the example leaves it out deliberately.
+   To validate a custom RAM value before saving it, run `sudo env RAM_MB=<number> scripts/vm-install-fki-service.sh
+   --dry-run` while the full physical map is still visible. Replace `<number>` with the decimal value to check. If
+   you customized the memory layout, pass the same `LINUX_MEM`, `CARVE_BASE` and `CARVE_MB` values used during setup:
+   `sudo env LINUX_MEM=<value> CARVE_BASE=<value> CARVE_MB=<value> RAM_MB=<number> scripts/vm-install-fki-service.sh --dry-run`.
+   Do not omit `RAM_MB` on a smaller host because the boot script's fallback is 7900 MiB.
    ```
    IMAGE=xnu/kc-free.bin
    TRUSTCACHE=
@@ -95,7 +108,6 @@ We ship these. The user's disk script installs them into their own macOS disk:
    DISK=/var/lib/xnulinux/pd.img
    GPU=off
    CPUS=2
-   RAM_MB=7900
    ```
 5. **Isolation.** The hosted kernel runs at EL1 inside the Linux kernel, so a hosted system that is compromised owns
    that Linux. **The tenant boundary is the VM (or the machine), never the Linux.** Run one Linux VM per tenant, with one
@@ -146,6 +158,6 @@ Apple's installer (`tart` or another Virtualization.framework installer).
 | One kit per macOS build, fixed segment slots | each macOS release needs a new kit before users can update |
 | AMFI relaxed (`amfi_get_out_of_my_way=1`) and SIP partly off (`lp-sip0`); the OS cryptex merged into the system volume | the hosted macOS is less locked down than a real Mac. State this in the service's documentation (`docs/production.md` §3) |
 | The keystore is fresh at every boot | FileVault-style data protection does not persist across reboots |
-| GPU bridge only for virtio-gpu (Venus) | Mac hosts get the host GPU. Bare-metal hosts render on the CPU |
+| GPU backend is host-specific | Apple Silicon Linux VMs can use virtio-gpu/Venus; DGX Spark has a separate GB10 backend through virglrenderer/Venus. The recorded DGX desktop evidence used CPU rendering; other bare-metal GPU models are not validated |
 | Bare-metal hosts need their own carve-out layout (`mem=`, `carve_base`) | one layout per host model, set up when it is provisioned |
 | `xnu.ko` built on the host at boot | needs kernel headers and a compiler on the host. Package it as DKMS |

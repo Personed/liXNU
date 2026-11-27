@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
 /*
- * Foreign kernel interface (FKI), version 2.
+ * Foreign kernel interface (FKI), version 3.
  *
  * The only interface between Linux and a foreign-kernel module. It is
  * semantic and shaped like a hypervisor interface: plain integer types and
@@ -10,7 +10,7 @@
 #ifndef _LINUX_FKI_H
 #define _LINUX_FKI_H
 
-#define FKI_VERSION 2
+#define FKI_VERSION 3
 
 #ifndef __KERNEL__
 #include <stdint.h>
@@ -106,8 +106,12 @@ void fki_window_set(unsigned long long *slot, fki_u64 desc);
  * fki_high_map/unmap/flush mirror additional kernel-VA mappings backed by xpa in [pa_base, pa_base + size).
  * fki_high_map only supports new mappings or in-place same-PFN re-protection; cross-PFN replacement
  * returns -EBUSY and requires the caller to fki_high_unmap while quiescent first.
+ * fki_kmem_alias maps the first size bytes of the memory a second time, at va, in the same frames and as RWX and
+ * as permanent as at high_va (2 MiB aligned, apart from the first mapping, nothing else mapped there). A later
+ * call with the same va and another size grows or shrinks it. Only before the foreign kernel runs.
  */
 int fki_kmem_alloc(unsigned long size, unsigned long high_va, fki_u64 pa_base, struct fki_region *r);
+int fki_kmem_alias(struct fki_region *r, unsigned long va, unsigned long size);
 void fki_kmem_free(struct fki_region *r);
 int fki_high_map(unsigned long va, fki_u64 xpa, unsigned long size, int prot);
 void fki_high_unmap(unsigned long va, unsigned long size);

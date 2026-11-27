@@ -47,11 +47,38 @@ At the time of this update, the attached executor is a Debian 13 x86-64 VM under
 
 | Host profile | Current status |
 | --- | --- |
-| Ubuntu 24.04 x86-64 hosted CI VM, QEMU TCG | PR #98 run [#158](https://github.com/Personed/xnulinux/actions/runs/45911026412) passed the complete 6 GiB route on tested head `589c40e` with QEMU 8.2.2 and `cortex-a710`: image, disk/collection, guest preparation, Darwin userland, guest halt, XNU/FKI unload, Linux power-off, and QEMU exit 0. The virtual VM reported 4 vCPUs, Xeon 6975P-C, 16,464,297,984 bytes total RAM, 15,174,471,680 available before QEMU, and 3,844,540 KiB peak RSS. This hosted-runner profile is not a physical-PC memory floor. |
+| Ubuntu 24.04.5 x86-64 hosted CI VM, QEMU TCG | PR #115 run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996) is the latest full-route pass on the corrected #115 head `0daaa50`, tested as merge commit `1b3beb5` into #89 base `763aef9`. QEMU 8.2.2, `cortex-a710`, guest 6 GiB; host Intel Xeon 6975P-C, 4 logical CPUs; 16,464,306,176 bytes total / 15,138,226,176 available before QEMU; peak QEMU RSS 3,844,588 KiB (3.67 GiB). This hosted VM result does not establish a physical-PC RAM floor. |
 | Physical Intel x86-64 Linux PC, QEMU TCG | Not tested; no physical Intel PC is attached to the available executor. |
 | Physical AMD x86-64 Linux PC, QEMU TCG | Not tested; some CI runs used AMD EPYC virtual CPUs, which do not establish bare-metal AMD support. |
-| Windows Server 2025 x86-64 hosted VM, QEMU TCG | PR #89 run #151 failed on an earlier head with QEMU 11.1.0 `-cpu max`; the console and shutdown markers were absent. PR #98 run [#158](https://github.com/Personed/xnulinux/actions/runs/45911026412), head `589c40e`, passed the complete 6 GiB route once with QEMU 11.1.0 `cortex-a710`: console, guest halt, XNU/FKI unload, Linux power-off, and QEMU exit 0. The hosted runner reported 17,174,360,064 bytes total RAM and 13,663,916,032 available before QEMU; process RSS was not measured. This is a pass for that hosted CPU/OS profile, not a physical Windows PC result or validation of `-cpu max` with PIE enabled. |
-| Intel macOS 15 hosted runner, QEMU TCG | PR #89 run #151 failed on an earlier head with QEMU 11.1.0 `-cpu max`; the console and shutdown markers were absent. PR #98 run [#158](https://github.com/Personed/xnulinux/actions/runs/45911026412), head `589c40e`, passed the complete 6 GiB route once with QEMU 11.1.0 `cortex-a710`, including console and guest shutdown. The hosted runner reported an Intel Core i7-8700B, 4 logical CPUs, 15,032,385,536 bytes total RAM, 10,498,539,520 available before QEMU, and 3,640,304 KiB peak RSS. This is a pass for that hosted CPU/OS profile, not a physical-PC result or validation of `-cpu max` with PIE enabled. |
+| Windows Server 2025 x86-64 hosted VM, QEMU TCG | PR #115 run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996) passed on the same tested stack (`1b3beb5`); QEMU 11.1.0, `cortex-a710`, guest 6 GiB; AMD64 Family 25 Model 17 Stepping 1, 4 logical CPUs; 17,174,360,064 bytes total / 13,685,481,472 available before QEMU; RSS not measured. This is a hosted VM result, not a physical Windows PC result. |
+| Intel macOS 15 hosted runner, QEMU TCG | PR #115 run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996) passed on the same tested stack (`1b3beb5`); macOS 15.7.9, QEMU 11.1.0, `cortex-a710`, guest 6 GiB; Intel Core i7-8700B, 4 logical CPUs; 15,032,385,536 bytes total / 10,482,348,032 available before QEMU; peak RSS 3,643,496 KiB (3.47 GiB). This is a hosted Intel macOS VM result, not a physical-PC result. |
+
+
+Run #172 used the same paired ARM64 Linux guest, initramfs, and PureDarwin disk across
+all three hosts. All six workflow jobs passed: image creation, real HFS+ disk and
+source-built XNU/free collection, ARM64 guest preparation, and three TCG boots. The
+common guest profile was 6 GiB QEMU RAM, Linux `mem=2G`, FKI carve-out 3,072 MiB at
+`0xc0000000`, and XNU RAM 2,816 MiB. Each host reached the PureDarwin console and
+`XNULINUX_USERLAND_OK`, issued guest `halt`, unloaded XNU/FKI, powered Linux off, and
+passed the harness's QEMU exit-0 check. The run did not test XNU directly on an ARM64
+host or on bare-metal x86-64.
+
+Paired artifacts: [guest inputs ZIP](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196743551)
+(SHA-256 `4f799ad8146a6a90c94a5963eb20f9247e9929154c499149d7c7b8dd6f9788d7`) and
+[PureDarwin disk ZIP](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196177348)
+(SHA-256 `5f0fcda34d96a36702fea01a36c2649f09088a4892f09f7e68ceea2b45865f6`). The guest
+artifact expires 2026-12-27 and the disk artifact expires 2026-12-27; treat them as
+short-lived run evidence, not permanent download mirrors. The per-host logs are
+[Ubuntu](https://github.com/Personed/xnulinux/actions/runs/45989875996/job/140506795752),
+[Windows](https://github.com/Personed/xnulinux/actions/runs/45989875996/job/140506795768),
+and [Intel macOS](https://github.com/Personed/xnulinux/actions/runs/45989875996/job/140506795714).
+
+The 6 GiB value is the repeated standard guest configuration, not a measured minimum;
+lower guest allocations remain experimental. These are three hosted VM profiles.
+Physical Intel and AMD PCs and their host-RAM floor remain untested, so they are not
+supported hardware claims. #172 also tested PR #115 merged into the older #89 base;
+the owner is syncing that stack and the full route still needs to run on the resulting
+current integrated #89 head.
 
 PR #89 run [#151](https://github.com/Personed/xnulinux/actions/runs/45904189412) used the paired [guest/build manifest artifact](https://github.com/Personed/xnulinux/actions/runs/45904189412/artifacts/15158822689) and [disk artifact](https://github.com/Personed/xnulinux/actions/runs/45904189412/artifacts/15159442035). Both Windows and macOS boot logs recorded the same inputs: Image SHA-256 `02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6`, initramfs SHA-256 `a548f8fc4075fd535fece9648c808d97a9460ad520f67a750f221b6ba18babe8`, and disk SHA-256 `269cc4ba7a8ec973cc672d50bffeebb84b9e3a5f9051f567b152d566d8b9acb5`.
 

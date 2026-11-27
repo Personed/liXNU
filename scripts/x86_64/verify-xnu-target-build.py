@@ -106,19 +106,27 @@ def parse_commands(objroot: pathlib.Path, expected_compilers: set[pathlib.Path])
             if not tokens or not compiler_path(tokens[0], expected_compilers):
                 raise ValidationError(f"unexpected compiler for XNU target command in {fragment}: {tokens[:1]}")
             directory = canonical(item.get("directory", fragment.parent))
-            source = str(item.get("file", ""))
+            # Clang -MJ writes the input after -x<language> and an optional
+            # --sysroot=... and before -o. The output can also end in .s.
+            argument_input = ""
+            if len(tokens) > 4 and tokens[1].startswith("-x") and tokens[1] != "-x":
+                input_index = 3 if tokens[2].startswith("--sysroot=") else 2
+                if tokens[input_index + 1] == "-o":
+                    argument_input = tokens[input_index]
+            if not argument_input:
+                argument_input = next(
+                    (token for token in reversed(tokens) if pathlib.Path(token).suffix.lower() in SOURCE_SUFFIXES),
+                    "",
+                )
+            source = str(item.get("file", "")) or argument_input
             if not source:
-                source_candidates = [token for token in tokens if pathlib.Path(token).suffix.lower() in SOURCE_SUFFIXES]
-                if not source_candidates:
-                    raise ValidationError(f"XNU -MJ target entry has no source file: {fragment}")
-                source = source_candidates[-1]
+                raise ValidationError(f"XNU -MJ target entry has no source file: {fragment}")
             source_path = pathlib.Path(source)
             if not source_path.is_absolute():
                 source_path = directory / source_path
             source = str(canonical(source_path))
-            argument_sources = [token for token in tokens if pathlib.Path(token).suffix.lower() in SOURCE_SUFFIXES]
-            if argument_sources:
-                argument_source = pathlib.Path(argument_sources[-1])
+            if argument_input:
+                argument_source = pathlib.Path(argument_input)
                 if not argument_source.is_absolute():
                     argument_source = directory / argument_source
                 if canonical(argument_source) != pathlib.Path(source):
@@ -567,6 +575,21 @@ def self_test() -> None:
             raise ValidationError(f"self-test expected explicit overlay sysroot mode, got {result['mode']}")
         if result["c_cxx_compile_commands"] != 2 or result["assembly_compile_commands"] != 1:
             raise ValidationError(f"self-test failed to separate C and assembly: {result}")
+
+        asm_fragment = objdir / "start.o.json"
+        asm_entry = json.loads(asm_fragment.read_text().strip().rstrip(","))
+        asm_entry["output"] = str(root / "start-2b823e.s")
+        asm_entry["arguments"] = [
+            str(compiler), "-xassembler-with-cpp", f"--sysroot={sdk_root}", str(source_asm),
+            "-o", asm_entry["output"], *common, *sysroot,
+        ]
+        asm_fragment.write_text(json.dumps(asm_entry) + ",\n")
+        verify(log, objroot, sdk_root, base_sdk_root, source_root, diagnostic, [compiler])
+        asm_entry["arguments"][3] = str(root / "unrelated.s")
+        asm_entry["arguments"].extend(("-include", str(source_asm)))
+        asm_fragment.write_text(json.dumps(asm_entry) + ",\n")
+        _expect_failure(lambda: verify(log, objroot, sdk_root, base_sdk_root, source_root, diagnostic, [compiler]),
+                        "wrong positional -MJ input with matching option value", "source field does not match")
 
         wrong_sysroot_args = [*c_args]
         wrong_sysroot_args[wrong_sysroot_args.index("-Werror"):wrong_sysroot_args.index("-Werror")] = ["-isysroot", str(base_sdk_root)]

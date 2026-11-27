@@ -4,6 +4,7 @@
 #include <linux/completion.h>
 #include <linux/cpu.h>
 #include <linux/errno.h>
+#include <linux/irqflags.h>
 #include <linux/jiffies.h>
 #include <linux/kernel.h>
 #include <linux/kthread.h>
@@ -69,8 +70,9 @@ struct bp_continuation_slot {
 struct bp_continuation_test {
 	struct completion request_published;
 	struct completion owner_pre_wait_check;
-	struct completion immediate_reply_ack;
+	struct completion reply_checked;
 	struct completion reply_ready;
+	struct completion contender_checked;
 	struct completion cancel_ready;
 	struct completion cancel_acknowledged;
 	struct completion owner_done;
@@ -163,7 +165,9 @@ noinline notrace void bp_task_continuation_body(struct bp_continuation_test *tes
 	WRITE_ONCE(test->callback_rsp[index], rsp);
 	WRITE_ONCE(test->callback_task[index], current);
 	if (current != READ_ONCE(test->owner_task) ||
-	    !bp_task_continuation_rsp_in_slot(test->slot, rsp))
+	    !bp_task_continuation_rsp_in_slot(test->slot, rsp) ||
+	    !irqs_disabled() ||
+	    (IS_ENABLED(CONFIG_PREEMPT_COUNT) && !preempt_count()))
 		WRITE_ONCE(test->callback_error, -EUCLEAN);
 
 	if (READ_ONCE(test->phase) == BP_CONT_RESUME_ENTRY) {
@@ -265,6 +269,9 @@ static int bp_task_continuation_claim_resume(struct bp_continuation_test *test)
 static int bp_task_continuation_enter(struct bp_continuation_test *test,
 				      enum bp_cont_phase phase)
 {
+	unsigned int preempt_before = preempt_count();
+	unsigned long irq_flags;
+	bool irqs_disabled_before = irqs_disabled();
 	unsigned long rsp;
 	int ret;
 
@@ -277,7 +284,15 @@ static int bp_task_continuation_enter(struct bp_continuation_test *test,
 		return -EXDEV;
 
 	WRITE_ONCE(test->phase, phase);
+	/* Keep maskable interrupts and preemption off on the alternate stack. */
+	preempt_disable();
+	local_irq_save(irq_flags);
 	bp_task_continuation_switch_stack(test->slot->stack_top, test);
+	local_irq_restore(irq_flags);
+	preempt_enable();
+	if (preempt_count() != preempt_before ||
+	    irqs_disabled() != irqs_disabled_before)
+		return -EUCLEAN;
 	if (current != test->owner_task)
 		return -EUCLEAN;
 	rsp = bp_task_continuation_read_rsp();
@@ -380,6 +395,22 @@ static int bp_task_continuation_set_terminal(struct bp_continuation_test *test,
 	return ret;
 }
 
+static bool bp_task_continuation_owner_blocked(struct bp_continuation_test *test)
+{
+	unsigned long deadline = jiffies + msecs_to_jiffies(BP_CONT_WATCHDOG_MS);
+
+	for (;;) {
+		if (READ_ONCE(test->owner_wait_started) &&
+		    READ_ONCE(test->owner_task->nvcsw) >
+			    READ_ONCE(test->owner_nvcsw_before))
+			return true;
+		if (kthread_should_stop() || time_after_eq(jiffies, deadline))
+			return false;
+		/* Let the same-CPU owner reach and enter its actual wait. */
+		schedule_timeout_uninterruptible(1);
+	}
+}
+
 static int bp_task_continuation_owner_thread(void *data)
 {
 	struct bp_continuation_test *test = data;
@@ -413,10 +444,10 @@ static int bp_task_continuation_owner_thread(void *data)
 		}
 		complete(&test->owner_pre_wait_check);
 		deadline = jiffies + msecs_to_jiffies(BP_CONT_WATCHDOG_MS);
-		while (!completion_done(&test->immediate_reply_ack) &&
+		while (!completion_done(&test->reply_checked) &&
 		       time_before(jiffies, deadline))
 			cpu_relax();
-		if (!completion_done(&test->immediate_reply_ack)) {
+		if (!completion_done(&test->reply_checked)) {
 			ret = -ETIMEDOUT;
 			goto out;
 		}
@@ -442,6 +473,12 @@ static int bp_task_continuation_owner_thread(void *data)
 		WRITE_ONCE(test->owner_wait_started, true);
 		WRITE_ONCE(test->owner_first_wait_attempted, true);
 		if (test->test_case == BP_CONT_TIMEOUT_REPLY) {
+			/* Time the reply only after the contention check. */
+			if (!wait_for_completion_timeout(&test->contender_checked,
+							 msecs_to_jiffies(BP_CONT_WATCHDOG_MS))) {
+				ret = -ETIMEDOUT;
+				goto out;
+			}
 			waited = wait_for_completion_timeout(&test->reply_ready,
 							 msecs_to_jiffies(BP_CONT_TIMEOUT_MS));
 			if (waited) {
@@ -504,6 +541,11 @@ static int bp_task_continuation_owner_thread(void *data)
 			ret = -EUCLEAN;
 			goto out;
 		}
+		if (!wait_for_completion_timeout(&test->reply_checked,
+						 msecs_to_jiffies(BP_CONT_WATCHDOG_MS))) {
+			ret = -ETIMEDOUT;
+			goto out;
+		}
 	}
 
 	ret = bp_task_continuation_enter(test, BP_CONT_RESUME_ENTRY);
@@ -525,7 +567,7 @@ out:
 
 		complete_all(&test->reply_ready);
 		complete_all(&test->cancel_ready);
-		complete_all(&test->immediate_reply_ack);
+		complete_all(&test->reply_checked);
 		complete_all(&test->owner_pre_wait_check);
 		cancel_ret = bp_task_continuation_set_terminal(test,
 								   BP_CONT_CANCELLED);
@@ -563,6 +605,10 @@ static int bp_task_continuation_responder_thread(void *data)
 		unsigned long flags;
 		bool waiting;
 
+		if (!bp_task_continuation_owner_blocked(test)) {
+			ret = -ETIMEDOUT;
+			goto out;
+		}
 		spin_lock_irqsave(&test->slot->lock, flags);
 		waiting = test->slot->state == BP_CONT_WAITING &&
 			test->slot->owner == test->owner_task &&
@@ -596,6 +642,7 @@ static int bp_task_continuation_responder_thread(void *data)
 	}
 
 	if (test->test_case == BP_CONT_TIMEOUT_REPLY) {
+		complete(&test->contender_checked);
 		if (!wait_for_completion_timeout(&test->owner_done,
 						msecs_to_jiffies(BP_CONT_WATCHDOG_MS))) {
 			ret = -ETIMEDOUT;
@@ -636,17 +683,6 @@ static int bp_task_continuation_responder_thread(void *data)
 		goto out;
 	}
 
-	if (test->test_case == BP_CONT_DELAYED_REPLY) {
-		deadline = jiffies + msecs_to_jiffies(BP_CONT_WATCHDOG_MS);
-		while (!READ_ONCE(test->owner_wait_started) && time_before(jiffies, deadline))
-			cpu_relax();
-		if (!READ_ONCE(test->owner_wait_started) ||
-		    READ_ONCE(test->owner_task->nvcsw) <= test->owner_nvcsw_before) {
-			ret = -ETIMEDOUT;
-			goto out;
-		}
-	}
-
 	wrong_generation = test->generation + 1;
 	wrong_request_id = test->request_id + 1;
 	test->wrong_generation_status = bp_task_continuation_reply(
@@ -677,8 +713,8 @@ static int bp_task_continuation_responder_thread(void *data)
 		ret = -EUCLEAN;
 		goto out;
 	}
-	if (test->test_case == BP_CONT_IMMEDIATE_REPLY)
-		complete(&test->immediate_reply_ack);
+	/* The owner may consume RESUME_READY after the duplicate is checked. */
+	complete(&test->reply_checked);
 	if (!wait_for_completion_timeout(&test->owner_done,
 					msecs_to_jiffies(BP_CONT_WATCHDOG_MS))) {
 		ret = -ETIMEDOUT;
@@ -719,8 +755,9 @@ static int bp_task_continuation_run_case(unsigned int owner_cpu,
 		return -ENOMEM;
 	init_completion(&test->request_published);
 	init_completion(&test->owner_pre_wait_check);
-	init_completion(&test->immediate_reply_ack);
+	init_completion(&test->reply_checked);
 	init_completion(&test->reply_ready);
+	init_completion(&test->contender_checked);
 	init_completion(&test->cancel_ready);
 	init_completion(&test->cancel_acknowledged);
 	init_completion(&test->owner_done);
@@ -782,7 +819,7 @@ static int bp_task_continuation_run_case(unsigned int owner_cpu,
 		ret = -ETIMEDOUT;
 		complete_all(&test->reply_ready);
 		complete_all(&test->cancel_ready);
-		complete_all(&test->immediate_reply_ack);
+		complete_all(&test->reply_checked);
 		complete_all(&test->owner_pre_wait_check);
 		complete_all(&test->request_published);
 	} else {
@@ -793,7 +830,7 @@ static int bp_task_continuation_run_case(unsigned int owner_cpu,
 			ret = -ETIMEDOUT;
 		complete_all(&test->reply_ready);
 		complete_all(&test->cancel_ready);
-		complete_all(&test->immediate_reply_ack);
+		complete_all(&test->reply_checked);
 		complete_all(&test->owner_pre_wait_check);
 		complete_all(&test->request_published);
 	} else if (!ret) {

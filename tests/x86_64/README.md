@@ -104,10 +104,13 @@ while the owner sleeps and a second task on that CPU is refused entry to the res
 a timeout followed by a rejected late reply, and cancellation acknowledged by the owner before a
 late reply is rejected. The checks include the owner and responder task stacks, one resume with the
 exact reply payload/generation/request ID, unchanged alternate-stack canaries, and a voluntary
-context switch on the delayed/timeout/cancellation paths. Request and reply storage remains allocated
-until the responder acknowledges completion, timeout handling, or cancellation. This models the
-proposed ownership rules; it does not call `fki_arch_linux_runs()` or validate a production FKI
-continuation.
+context switch on the delayed/timeout/cancellation paths. The reply timer starts after the
+contender has been refused. For immediate and delayed replies, the owner resumes after the
+responder checks for a duplicate reply. Request and reply storage remains allocated until the
+responder acknowledges completion, timeout handling, or cancellation. This models the
+proposed ownership rules. The synthetic callback runs with local interrupts and preemption disabled;
+both are restored after returning to the owner's task stack and before any wait. It does not call
+`fki_arch_linux_runs()` or validate a production FKI continuation.
 
 This is a host-only call/return test. It does not enter XNU, change `fki.h`, enable FKI capabilities, change CR3 or GS,
 inspect supervisor XSS state, install or replace Linux IDT, page-fault, general-protection, or syscall handlers, or run C under foreign host state.

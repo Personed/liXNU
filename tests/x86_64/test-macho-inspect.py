@@ -14,19 +14,20 @@ import tempfile
 
 FILE_SIZE = 1024
 HEADER_SIZE = 32
-PAGEZERO_SIZE = 72
-TEXT_SIZE = 72 + 80
+SEGMENT_COMMAND_SIZE = 72
+TEXT_SIZE = SEGMENT_COMMAND_SIZE + 80
 THREAD_SIZE = 8 + 8 + 42 * 4
-COMMAND_BYTES = PAGEZERO_SIZE + TEXT_SIZE + THREAD_SIZE
+COMMAND_BYTES = SEGMENT_COMMAND_SIZE + TEXT_SIZE + THREAD_SIZE
 PAGEZERO_OFF = HEADER_SIZE
-TEXT_OFF = PAGEZERO_OFF + PAGEZERO_SIZE
-SECTION_OFF = TEXT_OFF + 72
+TEXT_OFF = PAGEZERO_OFF + SEGMENT_COMMAND_SIZE
+SECTION_OFF = TEXT_OFF + SEGMENT_COMMAND_SIZE
 THREAD_OFF = TEXT_OFF + TEXT_SIZE
 COMMANDS_END = HEADER_SIZE + COMMAND_BYTES
 RIP_OFF = THREAD_OFF + 8 + 8 + 16 * 8
 
 MH_MAGIC_64 = 0xFEEDFACF
 MH_EXECUTE = 2
+MH_FILESET = 12
 CPU_TYPE_X86_64 = 0x01000007
 CPU_SUBTYPE_X86_64_ALL = 3
 CPU_SUBTYPE_X86_64_H = 8
@@ -71,7 +72,7 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL):
         put_u32(data, off * 4, value)
 
     put_u32(data, PAGEZERO_OFF, LC_SEGMENT_64)
-    put_u32(data, PAGEZERO_OFF + 4, PAGEZERO_SIZE)
+    put_u32(data, PAGEZERO_OFF + 4, SEGMENT_COMMAND_SIZE)
     put_name(data, PAGEZERO_OFF + 8, "__PAGEZERO")
     put_u64(data, PAGEZERO_OFF + 24, 0)
     put_u64(data, PAGEZERO_OFF + 32, 0x1000)
@@ -140,6 +141,33 @@ def make_chained_image(text_page_start=None):
             1,  # page_count
             text_page_start,
         )
+    return data
+
+
+def make_chained_image_with_omitted_ctf():
+    data = make_valid_image()
+    ctf = COMMANDS_END
+    linkedit = ctf + SEGMENT_COMMAND_SIZE
+    fixups_command = linkedit + SEGMENT_COMMAND_SIZE
+    for offset, name in ((ctf, "__CTF"), (linkedit, "__LINKEDIT")):
+        put_u32(data, offset, LC_SEGMENT_64)
+        put_u32(data, offset + 4, SEGMENT_COMMAND_SIZE)
+        put_name(data, offset + 8, name)
+        put_u64(data, offset + 24, 0x3000)
+    put_u32(data, 16, 6)
+    put_u32(data, 20, COMMAND_BYTES + 2 * SEGMENT_COMMAND_SIZE + 16)
+
+    payload = 768
+    payload_size = 44
+    put_u64(data, TEXT_OFF + 48, payload)
+    put_u64(data, linkedit + 32, 0x1000)
+    put_u64(data, linkedit + 40, payload)
+    put_u64(data, linkedit + 48, payload_size)
+    put_u32(data, linkedit + 56, 1)
+    put_u32(data, linkedit + 60, 1)
+    struct.pack_into("<4I", data, fixups_command, LC_DYLD_CHAINED_FIXUPS, 16, payload, payload_size)
+    # Version-zero header, then three empty slots for four segments.
+    struct.pack_into("<8I", data, payload, 0, 28, payload_size, payload_size, 0, 1, 0, 3)
     return data
 
 
@@ -239,6 +267,17 @@ def expect_chained_starts(report, text_starts):
     assert report["load_status"] == "not_loaded", report
     assert report["fixups_interpreted"] is False, report
     assert report["execution_attempted"] is False, report
+
+
+def expect_chained_starts_with_omitted_ctf(report):
+    assert report["segment_count"] == 4, report
+    assert [segment["name"] for segment in report["segments"]] == [
+        "__PAGEZERO", "__TEXT", "__CTF", "__LINKEDIT"
+    ], report
+    assert report["linkedit_metadata"]["has_chained_fixups"] is True, report
+    assert report["linkedit_metadata"]["chained_starts_segment_count"] == 3, report
+    assert report["linkedit_metadata"]["chained_starts_nonempty_segment_count"] == 0, report
+    assert all(segment["chained_starts"] is None for segment in report["segments"]), report
 
 
 def expect_x86_64_h(report):
@@ -408,6 +447,13 @@ def main():
             0,
             lambda report: expect_chained_starts(report, text_starts),
         )
+    run_case(
+        binary,
+        "chained starts table omits a zero-VM CTF segment",
+        make_chained_image_with_omitted_ctf(),
+        0,
+        expect_chained_starts_with_omitted_ctf,
+    )
 
     bad_fixup_extent = make_valid_image()
     append_command(bad_fixup_extent, LC_DYLD_CHAINED_FIXUPS, 16)
@@ -430,7 +476,7 @@ def main():
     run_case(binary, "unsupported CPU", wrong_cpu, 4)
 
     fileset = make_valid_image()
-    put_u32(fileset, 12, 12)
+    put_u32(fileset, 12, MH_FILESET)
     run_case(binary, "unsupported fileset", fileset, 4)
 
     unknown_required = make_valid_image()

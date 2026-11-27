@@ -146,7 +146,7 @@ def make_chained_image(text_page_start=None):
     return data
 
 
-def make_chained_image_with_omitted_ctf():
+def make_chained_image_with_omitted_linkedit_slot():
     data = make_valid_image()
     ctf = COMMANDS_END
     ctf_section = ctf + SEGMENT_COMMAND_SIZE
@@ -177,7 +177,7 @@ def make_chained_image_with_omitted_ctf():
     put_u32(data, ctf_section + 48, ctf_fileoff)
 
     payload = ctf_fileoff + ctf_filesize
-    payload_size = 44
+    payload_size = 72
     put_u32(data, linkedit, LC_SEGMENT_64)
     put_u32(data, linkedit + 4, SEGMENT_COMMAND_SIZE)
     put_name(data, linkedit + 8, "__LINKEDIT")
@@ -188,8 +188,24 @@ def make_chained_image_with_omitted_ctf():
     put_u32(data, linkedit + 56, 1)
     put_u32(data, linkedit + 60, 1)
     struct.pack_into("<4I", data, fixups_command, LC_DYLD_CHAINED_FIXUPS, 16, payload, payload_size)
-    # Version-zero header, then three empty slots for four segments.
-    struct.pack_into("<8I", data, payload, 0, 28, payload_size, payload_size, 0, 1, 0, 3)
+    struct.pack_into("<7I", data, payload, 0, 28, payload_size, payload_size, 0, 1, 0)
+    # Three slots for four segments: the zero-VM __CTF slot is empty
+    # and the final __LINKEDIT slot is omitted.
+    starts = payload + 28
+    struct.pack_into("<4I", data, starts, 3, 0, 16, 0)
+    struct.pack_into(
+        "<IHHQIHHH",
+        data,
+        starts + 16,
+        26,  # record_size
+        0x1000,
+        DYLD_CHAINED_PTR_X86_64_KERNEL_CACHE,
+        0,  # segment_offset
+        0,  # max_valid_pointer
+        2,  # page_count
+        0x2B0,  # first start after the load commands, within __TEXT
+        DYLD_CHAINED_PTR_START_NONE,
+    )
     return data
 
 
@@ -291,15 +307,20 @@ def expect_chained_starts(report, text_starts):
     assert report["execution_attempted"] is False, report
 
 
-def expect_chained_starts_with_omitted_ctf(report):
+def expect_chained_starts_with_omitted_linkedit_slot(report):
     assert report["segment_count"] == 4, report
     assert [segment["name"] for segment in report["segments"]] == [
         "__PAGEZERO", "__TEXT", "__CTF", "__LINKEDIT"
     ], report
     assert report["linkedit_metadata"]["has_chained_fixups"] is True, report
     assert report["linkedit_metadata"]["chained_starts_segment_count"] == 3, report
-    assert report["linkedit_metadata"]["chained_starts_nonempty_segment_count"] == 0, report
-    assert all(segment["chained_starts"] is None for segment in report["segments"]), report
+    assert report["linkedit_metadata"]["chained_starts_nonempty_segment_count"] == 1, report
+    assert [segment["chained_starts"] for segment in report["segments"]] == [
+        None,
+        {"pointer_format": 11, "page_size": 4096, "page_count": 2},
+        None,
+        None,
+    ], report
     assert report["segments"][2]["filesize"] == "0x0000000000000080", report
     assert report["segments"][2]["mapped"] is False, report
 
@@ -473,10 +494,10 @@ def main():
         )
     run_case(
         binary,
-        "chained starts table omits a zero-VM CTF segment",
-        make_chained_image_with_omitted_ctf(),
+        "chained starts table leaves __CTF empty and omits the __LINKEDIT slot",
+        make_chained_image_with_omitted_linkedit_slot(),
         0,
-        expect_chained_starts_with_omitted_ctf,
+        expect_chained_starts_with_omitted_linkedit_slot,
     )
 
     bad_fixup_extent = make_valid_image()

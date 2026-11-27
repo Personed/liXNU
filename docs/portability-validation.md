@@ -233,12 +233,12 @@ On an x86-64 Linux PC, install QEMU ARM system emulation and Python 3. On Ubuntu
 the QEMU package that provides `qemu-system-aarch64`, plus `python3`,
 `coreutils` (for `sha256sum`) and `util-linux` (for `lscpu`).
 The boot block checks all required executables before starting the VM, so it also works
-without APT or `sudo` when they are already installed. The pinned-kernel implementation starts in [PR #52](https://github.com/Personed/xnulinux/pull/52) and its follow-ups. For the validated cross-host fixture, use the harness/source at PR #98 head [`589c40e`](https://github.com/Personed/xnulinux/commit/589c40ead54a63946fb44e8bdb35eb6add9adffe) and the paired `puredarwin-e2e-guest` and `puredarwin-e2e-disk` artifacts from run [#158](https://github.com/Personed/xnulinux/actions/runs/45911026412): [guest artifact](https://github.com/Personed/xnulinux/actions/runs/45911026412/artifacts/15161900498) and [disk artifact](https://github.com/Personed/xnulinux/actions/runs/45911026412/artifacts/15161666268). Both expire on 2026-12-27. Take both artifacts from that same run; do not mix artifacts across runs. The image workflow builds the pinned
+without APT or `sudo` when they are already installed. The pinned-kernel implementation starts in [PR #52](https://github.com/Personed/xnulinux/pull/52) and its follow-ups. For the validated cross-host fixture, use the code at PR #115 head [`0daaa50`](https://github.com/Personed/xnulinux/commit/0daaa50e4d2d363bd8d775131b3a298663cf26a2), tested by run #172 as merge commit [`1b3beb5`](https://github.com/Personed/xnulinux/commit/1b3beb5) over PR #89 base [`763aef9`](https://github.com/Personed/xnulinux/commit/763aef99796fd49930745be8b15d3c8a07b5ee61), and the paired `puredarwin-e2e-guest` and `puredarwin-e2e-disk` artifacts from run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996): [guest artifact](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196743551) and [disk artifact](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196177348). Both expire on 2026-12-27. Take both artifacts from that same run; do not mix artifacts across runs. The image workflow builds the pinned
 PureDarwin ARM64 input, exports the real userland into an HFS+ disk, builds a matching
 source XNU collection, pins the ARM64 Linux kernel packages, compiles FKI/XNU for that
 guest, and prepares a direct-boot `Image` and initramfs. Do not mix artifacts across runs.
 
-In a checkout at the tested PR #98 source commit above, use the guest `Image`,
+In a checkout at the tested PR #115 source commit above, use the guest `Image`,
 `initramfs.cpio.gz`, `guest-manifest.txt`, and `build-manifest.txt`
 from `puredarwin-e2e-guest`, plus `pd.img` from
 `puredarwin-e2e-disk`; keep all files from the same workflow run. The build manifest
@@ -268,11 +268,11 @@ for every run:
     echo "paired manifests must provide three complete 64-digit SHA-256 values" >&2
     exit 1
   }
-  if [ "${CHECK_RUN_158:-0}" = 1 ]; then
+  if [ "${CHECK_RUN_172:-0}" = 1 ]; then
     test "$image_sha" = "02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6" && \
-    test "$initramfs_sha" = "fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667" && \
-    test "$disk_sha" = "7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f" || {
-      echo "manifest hashes do not identify the run #158 input set" >&2
+    test "$initramfs_sha" = "443333cfa8333e6fc7775b26641116827e3155ed61c78404ae2b652c0f0d84f4" && \
+    test "$disk_sha" = "c97e031cfd4f9adb4b1539ed9153eaf4b7125e90743d971d922a90395fea5645" || {
+      echo "manifest hashes do not identify the run #172 input set" >&2
       exit 1
     }
   fi
@@ -304,8 +304,8 @@ for every run:
 The guest writes to the HFS+ disk. Keep the downloaded `pd.img` as the pristine input;
 the checksum preflight confirms the Image, initramfs, and disk match their paired manifests
 before QEMU starts, and the final command confirms none of those original inputs changed.
-Export `CHECK_RUN_158=1` before running the block to require the exact Image, initramfs,
-and disk hashes from run #158's table below. Leave it unset for a regenerated artifact set;
+Export `CHECK_RUN_172=1` before running the block to require the exact Image, initramfs,
+and disk hashes from run #172's table below. Leave it unset for a regenerated artifact set;
 those files must still come from the same workflow run and match that run's manifests.
 The plain `cp` works with BusyBox and GNU coreutils without the nonportable
 `--reflink` option. Reserve the logical size of `pd.img` as a conservative
@@ -316,25 +316,25 @@ It records host and QEMU facts, captures the serial console, sends the required 
 command and guest halt, checks XNU/FKI unload and Linux power-off, and returns success
 only if QEMU exits 0 and RSS stays below the cap. The full 16 GiB profile is historical
 reference evidence, not the current standard-runner target; test it only on a sufficiently
-provisioned host. This acceptance workflow is on the #52 branch and is not yet in `main`.
+provisioned host. The workflow and harness are in open PR #89, including the changes from merged PR #115; they have not reached `main`.
 
-### Run #158 artifact identity
+### Run #172 artifact identity
 
-The paired artifacts linked from [run #158](https://github.com/Personed/xnulinux/actions/runs/45911026412) provide the tested guest input set:
-[puredarwin-e2e-guest](https://github.com/Personed/xnulinux/actions/runs/45911026412/artifacts/15161900498) and [puredarwin-e2e-disk](https://github.com/Personed/xnulinux/actions/runs/45911026412/artifacts/15161666268).
+The paired artifacts linked from [run #172](https://github.com/Personed/xnulinux/actions/runs/45989875996) provide the tested guest input set:
+[puredarwin-e2e-guest](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196743551) and [puredarwin-e2e-disk](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196177348).
 GitHub lists both as expiring on 2026-12-27. Their manifests record:
 
 | File / input | SHA-256 |
 | --- | --- |
 | Guest kernel `Image` | `02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6` |
-| Guest `initramfs.cpio.gz` | `fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667` |
-| Guest disk `pd.img` | `7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f` |
+| Guest `initramfs.cpio.gz` | `443333cfa8333e6fc7775b26641116827e3155ed61c78404ae2b652c0f0d84f4` |
+| Guest disk `pd.img` | `c97e031cfd4f9adb4b1539ed9153eaf4b7125e90743d971d922a90395fea5645` |
 
 The run used QEMU `cortex-a710`, 6 GiB guest RAM, Linux `mem=2G`, FKI 3,072 MiB at
 `0xc0000000`, and XNU RAM 2,816 MiB. This is the input set for the hosted route, not a
 host memory minimum. The run's build artifacts include the matching collection and
 manifests. Artifacts are not a permanent download mirror. The tested source revision is
-[PR #98 head `589c40e`](https://github.com/Personed/xnulinux/commit/589c40ead54a63946fb44e8bdb35eb6add9adffe).
+[PR #115 head `0daaa50`](https://github.com/Personed/xnulinux/commit/0daaa50e4d2d363bd8d775131b3a298663cf26a2).
 
 Report the profile alongside the stage:
 

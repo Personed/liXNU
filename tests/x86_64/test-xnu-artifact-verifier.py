@@ -32,6 +32,7 @@ LC_UNIXTHREAD = 0x5
 LC_OPTIONAL_UNKNOWN = 0x77
 X86_THREAD_STATE64 = 4
 X86_THREAD_STATE64_COUNT = 42
+S_ATTR_PURE_INSTRUCTIONS = 0x80000000
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 XNU_SOURCE_PATCH = "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch"
 XNU_COMPAT_PATCH = "scripts/x86_64/tahoe-xnu-pointer-casts.patch"
@@ -51,7 +52,7 @@ def put_name(data, offset, value):
     data[offset : offset + 16] = encoded.ljust(16, b"\0")
 
 
-def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL):
+def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL, *, hib_protections=7):
     data = bytearray(FILE_SIZE)
     for index, value in enumerate(
         (
@@ -100,8 +101,8 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL):
     put_u64(data, HIB_OFF + 32, 0x2000)
     put_u64(data, HIB_OFF + 40, 0x400)
     put_u64(data, HIB_OFF + 48, 0x200)
-    put_u32(data, HIB_OFF + 56, 7)
-    put_u32(data, HIB_OFF + 60, 7)
+    put_u32(data, HIB_OFF + 56, hib_protections)
+    put_u32(data, HIB_OFF + 60, hib_protections)
     put_u32(data, HIB_OFF + 64, 1)
     put_name(data, HIB_OFF + 72, "__text")
     put_name(data, HIB_OFF + 88, "__HIB")
@@ -109,6 +110,7 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL):
     put_u64(data, HIB_OFF + 112, 0x20)
     put_u32(data, HIB_OFF + 120, 0x500)
     put_u32(data, HIB_OFF + 124, 4)
+    put_u32(data, HIB_OFF + 136, S_ATTR_PURE_INSTRUCTIONS)
 
     put_u32(data, THREAD_OFF, LC_UNIXTHREAD)
     put_u32(data, THREAD_OFF + 4, THREAD_SIZE)
@@ -157,7 +159,7 @@ def build_manifest(image):
 
 def run_case(verifier, name, image, expected_success, mutate_manifest=None,
              output_alias=False, expected_subtype="X86_64_ALL", policy_subtype=None,
-             expected_diagnostic=None):
+             expected_diagnostic=None, expect_hib_metadata=False):
     with tempfile.TemporaryDirectory(prefix="xnu-artifact-verifier-") as temp:
         root = pathlib.Path(temp)
         artifact = root / "kernel.development"
@@ -253,6 +255,16 @@ def run_case(verifier, name, image, expected_success, mutate_manifest=None,
             raise AssertionError(f"{name}: structural layout policy was not recorded")
         if report["validation_scope"]["entry_segment"] != "__HIB":
             raise AssertionError(f"{name}: startup segment was not recorded")
+        if report["validation_scope"]["entry_is_file_backed"] is not True:
+            raise AssertionError(f"{name}: file-backed entry was not recorded")
+        if report["validation_scope"]["entry_is_file_backed_executable"] is not (not expect_hib_metadata):
+            raise AssertionError(f"{name}: report misstated declared entry permissions")
+        if expect_hib_metadata:
+            hib_entry = report["inspection"].get("hib_entry")
+            if hib_entry != {"section": "__HIB,__text", "file_offset": "0x0000000000000500"}:
+                raise AssertionError(f"{name}: incorrect hibernation entry metadata {hib_entry!r}")
+        elif "hib_entry" in report["inspection"]:
+            raise AssertionError(f"{name}: regular inspection used hibernation metadata mode")
 
 
 def main():
@@ -265,6 +277,8 @@ def main():
              expected_subtype="X86_64_ALL")
     run_case(verifier, "x86_64 H", make_valid_image(CPU_SUBTYPE_X86_64_H), True,
              expected_subtype="X86_64_H")
+    run_case(verifier, "file-backed instruction entry in RW __HIB", make_valid_image(hib_protections=3),
+             True, expect_hib_metadata=True)
     run_case(verifier, "pinned subtype mismatch", make_valid_image(CPU_SUBTYPE_X86_64_H),
              False, expected_subtype="X86_64_H", policy_subtype="X86_64_ALL")
 
@@ -292,14 +306,19 @@ def main():
     put_u64(rip_outside_file, RIP_OFF, 0x2500)
     run_case(verifier, "RIP outside file-backed bootstrap segment", rip_outside_file, False)
 
-    non_executable_hib = make_valid_image()
-    put_u32(non_executable_hib, HIB_OFF + 60, 3)  # r/w, no execute
-    run_case(verifier, "RIP in non-executable bootstrap segment", non_executable_hib, False)
+    data_entry = make_valid_image(hib_protections=3)
+    put_u32(data_entry, HIB_OFF + 136, 0)  # No instructions attribute.
+    run_case(verifier, "RIP in RW hibernation data", data_entry, False,
+             expected_diagnostic="HIB metadata mode (status 3)")
+
+    rw_rip_outside_text = make_valid_image(hib_protections=3)
+    put_u64(rw_rip_outside_text, RIP_OFF, 0x1120)  # Exclusive end of __HIB,__text.
+    run_case(verifier, "RIP outside the RW hibernation instruction section", rw_rip_outside_text, False)
 
     rip_in_text = make_valid_image()
     put_u64(rip_in_text, RIP_OFF, 0x4300)
     run_case(verifier, "RIP in __TEXT instead of __HIB", rip_in_text, False,
-             expected_diagnostic="thread RIP is not inside the file-backed executable __HIB")
+             expected_diagnostic="thread RIP is not inside the file-backed __HIB")
 
     unexpected_text_maxprot = make_valid_image()
     put_u32(unexpected_text_maxprot, TEXT_OFF + 56, 7)  # writable maxprot; parser accepts, policy rejects

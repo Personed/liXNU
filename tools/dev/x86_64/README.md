@@ -64,11 +64,16 @@ old absolute `artifact` path is not used. The CPU subtype must be selected
 explicitly; it is not inferred from the parser's support list. The structural
 profile requires a unique `__TEXT` segment at file offset zero, read/execute
 protections, at least one section, one leading optional `__PAGEZERO`, unique
-segment names, and no unclassified optional load commands. The thread RIP must
-be file-backed in an executable `__HIB` segment. The pinned XNU linker selects
-`__start`, which `osfmk/x86_64/start.s` places in `__HIB,__text`. The manifest
-must report the pinned XNU source patch and compatibility patch hashes, the
-expected non-Intel vendor policy, and a native x86_64 build host and process.
+segment names, and no unclassified optional load commands. The pinned XNU
+linker selects `__start`, which `osfmk/x86_64/start.s` places in `__HIB,__text`.
+The standard inspector accepts a file-backed RIP in an executable `__HIB`.
+If standard parsing rejects the image as invalid, the verifier tries the
+userspace `--hib-entry-metadata` mode. That mode requires a file-backed
+instruction section `__HIB,__text` in an `rw-` segment. It reports the entry
+file offset and keeps the declared permissions, so the JSON marks the entry
+file-backed and records that the segment lacks execute permission. The
+manifest must report the pinned XNU patch hashes, the expected non-Intel
+vendor policy, and a native x86_64 build host and process.
 
 ```sh
 python3 tools/dev/x86_64/verify-xnu-artifact.py \

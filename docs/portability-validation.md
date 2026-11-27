@@ -123,7 +123,7 @@ Current #52 run #148 and PR #83 run #149 independently passed the 6 GiB Linux pr
 
 PR #102 current head `7ee3e4f` includes a dedicated QEMU 11.1.0 `--require-pie` job that explicitly selects `-cpu max`. Local tests and cross-build checks passed, but no Actions run is associated with this head, a clean source XNU/DVM rebuild on the integrated head is unvalidated, and no real PIE boot has completed. Run [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121) tested old head `9e15d68`, passed image build, and was canceled during disk/collection build. The current head still needs the real strict QEMU run through PIE table updates, Darwin console, and guest shutdown.
 
-PR #89 run #162 remains queued on obsolete SHA `3020e23`. The manual dispatch [#45979011347](https://github.com/Personed/xnulinux/actions/runs/45979011347) on the then-current #89 head `763aef9` built the pinned ARM64 image, then failed while applying the source XNU/free-collection patch series: `0012-linux64-denylists-without-corecrypto.patch` could not apply its KCOV and KASan denylist hunks, already removed by `0008`. Guest preparation and all boots were skipped. PR #115 restored the corrected 14-patch series and passed run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996) on tested merge commit `1b3beb5` (head `0daaa50` into the then-current #89 base `763aef9`); it passed image, disk/collection, guest, and all three hosted TCG boot jobs. PR #115 was later merged into the #89 branch, now head `cb4fed3`. Its integrated full-route run [#184](https://github.com/Personed/xnulinux/actions/runs/46000976799) is still in progress; the identified synthetic merge ref `5159a3e` uses base `ed620d2`, older than current `main` `e69f0a0`, so this run does not validate the latest main integration. After #121's documentation changes land and #89 is synced to current `main`, the full route needs a new run. PR #98 run #158 is historical evidence for its tested revision `589c40e`, not the current integrated head. Module jobs are stage smoke tests, not a full route. Do not claim physical-PC support until representative Intel and AMD hardware is tested; neither a physical host RAM floor nor a supported lower guest-memory minimum is established.
+PR #89 run #162 remains queued on obsolete SHA `3020e23`. The manual dispatch [#45979011347](https://github.com/Personed/xnulinux/actions/runs/45979011347) on the then-current #89 head `763aef9` built the pinned ARM64 image, then failed while applying the source XNU/free-collection patch series: `0012-linux64-denylists-without-corecrypto.patch` could not apply its KCOV and KASan denylist hunks, already removed by `0008`. Guest preparation and all boots were skipped. PR #115 restored the corrected 14-patch series and passed run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996) on tested merge commit `1b3beb5` (head `0daaa50` into the then-current #89 base `763aef9`); it passed image, disk/collection, guest, and all three hosted TCG boot jobs. PR #115 was later merged into the #89 branch at head `cb4fed3`. Its integrated full-route run [#184](https://github.com/Personed/xnulinux/actions/runs/46000976799) used synthetic merge `5159a3e` with base `ed620d2`, which predates `main` `0e483ad`; that historical run does not validate the newer main integration. Current #89 checks and the next full-route result are tracked in the PR conversation. PR #98 run #158 is historical evidence for its tested revision `589c40e`, not the current integrated head. Module jobs are stage smoke tests, not a full route. Do not claim physical-PC support until representative Intel and AMD hardware is tested; neither a physical host RAM floor nor a supported lower guest-memory minimum is established.
 
 The historical full-route TCG reference assigns 16 GiB to the ARM64 guest, with Linux
 `mem=7G`, an 8,156 MiB FKI carve-out at `0x200000000`, and 7,900 MiB XNU RAM. The
@@ -238,7 +238,7 @@ PureDarwin ARM64 input, exports the real userland into an HFS+ disk, builds a ma
 source XNU collection, pins the ARM64 Linux kernel packages, compiles FKI/XNU for that
 guest, and prepares a direct-boot `Image` and initramfs. Do not mix artifacts across runs.
 
-In a checkout at the tested PR #115 source commit above, use the guest `Image`,
+In a checkout at the tested CI merge commit above, use the guest `Image`,
 `initramfs.cpio.gz`, `guest-manifest.txt`, and `build-manifest.txt`
 from `puredarwin-e2e-guest`, plus `pd.img` from
 `puredarwin-e2e-disk`; keep all files from the same workflow run. The build manifest
@@ -333,8 +333,10 @@ GitHub lists both as expiring on 2026-12-27. Their manifests record:
 The run used QEMU `cortex-a710`, 6 GiB guest RAM, Linux `mem=2G`, FKI 3,072 MiB at
 `0xc0000000`, and XNU RAM 2,816 MiB. This is the input set for the hosted route, not a
 host memory minimum. The run's build artifacts include the matching collection and
-manifests. Artifacts are not a permanent download mirror. The tested source revision is
-[PR #115 head `0daaa50`](https://github.com/Personed/xnulinux/commit/0daaa50e4d2d363bd8d775131b3a298663cf26a2).
+manifests. Artifacts are not a permanent download mirror. The tested CI merge commit is
+[`1b3beb5`](https://github.com/Personed/xnulinux/commit/1b3beb5088c5f29be0888b41a526ff1fadd83aef), combining PR #115 head
+[`0daaa50`](https://github.com/Personed/xnulinux/commit/0daaa50e4d2d363bd8d775131b3a298663cf26a2) with the then-current #89 base
+[`763aef9`](https://github.com/Personed/xnulinux/commit/763aef99796fd49930745be8b15d3c8a07b5ee61).
 
 Report the profile alongside the stage:
 

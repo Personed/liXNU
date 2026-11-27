@@ -57,23 +57,23 @@ Run #172 used the same paired ARM64 Linux guest, initramfs, and PureDarwin disk 
 all three hosts. All six workflow jobs passed: image creation, real HFS+ disk and
 source-built XNU/free collection, ARM64 guest preparation, and three TCG boots. The
 common guest profile was 6 GiB QEMU RAM, Linux `mem=2G`, FKI carve-out 3,072 MiB at
-`0xc0000000`, and XNU RAM 2,816 MiB. All three boot jobs recorded these stages.
+`0xc0000000`, and XNU RAM 2,816 MiB. The logs and harness report each validation stage separately:
 
-- **Firmware and Linux boot.** Firmware was not applicable: QEMU directly loaded the
-  ARM64 Linux `Image` and initramfs with `-kernel` and `-initrd`. Linux reached its
-  initramfs, loaded FKI and XNU, and relayed the PureDarwin console.
-- **FKI configuration.** `fki.ko` loaded with `carve_base=0xc0000000` and
-  `carve_mb=3072`. Run #172 did not perform a separate allocation/free/reuse probe, so
-  those allocation properties are not established by this run.
-- **XNU module probe and carve-out use.** There was no standalone loader probe: the
-  initramfs loaded `xnu.ko` with the real matching collection and it reached PureDarwin.
-  All three host logs reported `xnu: contiguous DRAM at phys 0x00000000c0000000`, the
-  configured carve-out's start address. The logs did not record the returned interval's
-  size, so containment of the complete XNU DRAM interval within the carve-out remains
-  unverified.
-- **Console and shutdown.** The shell returned `Darwin` and
-  `XNULINUX_USERLAND_OK`. The guest issued `halt`, XNU returned, both modules unloaded,
-  Linux printed `reboot: Power down`, and QEMU exited with status 0.
+| Stage | Run #172 evidence and result |
+| --- | --- |
+| Firmware | Not applicable: QEMU directly loaded the ARM64 Linux kernel and initramfs with `-kernel` and `-initrd`; this profile does not boot firmware. |
+| ARM64 Linux guest boot | Passed through the test initramfs path: it loaded the modules and relayed the Darwin console. This is a minimal test initramfs, not a full installed Linux distribution. |
+| FKI configuration | Passed: `fki.ko` loaded with `carve_base=0xc0000000` and `carve_mb=3072`. |
+| FKI carve-out allocation | Not separately measured: #172 did not run the interval-checking allocation probe. |
+| FKI allocation reuse | Not measured: #172 did not free and repeat an allocation. |
+| Standalone XNU module probe | Not run: the test loaded `xnu.ko` with the matching real collection rather than performing a missing-image probe. |
+| XNU use of FKI carve-out | Partial: all three logs report `xnu: contiguous DRAM at phys 0x00000000c0000000`, matching the configured start. The returned interval size is absent, so containment of the full XNU range is unverified. |
+| PureDarwin console and userland | Passed: the console returned `Darwin` and `XNULINUX_USERLAND_OK`. |
+| Guest-requested halt | Passed: the test sent `halt` and observed `XNULINUX_E2E_GUEST_HALT_OK`. |
+| XNU unload | Passed: `rmmod xnu` succeeded after the guest halt. |
+| FKI unload | Passed: `rmmod fki` succeeded after XNU unload; the combined `XNULINUX_E2E_XNU_UNLOADED` marker followed both. |
+| Linux guest power-off | Passed: the guest powered Linux off and the log reported `reboot: Power down`. |
+| QEMU exit | Passed: QEMU returned status 0, required by the harness. |
 
 The three boot logs report the same SHA-256 values for the inputs used by QEMU.
 

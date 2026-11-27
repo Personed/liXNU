@@ -82,6 +82,7 @@ def inspect_mounted_image(mount: Path, image: Path) -> dict[str, Any]:
         "system_product_build": None,
         "xnu_version": None,
         "kernel_artifacts": [],
+        "kernel_search_roots": [],
         "trustcache_api_headers": [],
         "kdk_supplied": False,
     }
@@ -105,28 +106,67 @@ def inspect_mounted_image(mount: Path, image: Path) -> dict[str, Any]:
 
     trusted_headers: list[str] = []
     kernel_artifacts: list[dict[str, Any]] = []
+    kernel_names = {
+        "kernel",
+        "mach_kernel",
+        "kernelcache",
+        "prelinkedkernel",
+        "kernel.development",
+        "bootkernelextensions.kc",
+        "systemkernelextensions.kc",
+    }
     for root, dirs, files in os.walk(mount):
         directory = Path(root)
         if directory.name == "TrustCache" and "API.h" in files:
             trusted_headers.append(str((directory / "API.h").relative_to(mount)))
-        for name in files:
-            if name not in {"kernel", "kernelcache", "kernel.development"}:
+        for name in files + dirs:
+            relative_path = (directory / name).relative_to(mount)
+            in_kernel_collection_dir = "KernelCollections" in relative_path.parts
+            if name.lower() not in kernel_names and not (in_kernel_collection_dir and name.lower().endswith(".kc")):
                 continue
             path = directory / name
             try:
                 item: dict[str, Any] = {
-                    "path": str(path.relative_to(mount)),
-                    "bytes": path.stat().st_size,
-                    "sha256": sha256(path),
+                    "path": str(relative_path),
+                    "entry_type": "symlink" if path.is_symlink() else "directory" if path.is_dir() else "file",
                 }
-                file_tool = shutil.which("file")
-                if file_tool:
-                    description = run([file_tool, "-b", str(path)])
-                    if description.returncode == 0:
-                        item["file_type"] = description.stdout.strip()
+                if path.is_file():
+                    item["bytes"] = path.stat().st_size
+                    item["sha256"] = sha256(path)
+                    file_tool = shutil.which("file")
+                    if file_tool:
+                        description = run([file_tool, "-b", str(path)])
+                        if description.returncode == 0:
+                            item["file_type"] = description.stdout.strip()
                 kernel_artifacts.append(item)
             except OSError:
                 continue
+
+    for relative_root in (
+        Path("System/Library/Kernels"),
+        Path("System/Library/KernelCollections"),
+        Path("System/Library/PrelinkedKernels"),
+        Path("System/Library/Extensions/System.kext"),
+    ):
+        root = mount / relative_root
+        if not root.exists():
+            state = "absent"
+            entries: list[dict[str, str]] = []
+        elif root.is_dir():
+            state = "directory"
+            entries = [
+                {
+                    "name": entry.name,
+                    "entry_type": "symlink" if entry.is_symlink() else "directory" if entry.is_dir() else "file",
+                }
+                for entry in sorted(root.iterdir(), key=lambda item: item.name)[:100]
+            ]
+        else:
+            state = "file"
+            entries = []
+        result["kernel_search_roots"].append(
+            {"path": str(relative_root), "state": state, "entries": entries}
+        )
 
     result["kernel_artifacts"] = kernel_artifacts
     result["trustcache_api_headers"] = sorted(set(trusted_headers))

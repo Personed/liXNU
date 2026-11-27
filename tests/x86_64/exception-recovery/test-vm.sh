@@ -99,7 +99,20 @@ test -n "$original_console_loglevel"
 restore_console_loglevel() {
 	dmesg -n "$original_console_loglevel"
 }
-trap 'restore_console_loglevel || true; echo "x86 exception recovery VM failed"; dmesg; poweroff -f' EXIT
+failure_cleanup() {
+	status=$?
+	trap - EXIT
+	if ! restore_console_loglevel; then
+		echo "x86 exception recovery VM could not restore console log level" >&2
+	fi
+	echo "x86 exception recovery VM failed (status $status)" >&2
+	if ! dmesg; then
+		echo "x86 exception recovery VM could not dump the kernel ring buffer" >&2
+	fi
+	poweroff -f
+	exit "$status"
+}
+trap failure_cleanup EXIT
 
 insmod /fki.ko
 insmod /x86-boundary-probe.ko
@@ -114,8 +127,30 @@ insmod /x86-exception-recovery.ko
 dmesg -n 5
 /exception-recovery-test 0
 /exception-recovery-test 1
-# Replay the buffered probe details once the marker lines have been written.
-dmesg | grep -F 'x86-exception-recovery:' || true
+# Require every controlled recovery to have a successful kernel record before
+# replaying the records to the serial console. This makes the diagnostics part
+# of the disposable-VM pass condition rather than best-effort output.
+recovery_diagnostics=/x86-exception-recovery-dmesg.log
+dmesg > "$recovery_diagnostics"
+if ! grep -Fq 'x86-exception-recovery:' "$recovery_diagnostics"; then
+	echo "x86 exception recovery VM has no recovery diagnostics to replay" >&2
+	exit 1
+fi
+for cpu in 0 1; do
+	for vector in 14 13; do
+		diagnostic_pattern="x86-exception-recovery: cpu=${cpu} vector=${vector} rip=0x[[:xdigit:]]+ error=0x[[:xdigit:]]+ cr2=0x[[:xdigit:]]+ recovery_count=1 idtr_restored=1 gprs=ok ds=0x[[:xdigit:]]+ stacks=ok"
+		if ! grep -Eq "$diagnostic_pattern" "$recovery_diagnostics"; then
+			echo "x86 exception recovery VM missed successful diagnostic for cpu=$cpu vector=$vector" >&2
+			exit 1
+		fi
+	done
+done
+if grep -Eq 'x86-exception-recovery: (cpu=[0-9]+ vector=[0-9]+ failed status=|not-run)' \
+	"$recovery_diagnostics"; then
+	echo "x86 exception recovery VM ring buffer contains a failed or skipped probe" >&2
+	exit 1
+fi
+grep -F 'x86-exception-recovery:' "$recovery_diagnostics"
 restore_console_loglevel
 rmmod x86_exception_recovery
 test ! -e /sys/module/x86_exception_recovery

@@ -2,7 +2,7 @@
 
 ## Project goal
 
-Port the hosted-XNU runtime to native x86_64 Linux PCs while preserving the working ARM64 hosted-XNU path. The Intel-compatible runtime target is macOS Tahoe 26.7.2; do not claim universal PC compatibility.
+Port the hosted-XNU runtime to native x86_64 Linux PCs while preserving the working ARM64 hosted-XNU path. The Intel-compatible runtime target is macOS Tahoe 26.7.3; do not claim universal PC compatibility.
 
 - **ARM64 Linux:** preserve the existing direct XNU-in-Linux runtime using `fki.ko` and `xnu.ko`, including its build and runtime behavior and macOS 27 target.
 - **x86_64 Intel and AMD Linux:** port FKI, XNU hosting, machine-layer code, and architecture-specific build outputs to x86_64; target macOS Tahoe 26 x86_64. The port is experimental until the native hosted-XNU path is validated on physical hosts. Keep Intel and AMD acceptance separate.

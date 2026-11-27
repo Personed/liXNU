@@ -5,7 +5,7 @@ Record the **host, runtime, and furthest verified stage** for each result. Booti
 ARM64 Linux VM does not mean that XNU ran. Building or probing a module does not mean
 Darwin userspace ran. A PureDarwin shell does not establish macOS compatibility.
 
-The project target is native hosted-XNU on x86_64 Linux PCs, targeting macOS Tahoe 26.7.2 while preserving the direct ARM64 hosted-XNU runtime and macOS 27 target. QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin and QEMU/KVM guest results are complementary profiles; neither establishes native x86_64 hosting.
+The project target is native hosted-XNU on x86_64 Linux PCs, targeting macOS Tahoe 26.7.3 while preserving the direct ARM64 hosted-XNU runtime and macOS 27 target. QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin and QEMU/KVM guest results are complementary profiles; neither establishes native x86_64 hosting.
 
 | Stage | What counts as evidence |
 | --- | --- |
@@ -23,7 +23,7 @@ The project target is native hosted-XNU on x86_64 Linux PCs, targeting macOS Tah
 
 ## Native x86_64 hosted-XNU work status
 
-Native x86_64 hosting of Tahoe 26.7.2 is the project target; direct ARM64 hosting of macOS 27 remains preserved. PR #48 builds the x86_64 FKI host backend, #47 keeps the x86_64 XNU target fail-closed, and #78 adds bounded, read-only Mach-O metadata parsing. These milestones do not execute XNU. Native runtime, physical Intel/AMD boots, host-integrity checks, and guest shutdown remain pending.
+Native x86_64 hosting of Tahoe 26.7.3 is the project target; direct ARM64 hosting of macOS 27 remains preserved. PR #48 builds the x86_64 FKI host backend, #47 keeps the x86_64 XNU target fail-closed, and #78 adds bounded, read-only Mach-O metadata parsing. These milestones do not execute XNU. Native runtime, physical Intel/AMD boots, host-integrity checks, and guest shutdown remain pending.
 
 ## Direct ARM64 hosted-XNU profiles
 
@@ -294,7 +294,7 @@ Report the profile alongside the stage:
   from the Linux guest. The ARM64 QEMU path in [#3] uses TCG, including on Intel/AMD hosts;
   distinguish it from the Apple Silicon krunkit path. The module smoke test in [#1]
   is a separate check. Neither substitutes for the PureDarwin test below.
-- **Native x86-64 hosted XNU on Intel/AMD Linux:** directly build and execute architecture-matched `fki.ko` and `xnu.ko` on Linux while hosting Tahoe 26.7.2. The ARM64/macOS 27 path remains preserved. #48 builds the FKI backend, #47 is fail-closed, and #78 adds read-only Mach-O metadata parsing only; none executes XNU. Native runtime and physical Intel/AMD acceptance remain pending. Keep host results separate and record host-integrity checks and guest-initiated shutdown.
+- **Native x86-64 hosted XNU on Intel/AMD Linux:** directly build and execute architecture-matched `fki.ko` and `xnu.ko` on Linux while hosting Tahoe 26.7.3. The ARM64/macOS 27 path remains preserved. #48 builds the FKI backend, #47 is fail-closed, and #78 adds read-only Mach-O metadata parsing only; none executes XNU. Native runtime and physical Intel/AMD acceptance remain pending. Keep host results separate and record host-integrity checks and guest-initiated shutdown.
 - **x86-64 PC → QEMU TCG → ARM64 Linux:** keep the PC's CPU/OS/QEMU details separate from
   the ARM64 guest. The reference FKI carve-out profile is tracked in [#23]: x86-64 Linux,
   QEMU 10.0.13 TCG, an ARM64 `virt` guest with 1 GiB of RAM and `mem=768M`, and FKI

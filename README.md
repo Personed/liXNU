@@ -1,6 +1,6 @@
 # xnulinux
 
-Port xnulinux's hosted-XNU runtime to native x86_64 Linux PCs while preserving its working direct ARM64 path. The x86_64 runtime target is macOS Tahoe 26.7.2, the latest macOS release compatible with Intel. The native port remains under development; QEMU/KVM guest launching and ARM64 TCG tests are complementary experiments, not proof of the native port.
+Port xnulinux's hosted-XNU runtime to native x86_64 Linux PCs while preserving its working direct ARM64 path. The x86_64 runtime target is macOS Tahoe 26.7.3, the latest macOS release compatible with Intel. The native port remains under development; QEMU/KVM guest launching and ARM64 TCG tests are complementary experiments, not proof of the native port.
 
 On ARM64, xnulinux builds XNU, the open-source kernel of macOS, from Apple's published sources and runs it as a loadable kernel
 module (`xnu.ko`) inside an unmodified arm64 Linux kernel. The hosted XNU drives the CPU and MMU directly, so macOS
@@ -100,8 +100,8 @@ Working on two arm64 Linux setups:
 | Linux host | Guest target | Status |
 |---|---|---|
 | ARM64 Linux at EL1 with PAC and 4 KiB pages | macOS 27 ARM64 (direct hosted XNU) | Existing supported path; tested on Apple Silicon Linux VMs and NVIDIA DGX Spark as described above. |
-| Intel x86_64 Linux | macOS Tahoe 26.7.2 through native hosted XNU | Project target. The x86_64 FKI backend builds, but XNU execution remains fail-closed; native runtime and physical Intel acceptance remain pending. |
-| AMD x86_64 Linux | macOS Tahoe 26.7.2 through native hosted XNU | Project target. The current source-pinned XNU CPU path rejects AMD; vendor-specific handling and physical AMD acceptance remain pending. |
+| Intel x86_64 Linux | macOS Tahoe 26.7.3 through native hosted XNU | Project target. The x86_64 FKI backend builds, but XNU execution remains fail-closed; native runtime and physical Intel acceptance remain pending. |
+| AMD x86_64 Linux | macOS Tahoe 26.7.3 through native hosted XNU | Project target. The current source-pinned XNU CPU path rejects AMD; vendor-specific handling and physical AMD acceptance remain pending. |
 | x86-64 Linux under QEMU TCG (hosted CI VM) | ARM64 Linux → PureDarwin console | Complementary test profile: PR #98 run [#158](https://github.com/Personed/xnulinux/actions/runs/45911026412) passed the complete 6 GiB route on tested head `589c40e` with `cortex-a710`; Ubuntu 24.04/QEMU 8.2.2, Windows Server 2025/QEMU 11.1.0, and Intel macOS 15/QEMU 11.1.0 all reached Darwin userland and guest shutdown using the same artifacts. This records one hosted-runner pass per profile; it is not evidence for representative physical PCs or a physical RAM floor. `-cpu max`/PIE remains a separate compatibility profile. |
 | Physical Intel x86-64 Linux under QEMU TCG | ARM64 Linux → PureDarwin console | Not validated; no bare-metal Intel PC is attached to the available executor. |
 | Physical AMD x86-64 Linux under QEMU TCG | ARM64 Linux → PureDarwin console | Not validated; AMD EPYC virtual CPUs in CI do not establish bare-metal AMD support. |

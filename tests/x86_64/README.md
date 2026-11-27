@@ -133,8 +133,9 @@ the x86_64 parser job. No Tahoe artifact has yet been confirmed against this sub
   run validates native execution.
 - ARM64 `fki.ko` and `xnu.ko` cross-compiled against Debian 6.12.118 ARM64 headers. This is a build check, not an ARM64
   runtime smoke test.
-- The disposable feature-complete XNU-stub VM can use `/dev/kvm` where available, but there is still no Tahoe disk and
-  no physical Intel/AMD/ARM hardware acceptance. No macOS boot or hardware-integrity acceptance has been recorded.
+- The XNU-stub test boots a feature-complete Intel Haswell profile in TCG and requires the final world-switch refusal.
+  It also probes the host CPU through `/dev/kvm` where available. Tahoe boot and physical Intel/AMD/ARM host acceptance
+  are still pending.
 
 ## Acceptance evidence still required
 

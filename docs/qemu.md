@@ -94,18 +94,20 @@ This direct-boot profile uses the x86-64 host to run the ARM64 Linux guest under
 then loads FKI/XNU and reaches the PureDarwin console. It is separate from the UEFI
 installer-based Linux VM above. It does not require VT-x or AMD-V.
 
-For the exact tested input set, check out PR #98 head
-[`589c40e`](https://github.com/Personed/xnulinux/commit/589c40ead54a63946fb44e8bdb35eb6add9adffe).
-From a clone of this repository, fetch that pull request and check out the tested revision:
+For the exact tested input set, check out the CI merge revision
+[`1b3beb5`](https://github.com/Personed/xnulinux/commit/1b3beb5088c5f29be0888b41a526ff1fadd83aef)
+from PR #115 run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996).
+It combines PR #115 head `0daaa50` with #89 base `763aef9`. From a clone of this
+repository, fetch and check out that tested revision:
 
 ```sh
-git fetch origin pull/98/head:refs/remotes/origin/pr-98
-git checkout --detach 589c40ead54a63946fb44e8bdb35eb6add9adffe
+git fetch origin 1b3beb5088c5f29be0888b41a526ff1fadd83aef
+git checkout --detach 1b3beb5088c5f29be0888b41a526ff1fadd83aef
 ```
 
 Download and extract the paired
-[`puredarwin-e2e-guest` artifact](https://github.com/Personed/xnulinux/actions/runs/45911026412/artifacts/15161900498) and
-[`puredarwin-e2e-disk` artifact](https://github.com/Personed/xnulinux/actions/runs/45911026412/artifacts/15161666268) from [run #158](https://github.com/Personed/xnulinux/actions/runs/45911026412).
+[`puredarwin-e2e-guest` artifact](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196743551) and
+[`puredarwin-e2e-disk` artifact](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196177348) from [run #172](https://github.com/Personed/xnulinux/actions/runs/45989875996).
 Both artifacts expire on 2026-12-27. Sign in to GitHub with an account that can access the run.
 To download from the terminal, authenticate GitHub CLI with `gh auth login`, then run:
 
@@ -121,8 +123,8 @@ the disk archive contains `pd.img`. The three boot inputs have these SHA-256 val
 | Input | SHA-256 |
 | --- | --- |
 | `Image` | `02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6` |
-| `initramfs.cpio.gz` | `fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667` |
-| `pd.img` | `7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f` |
+| `initramfs.cpio.gz` | `443333cfa8333e6fc7775b26641116827e3155ed61c78404ae2b652c0f0d84f4` |
+| `pd.img` | `c97e031cfd4f9adb4b1539ed9153eaf4b7125e90743d971d922a90395fea5645` |
 
 Install Python 3.9 or later and QEMU system AArch64 emulation 8.2 or later. QEMU 8.2 is the
 minimum version with the tested `cortex-a710` CPU model.
@@ -140,7 +142,7 @@ Check that the installed QEMU exposes the tested model:
 - POSIX: `qemu-system-aarch64 -cpu help | grep -F cortex-a710`
 - Windows PowerShell: `qemu-system-aarch64.exe -cpu help | Select-String cortex-a710`.
 
-Run the download commands from the repository root; they extract the files under `artifacts/guest` and `artifacts/disk`. The command below verifies the three hashes from run #158, then copies the disk so the source artifact remains unchanged.
+Run the download commands from the repository root; they extract the files under `artifacts/guest` and `artifacts/disk`. The command below verifies the three hashes from run #172, then copies the disk so the source artifact remains unchanged.
 
 ```sh
 (
@@ -151,8 +153,8 @@ from pathlib import Path
 
 expected = {
     "artifacts/guest/Image": "02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6",
-    "artifacts/guest/initramfs.cpio.gz": "fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667",
-    "artifacts/disk/pd.img": "7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f",
+    "artifacts/guest/initramfs.cpio.gz": "443333cfa8333e6fc7775b26641116827e3155ed61c78404ae2b652c0f0d84f4",
+    "artifacts/disk/pd.img": "c97e031cfd4f9adb4b1539ed9153eaf4b7125e90743d971d922a90395fea5645",
 }
 def sha256_file(name):
     digest = hashlib.sha256()
@@ -196,8 +198,8 @@ qemu-system-aarch64.exe --version
 $ErrorActionPreference = "Stop"
 $expected = @{
   ".\artifacts\guest\Image" = "02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6"
-  ".\artifacts\guest\initramfs.cpio.gz" = "fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667"
-  ".\artifacts\disk\pd.img" = "7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f"
+  ".\artifacts\guest\initramfs.cpio.gz" = "443333cfa8333e6fc7775b26641116827e3155ed61c78404ae2b652c0f0d84f4"
+  ".\artifacts\disk\pd.img" = "c97e031cfd4f9adb4b1539ed9153eaf4b7125e90743d971d922a90395fea5645"
 }
 foreach ($path in $expected.Keys) {
   $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -222,7 +224,7 @@ py -3 tests\puredarwin\run-tcg-e2e.py `
   .\artifacts\disk\puredarwin-tcg-serial.log
 ```
 
-The Windows runner did not measure QEMU RSS, so the harness reports that the optional
+The Windows runner in run #172 did not measure QEMU RSS, so the harness reports that the optional
 RSS ceiling was not evaluated on that platform.
 
 The manifest-aware validation script and optional exact-hash guard are in
@@ -231,7 +233,7 @@ The command runs TCG with a 6 GiB guest, Linux `mem=2G`, a 3,072 MiB FKI carve-o
 and 2,816 MiB XNU RAM. The harness requires the Darwin console and userland marker,
 guest-requested halt, successful XNU/FKI unload, and QEMU exit 0. It enforces the
 configured RSS limit on hosts where process RSS is measurable; when the runner cannot
-measure it, the log reports that fact instead of treating it as zero. In run #158,
+measure it, the log reports that fact instead of treating it as zero. In run #172,
 Windows boot passed but process RSS was not measured. This guest allocation is not a
 physical host-memory minimum.
 

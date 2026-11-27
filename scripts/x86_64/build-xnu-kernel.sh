@@ -251,7 +251,7 @@ verify_kdk() {
     KDK_PRODUCT_VERSION="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["product_version"])' <<<"$metadata_json")"
     KDK_PRODUCT_BUILD="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["product_build"])' <<<"$metadata_json")"
     KDK_XNU_VERSION="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["xnu_version"])' <<<"$metadata_json")"
-    KDK_TRUSTCACHE_HEADER="$KDKROOT/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/TrustCache/API.h"
+    KDK_TRUSTCACHE_HEADER="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["trustcache_header"])' <<<"$metadata_json")"
     [[ -s "$KDK_TRUSTCACHE_HEADER" ]] \
       || fail "matching KDK is missing its private TrustCache API header: $KDK_TRUSTCACHE_HEADER"
     [[ -d "$KDKROOT/System/Library/KernelSupport" ]] \

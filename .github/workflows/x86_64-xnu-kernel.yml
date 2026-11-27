@@ -77,6 +77,44 @@ jobs:
           PY
       - name: Test read-only --check diagnostic workspace
         run: bash scripts/x86_64/xnu-trustcache-scan-workspace.sh --self-test
+      - name: Provision the pinned Apple KDK on the Intel runner
+        # The checked-in digest pins Dortania's public copy; the package must
+        # also pass macOS trust validation as Apple's Software Update signer.
+        env:
+          XNU_X86_KDKROOT: ${{ vars.XNU_X86_INTEL_KDKROOT }}
+        shell: bash
+        run: |
+          kdk=/Library/Developer/KDKs/KDK_26.5_25F71.kdk
+          if [[ -n "$XNU_X86_KDKROOT" || -e "$kdk" || -L "$kdk" ]]; then
+            exit 0 # The build independently verifies any configured or installed kit.
+          fi
+          export LC_ALL=C
+          work=$(mktemp -d "$RUNNER_TEMP/xnu-kdk.XXXXXX")
+          cleanup() {
+            /usr/bin/hdiutil detach "$work/mount" >/dev/null 2>&1 || true
+            rm -rf -- "$work"
+          }
+          trap cleanup EXIT
+          curl --fail --silent --show-error --location --retry 2 --max-time 600 \
+            --proto '=https' --proto-redir '=https' \
+            'https://github.com/dortania/KdkSupportPkg/releases/download/25F71/Kernel_Debug_Kit_26.5_build_25F71.dmg' \
+            -o "$work/KDK.dmg"
+          printf '%s  %s\n' '90ed319cd1ba6e23d1eefcee89fa1b10743f4cf60b85208ae52aa9f45543c7aa' "$work/KDK.dmg" \
+            | shasum -a 256 -c -
+          mkdir "$work/mount"
+          /usr/bin/hdiutil attach -readonly -nobrowse -mountpoint "$work/mount" "$work/KDK.dmg"
+          pkg="$work/mount/KernelDebugKit.pkg"
+          if [[ ! -f "$pkg" ]]; then
+            pkg="$work/mount/Kernel Debug Kit/KernelDebugKit.pkg"
+          fi
+          test -f "$pkg"
+          signature=$(/usr/sbin/pkgutil --check-signature "$pkg")
+          printf '%s\n' "$signature"
+          grep -Eq '^[[:space:]]*Status: signed by a certificate trusted by macOS([[:space:]]|$)' <<<"$signature"
+          grep -Eq '^[[:space:]]*1\.[[:space:]]+Software Update[[:space:]]*$' <<<"$signature"
+          grep -Eq '^[[:space:]]*2\.[[:space:]]+Apple Software Update Certification Authority[[:space:]]*$' <<<"$signature"
+          sudo /usr/sbin/installer -pkg "$pkg" -target /
+          test -d "$kdk"
       - name: Build pinned XNU for x86_64
         env:
           XNU_X86_BUILD_DIR: ${{ runner.temp }}/xnulinux-x86_64-xnu

@@ -8,6 +8,8 @@ import argparse
 import json
 import pathlib
 import plistlib
+import re
+import struct
 import sys
 import tempfile
 
@@ -62,18 +64,41 @@ def inspect_kdk(
     system_kext = load_plist(
         canonical_root / "System/Library/Extensions/System.kext/Info.plist"
     )
-    xnu_version = system_kext.get("CFBundleVersion")
-    if xnu_version != expected_xnu_version:
-        raise KDKError(
-            f"KDK System.kext CFBundleVersion is {xnu_version!r}; "
-            f"expected pinned XNU version {expected_xnu_version!r}"
+    kernel_path = canonical_root / "System/Library/Kernels/kernel"
+    kernel = kernel_path.read_bytes()
+    # The pinned KDK ships a thin MH_EXECUTE x86_64 release kernel.
+    if (len(kernel) < 32
+            or struct.unpack_from("<II", kernel) != (0xFEEDFACF, 0x01000007)
+            or struct.unpack_from("<I", kernel, 12)[0] != 2):
+        raise KDKError("KDK kernel is not a thin x86_64 Mach-O executable")
+    versions = {
+        (darwin.decode("ascii"), source.decode("ascii"))
+        for darwin, source in re.findall(
+            rb"Darwin Kernel Version ([0-9]+\.[0-9]+\.[0-9]+): [^\x00\r\n]{1,160}; "
+            rb"root:xnu-([0-9]+\.[0-9]+\.[0-9]+)(?:~[0-9]+)?/RELEASE_X86_64\x00",
+            kernel,
         )
+    }
+    if len(versions) != 1:
+        raise KDKError("KDK Intel kernel does not contain one unambiguous XNU release identity")
+    darwin_version, xnu_version = versions.pop()
+    if xnu_version != expected_xnu_version:
+        raise KDKError(f"KDK kernel XNU version is {xnu_version!r}; expected {expected_xnu_version!r}")
+    if system_kext.get("CFBundleVersion") != darwin_version:
+        raise KDKError("KDK System.kext CFBundleVersion does not match the kernel's Darwin version")
+    header = canonical_root / (
+        "System/Library/Frameworks/Kernel.framework/Versions/A/"
+        "PrivateHeaders/platform/TrustCache/API.h"
+    )
+    if not header.is_file() or header.stat().st_size == 0:
+        raise KDKError("KDK lacks the platform TrustCache/API.h")
 
     return {
         "root": str(canonical_root),
         "product_version": str(product_version),
         "product_build": str(product_build),
-        "xnu_version": str(xnu_version),
+        "xnu_version": xnu_version,
+        "trustcache_header": str(header),
     }
 
 
@@ -95,7 +120,18 @@ def self_test() -> None:
             {"ProductVersion": expected_version, "ProductBuildVersion": expected_build},
         )
         xnu_info = root / "System/Library/Extensions/System.kext/Info.plist"
-        _write_plist(xnu_info, {"CFBundleVersion": expected_xnu_version})
+        _write_plist(xnu_info, {"CFBundleVersion": "25.5.0"})
+        kernel_path = root / "System/Library/Kernels/kernel"
+        kernel_path.parent.mkdir(parents=True)
+        def image(version: str) -> bytes:
+            return struct.pack("<8I", 0xFEEDFACF, 0x01000007, 3, 2, 0, 0, 0, 0) + (
+                f"Darwin Kernel Version 25.5.0: date; root:xnu-{version}~2/RELEASE_X86_64\0"
+            ).encode("ascii")
+        kernel_path.write_bytes(image(expected_xnu_version))
+        header = root / ("System/Library/Frameworks/Kernel.framework/Versions/A/"
+                         "PrivateHeaders/platform/TrustCache/API.h")
+        header.parent.mkdir(parents=True)
+        header.write_text("test fixture", encoding="utf-8")
         metadata = inspect_kdk(root, expected_version, expected_build, expected_xnu_version)
         if metadata["product_build"] != expected_build:
             raise KDKError("matching KDK metadata fixture was not accepted")
@@ -128,14 +164,33 @@ def self_test() -> None:
             root / "System/Library/CoreServices/SystemVersion.plist",
             {"ProductVersion": expected_version, "ProductBuildVersion": expected_build},
         )
-        _write_plist(xnu_info, {"CFBundleVersion": "12377.121.5"})
+        kernel_path.write_bytes(image("12377.121.5"))
+        try:
+            inspect_kdk(root, expected_version, expected_build, expected_xnu_version)
+        except KDKError as error:
+            if "kernel XNU version" not in str(error):
+                raise
+        else:
+            raise KDKError("mismatched XNU version fixture was accepted")
+
+        kernel_path.write_bytes(image(expected_xnu_version))
+        _write_plist(xnu_info, {"CFBundleVersion": "25.5.1"})
         try:
             inspect_kdk(root, expected_version, expected_build, expected_xnu_version)
         except KDKError as error:
             if "CFBundleVersion" not in str(error):
                 raise
         else:
-            raise KDKError("mismatched XNU version fixture was accepted")
+            raise KDKError("mismatched Darwin version fixture was accepted")
+        _write_plist(xnu_info, {"CFBundleVersion": "25.5.0"})
+        header.unlink()
+        try:
+            inspect_kdk(root, expected_version, expected_build, expected_xnu_version)
+        except KDKError as error:
+            if "platform TrustCache/API.h" not in str(error):
+                raise
+        else:
+            raise KDKError("missing platform TrustCache header fixture was accepted")
 
         wrong_target = pathlib.Path(temporary) / "KDK_26.5_25F70.kdk"
         wrong_target.mkdir()
@@ -151,7 +206,7 @@ def self_test() -> None:
         else:
             raise KDKError("KDK symlink to a differently named bundle was accepted")
 
-    print("KDK identity self-tests passed: actual bundle path, OS build, and System.kext XNU version")
+    print("KDK identity self-tests passed: bundle path, OS build, kernel XNU and Darwin versions, and platform TrustCache")
 
 
 def main() -> int:

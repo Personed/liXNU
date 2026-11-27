@@ -306,7 +306,8 @@ Report the profile alongside the stage:
   pass validates that tested profile rather than proving S1PIE caused the fault. PR #102
   is implementing the PIE-aware path; its acceptance still needs a dedicated QEMU 11.1.0
   `-cpu max` run that confirms `TCR2_EL1.PIE=1` and passes through the XNU table-update stage,
-  console, and shutdown, followed by a full current-chain matrix.
+  console, and shutdown. This is a separate PIE-compatibility result and does not gate the
+  already passing hosted `cortex-a710` profile.
 
   PR #96 head `e358351` adds an experimental 5, 4, 3, 2.5, and 2 GiB guest sweep on the
   #52 base. Run [#157](https://github.com/Personed/xnulinux/actions/runs/45907949989)
@@ -316,14 +317,17 @@ Report the profile alongside the stage:
   are recorded above. This is one hosted-VM sweep and does not establish a supported guest
   minimum. PR #98 run #158 passed the full 6 GiB matrix on Ubuntu, Windows Server 2025,
   and Intel macOS once with `cortex-a710`; the route and host measurements are recorded
-  above. The run is on the older #89 stack and does not validate PIE. PR #99 rebases the
+  above. The run is on the older #89 code stack and does not validate PIE; that status does not
+  invalidate its A710 hosted-runner pass. PR #99 rebases the
   memory sweep onto the integrated chain; run [#159](https://github.com/Personed/xnulinux/actions/runs/45911321313)
   has a full rerun queued after the initial disk build hit a remote SDK-fetch timeout and a retry was canceled; no
   current-head memory results are available. PR #102 head `9e15d68` run
   [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121) passed image build but was canceled during
   disk/collection build; stage-210/pmap PIE work continues, with no real PIE boot result yet. PR #89 run #162 was
   canceled during image setup on head `3020e23`; current head `ac74d61` changes documentation only and has no new
-  workflow run, so the integrated full route is still pending. Earlier run #147 belongs to a
+  workflow run. This is the current PR-head CI record only; the completed #158 A710 pass
+  remains valid evidence for its tested hosted profiles and does not require a new
+  current-chain rerun. Earlier run #147 belongs to a
   superseded #89 head. PR #36 run #118 passed on tested head `c55a700`, not current head
   `93e3cf4`; PR #46 run #79 failed in `kclink` before host preparation or boot.
   Earlier Windows matrix job [#71](https://github.com/Personed/xnulinux/actions/runs/45845436111)
@@ -335,10 +339,10 @@ Report the profile alongside the stage:
   lacked Darwin, halt, and unload markers; it is separate from current run #151 evidence.
 
   Module jobs are stage smoke tests, not a full PureDarwin route. Run #158 is one full
-  hosted pass per Windows/macOS OS profile with `cortex-a710`, before the #102 PIE fix and
-  on the older #89 base; it is not repeated current-chain acceptance. Do not claim physical
-  PC support until representative Intel and AMD hardware is tested; no host RAM floor is
-  established.
+  hosted pass per Ubuntu, Windows Server 2025, and Intel macOS profile with `cortex-a710`.
+  This is the recorded complete result for those hosted configurations. The separate
+  `-cpu max`/PIE profile and representative physical-PC validation remain open; they do
+  not gate the A710 pass. No host RAM floor is established.
 
   The reduced 6 GiB guest profile passed on #52 head `8d41fa9` in run #138 and on the
   #52-equivalent tree `3421056` in #72 run #140; earlier #69 head `3eb5e0e` also passed.
@@ -347,9 +351,9 @@ Report the profile alongside the stage:
   RAM. The CI machines are virtualized; the available executor is a Debian 13 x86-64
   container under KVM with 5 vCPUs and an AMD EPYC 9V74 virtual CPU. Hosted Windows Server
   2025 and Intel macOS 15 runners have one complete `cortex-a710` pass each in run #158,
-  but no physical Intel or AMD PC is attached. Bare-metal hardware acceptance and current-
-  chain PIE-enabled validation remain the precise blockers; do not infer universal “any PC”
-  support from virtual-runner results.
+  but no physical Intel or AMD PC is attached. Bare-metal hardware acceptance remains open, while PIE-enabled `-cpu max` is a separate
+  compatibility profile. Neither changes the recorded A710 hosted-runner result; do not
+  infer universal “any PC” support from virtual-runner evidence.
 
   Merged PR #62 records separate local evidence using the exact #52 kernel package
   `7.0.0-44.44~24.04.1`: the prepared guest reached the Darwin console, accepted guest

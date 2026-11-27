@@ -13,6 +13,22 @@ REPO=$(cd "$(dirname "$0")/../.." && pwd)
 for tool in apt-get cat chmod cpio dpkg-deb find grep gzip install mkdir mktemp mknod qemu-system-x86_64 rm sort sudo timeout; do
   command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
+if ! QEMU_VERSION_OUTPUT=$(qemu-system-x86_64 --version 2>&1); then
+  echo "unable to determine qemu-system-x86_64 version" >&2
+  exit 1
+fi
+if [[ ! $QEMU_VERSION_OUTPUT =~ [Vv]ersion[[:space:]]+([0-9]+)\.([0-9]+) ]]; then
+  echo "unable to parse qemu-system-x86_64 version: $QEMU_VERSION_OUTPUT" >&2
+  exit 1
+fi
+QEMU_MAJOR=${BASH_REMATCH[1]}
+QEMU_MINOR=${BASH_REMATCH[2]}
+QEMU_VERSION="$QEMU_MAJOR.$QEMU_MINOR"
+if (( QEMU_MAJOR < 8 || (QEMU_MAJOR == 8 && QEMU_MINOR < 2) )); then
+  echo "QEMU >= 8.2 is required for the Haswell TCG AVX/FMA preflight; older TCG versions (including 6.2) may omit these flags (detected $QEMU_VERSION)" >&2
+  exit 1
+fi
+echo "Using QEMU $QEMU_VERSION for the x86 fail-closed VM preflight" >&2
 KERNEL_RELEASE=$(cat "$KDIR/include/config/kernel.release")
 test -n "$KERNEL_RELEASE" || { echo "kernel release metadata is missing from KDIR" >&2; exit 1; }
 STAGE=$(mktemp -d)
@@ -91,9 +107,15 @@ run_stub_vm() {
   local accel="$1"
   local cpu="$2"
   local log="$3"
+  local extra_kernel_args="${4:-}"
+  local kernel_args='console=ttyS0,115200 rdinit=/init panic=1 loglevel=7'
+
+  if [[ -n "$extra_kernel_args" ]]; then
+    kernel_args+=" $extra_kernel_args"
+  fi
 
   set +e
-  timeout 240 qemu-system-x86_64 -machine q35 -accel "$accel" -cpu "$cpu" -smp 2 -m 1024 -kernel "$KERNEL" -initrd "$INITRD" -append 'console=ttyS0,115200 rdinit=/init panic=1 loglevel=7' -display none -serial stdio -monitor none -no-reboot > "$log" 2>&1
+  timeout 240 qemu-system-x86_64 -machine q35 -accel "$accel" -cpu "$cpu" -smp 2 -m 1024 -kernel "$KERNEL" -initrd "$INITRD" -append "$kernel_args" -display none -serial stdio -monitor none -no-reboot > "$log" 2>&1
   QEMU_RC=$?
   set -e
   cat "$log"
@@ -120,8 +142,8 @@ host_has_required_cpu_features() {
 if [[ -w /dev/kvm ]] && host_has_required_cpu_features; then
   HOST_LOG="$STAGE/qemu-serial-host-features.log"
   run_stub_vm kvm host "$HOST_LOG"
-  grep -F 'xnu: native x86_64 world switch is not implemented; refusing to load' "$HOST_LOG" >/dev/null || {
-    echo "feature-complete disposable VM did not log that the xnu stub initializer ran" >&2
+  grep -E 'xnu: (native x86_64 world switch is not implemented; refusing to load|pinned XNU source requires GenuineIntel|pinned XNU source does not recognize Intel family)' "$HOST_LOG" >/dev/null || {
+    echo "feature-complete VM did not report either the fail-closed entry stub or source-pinned CPU rejection" >&2
     exit 1
   }
 else
@@ -130,17 +152,33 @@ fi
 
 MISSING_LOG="$STAGE/qemu-serial-missing-features.log"
 run_stub_vm tcg qemu64 "$MISSING_LOG"
-grep -F 'xnu: CPU is missing required x86_64 features:' "$MISSING_LOG" >/dev/null || {
-  echo "feature-limited disposable VM did not log missing CPU features" >&2
+grep -E 'xnu: (CPU is missing required x86_64 features:|pinned XNU source requires GenuineIntel|pinned XNU source does not recognize Intel family)' "$MISSING_LOG" >/dev/null || {
+  echo "feature-limited disposable VM did not report a source-pinned CPU preflight rejection" >&2
   exit 1
 }
-for feature in SSE4.2 AVX FMA MOVBE POPCNT LZCNT BMI1 AVX2 BMI2; do
-  grep -F "$feature" "$MISSING_LOG" >/dev/null || {
-    echo "feature-limited disposable VM did not list missing CPU feature $feature" >&2
-    exit 1
-  }
-done
 if grep -F 'xnu: native x86_64 world switch is not implemented; refusing to load' "$MISSING_LOG" >/dev/null; then
   echo "feature-limited disposable VM reached the world-switch refusal before CPU validation" >&2
+  exit 1
+fi
+
+AVX2_LOG="$STAGE/qemu-serial-avx2-disabled.log"
+run_stub_vm tcg 'Haswell,-avx2' "$AVX2_LOG"
+grep -F 'xnu: CPU is missing required x86_64 features: AVX2' "$AVX2_LOG" >/dev/null || {
+  echo "Intel Haswell-profile VM did not identify the disabled AVX2 feature" >&2
+  exit 1
+}
+if grep -F 'xnu: native x86_64 world switch is not implemented; refusing to load' "$AVX2_LOG" >/dev/null; then
+  echo "Haswell profile reached the world-switch refusal with AVX2 disabled" >&2
+  exit 1
+fi
+
+LINUX_DISABLED_LOG="$STAGE/qemu-serial-linux-disabled-avx2.log"
+run_stub_vm tcg Haswell "$LINUX_DISABLED_LOG" 'clearcpuid=avx2'
+grep -F 'xnu: CPU is missing required x86_64 features: AVX2' "$LINUX_DISABLED_LOG" >/dev/null || {
+  echo "Linux clearcpuid=avx2 was not reflected by the module preflight" >&2
+  exit 1
+}
+if grep -F 'xnu: native x86_64 world switch is not implemented; refusing to load' "$LINUX_DISABLED_LOG" >/dev/null; then
+  echo "Haswell profile reached the world-switch refusal after Linux disabled AVX2" >&2
   exit 1
 fi

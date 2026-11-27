@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """Exercise the Recovery fileset JSON helper without an Apple image."""
 
+import hashlib
 import json
 import pathlib
+import plistlib
 import struct
 import subprocess
 import sys
@@ -54,7 +56,7 @@ def verify(binary, image, expected):
         assert path.read_bytes() == image
 
 
-def verify_segment_bounds(binary):
+def make_segmented_fileset():
     image = make_fileset()
     image.extend(bytes(0x120 - len(image)))
     member = 128
@@ -65,6 +67,14 @@ def verify_segment_bounds(binary):
         "<II16sQQQQIIII", image, command, LC_SEGMENT_64, 72, name,
         0xFFFFFF8000200000, 0x1000, 0x100, 0x20, 5, 5, 0, 0,
     )
+    return image
+
+
+def verify_segment_bounds(binary):
+    image = make_segmented_fileset()
+    member = 128
+    command = member + 32
+    name = b"__TEXT"
     expected = {
         "status": "accepted",
         "parser_result": 0,
@@ -245,6 +255,58 @@ def verify_fixup_extents(binary):
     verify(binary, mixed_padding, rejected)
 
 
+def verify_system_volume_audit():
+    script = pathlib.Path(__file__).resolve().parents[2] / "scripts/x86_64/audit-tahoe-system-volume.py"
+    with tempfile.TemporaryDirectory() as temporary:
+        root = pathlib.Path(temporary) / "System volume"
+        version = root / "System/Library/CoreServices/SystemVersion.plist"
+        collection = root / "System/Library/KernelCollections/BootKernelExtensions.kc"
+        version.parent.mkdir(parents=True)
+        collection.parent.mkdir(parents=True)
+
+        def run_audit(exit_status):
+            result = subprocess.run([sys.executable, str(script), "--system-root", str(root)],
+                                    capture_output=True, text=True, timeout=20)
+            assert result.returncode == exit_status, result
+            assert result.stderr == "", result.stderr
+            assert temporary not in result.stdout, result.stdout
+            return json.loads(result.stdout)
+
+        version.write_bytes(plistlib.dumps({"ProductVersion": "26.6.2", "ProductBuildVersion": "25G83"}))
+        mismatch = run_audit(1)
+        assert mismatch["ProductBuildVersion"] == "25G83", mismatch
+        assert "boot_kernel_collection" not in mismatch, mismatch
+
+        version.write_bytes(b"<?xml version='1.0'?><plist><dict></plist>")
+        assert run_audit(1)["error"] == "invalid SystemVersion.plist"
+
+        plist = plistlib.dumps({"ProductVersion": "26.7.3", "ProductBuildVersion": "25G342"})
+        version.write_bytes(plist)
+        collection.write_bytes(b"not a fileset")
+        assert run_audit(1)["fileset"]["status"] == "not_fileset"
+
+        image = make_fileset()
+        collection.write_bytes(image)
+        assert run_audit(1)["error"] == "the fileset inspector found no nested kernel segments"
+
+        image = make_segmented_fileset()
+        collection.write_bytes(image)
+        report = run_audit(0)
+        assert report["audit_status"] == "accepted", report
+        assert report["system_version_plist"]["sha256"] == hashlib.sha256(plist).hexdigest(), report
+        assert report["boot_kernel_collection"]["sha256"] == hashlib.sha256(image).hexdigest(), report
+        assert report["boot_kernel_collection"]["bytes"] == len(image), report
+        assert report["fileset"]["parser_result"] == 0, report
+        assert report["fileset"]["kernel"]["segments"], report
+        assert report["apple_provenance_verified"] is False and report["boot_verified"] is False, report
+        assert collection.read_bytes() == image and version.read_bytes() == plist
+
+        outside = pathlib.Path(temporary) / "external"
+        collection.parent.rename(outside)
+        collection.parent.symlink_to(outside, target_is_directory=True)
+        assert "outside the System volume" in run_audit(1)["error"]
+
+
 def main():
     binary = sys.argv[1]
     image = make_fileset()
@@ -281,6 +343,7 @@ def main():
     verify(binary, image, {"status": "not_fileset", "parser_result": None})
     verify_segment_bounds(binary)
     verify_fixup_extents(binary)
+    verify_system_volume_audit()
     print("Recovery fileset metadata fixtures passed")
 
 

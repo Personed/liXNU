@@ -40,6 +40,14 @@ The pinned table shape is:
 - `BootPTD` contains 2048 large-page entries, each mapping a 2 MiB page, for a 4 GiB identity range;
 - because PML4 slot 0 and slot 511 initially use the same PDPT chain, the low identity mapping and the top kernel-slot mapping initially mirror the same low physical memory.
 
+The hosted bootstrap page directory builder emits that four-page `BootPTD`
+layout with present leaves only within a single caller-owned physical
+reservation. The reservation must be aligned to 2 MiB. The loader must first
+verify the table offset against the selected artifact and place every early
+object and allocation in the reservation. This covers the initial directory.
+`Idle_PTs_init()` later creates new page tables and a physmap that each need
+their own memory-ownership checks before running XNU.
+
 This means the entry is not a normal Linux long-mode kernel call. A host implementation either has to reproduce the expected protected-mode/paging-disabled entry environment, or patch/replace this entry sequence with an explicitly reviewed long-mode handoff. Both choices affect control-register ownership, the GDT/IDT, the kernel image's physical placement, interrupt masking, rollback, and the exact interpretation of `boot_args`. Neither is authorized by this document.
 
 ## Boot arguments consumed early
@@ -48,7 +56,9 @@ This means the entry is not a normal Linux long-mode kernel call. A host impleme
 
 `vstart()` treats a nonzero first argument as the BSP boot-argument physical address, computes the initial physical-free point as `kaddr + ksize`, and later converts the argument pointer with `ml_static_ptovirt()`. A null first argument is the non-boot-CPU protocol. PR #108's validation-only `boot_args` layout work is relevant input, but it does not by itself establish the physical memory map, kernel placement, or handoff state required here.
 
-The core placement preflight takes the contiguous physical reservation from the host. It requires disjoint boot arguments, EFI map, and ADT below the image and checks that the image and bootstrap budget fit in the reservation. The budget begins at the page-rounded image end, where `vstart()` starts allocating before it reads the EFI memory map. The placement check bounds the initial `fillkpt()` write by the selected build's `NKPT` capacity and checks the minimum space for the early page tables. The loader must derive `NKPT` and the full bootstrap budget from the selected build, accounting for physmap randomization, `__HIB` size and any earlier allocations, and hold the reservation throughout XNU execution. Builds that move the allocation start before `Idle_PTs_init()` need their own placement calculation.
+The core placement preflight takes the contiguous physical reservation from the host. It requires disjoint boot arguments, EFI map, and ADT below the image and checks that the image and bootstrap budget fit in the reservation. The budget begins at the page-rounded image end, where `vstart()` starts allocating before it reads the EFI memory map. The placement check bounds the initial `fillkpt()` write by the selected build's `NKPT` capacity. It also checks the page table budget for the largest physmap randomization offset and the image's `__HIB` extent, within the table counts in `Idle_PTs_init()`. The loader must obtain `NKPT` and the `__HIB` size from the selected build, confirm this non-KASAN allocation sequence, and hold the reservation throughout XNU execution. Builds that move the allocation start before `Idle_PTs_init()` need their own placement calculation.
+
+Placement requires a nonzero `PhysicalMemorySize` up to the pinned `K64_MAXMEM` of 2 TiB. Development and debug builds check that ceiling before setting up the physmap, and the pinned release build uses it as the default allocator cap. The core argument builder only checks the wire layout and allows a zero placeholder before placement.
 
 ## AP entry protocol boundary
 

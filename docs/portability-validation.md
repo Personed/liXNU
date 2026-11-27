@@ -12,7 +12,7 @@ The project target is native hosted-XNU on x86_64 Linux PCs, targeting macOS Tah
 | Firmware | The intended architecture reaches the firmware console (e.g. UEFI shell for the QEMU profile). |
 | Linux host or guest | ARM64 Linux reaches the intended userspace; record whether this is a distro boot or a minimal test initramfs, plus the kernel, page size, and PAC availability. |
 | FKI configuration | FKI loads with the requested `carve_base` and `carve_mb`; reading those parameters confirms configuration only, not that the reserved pages can be allocated. |
-| FKI carve-out allocation | A probe requests a known size and verifies the returned physical interval `[pa, pa + size)` is fully inside the configured carve-out `[carve_base, carve_base + (carve_mb << 20))`. It then frees and repeats the allocation without reloading FKI, verifying the interval is reused. Record the request, returned interval, and configured bounds. This validates allocation and reuse for the tested profile only. The existing `tests/qemu/fki-carve-probe.c` is pinned to the QEMU fixture base `0x70000000`; it does not validate another host's carve-out. |
+| FKI carve-out allocation | `tests/qemu/fki-carve-probe.c` requests a known size and verifies each returned physical interval `[pa, pa + size)` is fully inside the expected carve-out `[expected_base, expected_base + (expected_mb << 20))`. It frees the first allocation before requesting the second without reloading FKI. The probe logs interval containment for each allocation and reports same-PA reuse separately: two in-bounds markers establish allocation-in-bounds; `same-pa-reuse: yes` establishes reuse of the same PA; `same-pa-reuse: no` means reuse failed even if both intervals were in-bounds. It reports the returned physical ranges and does not inspect FKI's internal allocation handle. Its module parameters are `expected_base`, `expected_mb`, and `request_mb`; `expected_base` must meet FKI's 2 MiB alignment condition. Defaults (`0x70000000`, 256 MiB, and 16 MiB) preserve the QEMU fixture. A different host profile must pass that profile's bounds explicitly. Record the request, returned intervals, configured bounds, and same-PA result. This validates physical interval containment and reuse for the tested profile only. |
 | XNU module probe | `xnu.ko` resolves its FKI dependencies and reaches the expected missing-image error. This checks the module and loader path without a real collection; it does not show that XNU allocated from the carve-out. |
 | XNU uses the carve-out | With a compatible collection loaded, capture `xnu: contiguous DRAM at phys` and `xnu: contiguous DRAM size` from the host log. Mark this stage only when that complete returned interval lies inside the configured carve-out. The separate FKI probe above does not establish this stage. |
 | PureDarwin userspace | The real, paired PureDarwin disk and free kernel collection boot; execute a command on the Darwin console and observe the result. Record a clean halt separately. |
@@ -584,10 +584,43 @@ Report the profile alongside the stage:
    systemctl is-active xnulinux-fki.service
    cat /sys/module/fki/parameters/carve_base /sys/module/fki/parameters/carve_mb
    ```
-   These values confirm FKI configuration only. The existing `tests/qemu/fki-carve-probe.c` is specific to the QEMU
-   fixture at `0x70000000`; do not use it to claim allocation on another host profile. Use a probe that checks the full
-   interval against that host's configured bounds and repeats allocation after freeing. If no matching probe is
-   available, report configuration only and leave allocation/reuse unverified.
+   These values confirm FKI configuration only. Build the reusable probe against the same kernel headers as FKI, then
+   pass the active carve-out values rather than the QEMU defaults. `expected_base` must be 2 MiB aligned, as required
+   for FKI's configured carve-out path. The probe validates the full returned interval for both allocations and
+   reports whether the second allocation reused the first PA:
+   ```sh
+   make -C "/lib/modules/$(uname -r)/build" ARCH=arm64 M="$PWD/tests/qemu" \
+     KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
+   carve_base=$(cat /sys/module/fki/parameters/carve_base)
+   carve_mb=$(cat /sys/module/fki/parameters/carve_mb)
+   probe_mark="xnulinux-fki-probe-start-$(cat /proc/sys/kernel/random/uuid)"
+   printf '<6>%s\n' "$probe_mark" | sudo tee /dev/kmsg >/dev/null || {
+     echo "Could not write the FKI probe log marker" >&2
+     exit 1
+   }
+   if sudo insmod tests/qemu/fki-carve-probe.ko \
+     expected_base="$carve_base" expected_mb="$carve_mb" request_mb=16; then
+     sudo rmmod fki-carve-probe
+   fi
+   if ! probe_log=$(sudo dmesg); then
+     echo "FKI probe evidence unverified: could not read the kernel log" >&2
+   elif ! printf '%s\n' "$probe_log" | grep -F -- "$probe_mark" >/dev/null; then
+     echo "FKI probe evidence unverified: marker missing (logging disabled or record evicted)" >&2
+   else
+     probe_lines=$(printf '%s\n' "$probe_log" | sed -n "/$probe_mark/,\$p" | grep -F 'fki-carve-probe:' || true)
+     if [ -n "$probe_lines" ]; then
+       printf '%s\n' "$probe_lines"
+     else
+       echo "FKI probe evidence unverified: marker present but no probe messages follow it" >&2
+     fi
+   fi
+   ```
+   Record the two returned intervals and the `same-pa-reuse` result separately. If `insmod` fails after both
+   in-bounds markers and `same-pa-reuse: no`, record allocation-in-bounds as passed and reuse as failed. Otherwise
+   report the last completed stage and the probe's failure reason; do not infer a full allocation/reuse pass. If the
+   UUID is missing from the captured kernel log, or no probe messages follow it, mark allocation and reuse evidence
+   for this attempt as unverified. This includes systems with `printk.devkmsg=off` and logs where the marker or
+   subsequent probe records were evicted; do not use unscoped lines from an earlier attempt as evidence.
    Inside that ARM64 Linux instance, collect
    `uname -rm`, `getconf PAGE_SIZE`, `lscpu` (including PAC features) and the FKI
    carve-out values. Record the outer host, hypervisor and accelerator separately

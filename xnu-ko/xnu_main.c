@@ -9,6 +9,7 @@
  *        module through linux64_hook (the interface: linux64_abi.h).
  */
 #include <linux/module.h>
+#include <linux/errno.h>
 #include "../fki-ko/fki.h"
 #include "xrt.h"
 #include "macho.h"
@@ -124,6 +125,8 @@ static struct fki_region l2page;
 static unsigned long long *window_slot, *window_l1;
 static unsigned char window_owned[512];
 static u64_t diag_va[6];
+static int host_pie_mode;
+static int host_pie_mode_known;
 #define XNU_L1_FIRST 384	/* VM_MIN_KERNEL_ADDRESS 0xffffffe000000000 */
 #define XNU_L1_LAST 495	/* VM_MAX_KERNEL_ADDRESS 0xfffffffbffffffff */
 static void *blob;
@@ -2041,8 +2044,32 @@ static void el0_patch_image(struct xnu_image *im)
 	}
 }
 
+static int read_host_pie_mode(void)
+{
+	if (host_pie_mode_known)
+		return 0;
+	u64_t tcr2 = 0;
+	int err = fki_tcr2_read(&tcr2);
+	if (err && err != -EOPNOTSUPP) {
+		logkv("xnu: TCR2_EL1 read failed, err", (u64_t)err);
+		return err;
+	}
+	host_pie_mode = !err && !!(tcr2 & (1ULL << 1));
+	if (err)
+		logs("xnu: host TCR2_EL1 unavailable; using direct permissions");
+	else {
+		logkv("xnu: host TCR2_EL1", tcr2);
+		logkv("xnu: host TCR2_EL1.PIE", (u64_t)host_pie_mode);
+	}
+	host_pie_mode_known = 1;
+	return 0;
+}
+
 static int enter_arm_init(struct boot_args_v2 *ba)
 {
+	int pie_err = read_host_pie_mode();
+	if (pie_err)
+		return pie_err;
 	if (img.filetype == MH_FILESET) {
 		/* kernel collection at its link address: XNU applies the chained fixups itself; nothing slides */
 		if (img.slide) { logs("xnu: a kernel collection must not slide"); return -22; }
@@ -2063,6 +2090,7 @@ static int enter_arm_init(struct boot_args_v2 *ba)
 	u64_t a_init = macho_sym(&img, "_arm_init"), a_hook = macho_sym(&img, "_linux64_hook"),
 	      a_slide = macho_sym(&img, "_linux64_slide"), a_el0 = macho_sym(&img, "_linux64_el0"),
 	      a_el0_caps = macho_sym(&img, "_linux64_el0_caps"),
+	      a_pie = macho_sym(&img, "_linux64_pie"),
 	      a_abi = macho_sym(&img, "_linux64_abi_version"),
 	      a_host_abi = macho_sym(&img, "_linux64_host_abi_version");
 	logkv("xnu: arm_init at", a_init);
@@ -2086,7 +2114,13 @@ static int enter_arm_init(struct boot_args_v2 *ba)
 		logs("xnu: _linux64_host_abi_version missing or invalid (stale kernel incompatible with host ABI)");
 		return -22;
 	}
+	if (!a_pie || (a_pie & 3) || !va_in_loaded_segs_prot(&img, a_pie, 4, 3)) {
+		logs("xnu: _linux64_pie missing or invalid (stale kernel incompatible with host ABI)");
+		return -22;
+	}
 	*(unsigned int *)a_host_abi = LINUX64_ABI_VERSION;
+	*(unsigned int *)a_pie = (unsigned int)host_pie_mode;
+	logkv("xnu: XNU PIE mapping mode", (u64_t)host_pie_mode);
 	if (el0_mode) {
 		if (!a_el0 || !a_el0_caps ||
 		    (a_el0 & 3) || !va_in_loaded_segs_prot(&img, a_el0, 4, 3) ||
@@ -2230,6 +2264,56 @@ static int run_m2a(void)
  */
 #define XNU_WINDOW_BASE (img.vmlow & ~0x1fffffULL)	/* 2 MiB aligned, at or below the image's vmlow */
 
+static void xnu_bootstrap_probe_sync(void *address)
+{
+	/* The probe is 16-byte aligned and stays within one D-cache line. */
+	asm volatile("dc cvau, %0\n\tdsb ish\n\tic ivau, %0\n\tdsb ish\n\tisb" : : "r"(address) : "memory");
+}
+
+static unsigned long xnu_bootstrap_probe_call(unsigned long address)
+{
+	register unsigned long result __asm__("x0");
+	/* Avoid a C indirect call so kernel CFI does not try to type-check the temporary code. */
+	asm volatile("blr %x1" : "=r"(result) : "r"(address) : "x30", "memory");
+	return result;
+}
+
+static int xnu_bootstrap_window_probe(unsigned char *base, u64_t image_off)
+{
+	static const u32_t code[] = { 0xd503245fU, 0xd280b4a0U, 0xd65f03c0U, 0xd503201fU };
+	volatile u32_t *probe;
+	volatile u64_t *write_probe;
+	u32_t saved_code[4];
+	u64_t saved_data, result;
+	if (image_off < 32 || (image_off & 15))
+		return -EINVAL;
+
+	write_probe = (volatile u64_t *)(base + image_off - sizeof(*write_probe));
+	saved_data = *write_probe;
+	*write_probe = 0x584e554252575052ULL;
+	if (*write_probe != 0x584e554252575052ULL) {
+		*write_probe = saved_data;
+		return -EFAULT;
+	}
+	*write_probe = saved_data;
+	logs("xnu: bootstrap window write probe passed");
+
+	probe = (volatile u32_t *)(base + image_off - 32);
+	for (unsigned i = 0; i < 4; i++)
+		saved_code[i] = probe[i];
+	for (unsigned i = 0; i < 4; i++)
+		probe[i] = code[i];
+	xnu_bootstrap_probe_sync((void *)probe);
+	result = xnu_bootstrap_probe_call((unsigned long)probe);
+	for (unsigned i = 0; i < 4; i++)
+		probe[i] = saved_code[i];
+	xnu_bootstrap_probe_sync((void *)probe);
+	if (result != 0x5a5)
+		return -EFAULT;
+	logs("xnu: bootstrap window execute probe passed");
+	return 0;
+}
+
 static int run_m2b(void)
 {
 	u64_t image_size = img.vmhigh - img.vmlow;
@@ -2256,11 +2340,18 @@ static int run_m2b(void)
 	if (boot_map < image_off + image_size + 0x60000 + BOOT_EXTRA + (64ULL << 20)) {
 		logs("xnu: image and boot data do not fit in the bootstrap window"); return -22;
 	}
+	err = read_host_pie_mode();
+	if (err)
+		return err;
 	logkv("xnu: bootstrap window base", XNU_WINDOW_BASE);
 	logkv("xnu: bootstrap window bytes", boot_map);
 	for (u64_t o = 0; o < boot_map; o += 0x200000) {
 		/* 2 MiB block: normal WB (AttrIdx 0 in Linux's MAIR), inner shareable, AF, EL1 RWX, UXN */
-		l2[first + (o >> 21)] = (img.region.pa + o) | (1ULL << 54) | (1ULL << 10) | (3ULL << 8) | 1;
+		u64_t desc = (img.region.pa + o) | (1ULL << 54) | (1ULL << 10) | (3ULL << 8) | 1;
+		/* With PIE the AP/DBM bits index PIR_EL1; Linux's RWX kernel entry is index 0xa (DBM set). */
+		if (host_pie_mode)
+			desc |= 1ULL << 51;
+		l2[first + (o >> 21)] = desc;
 	}
 	unsigned long long *l1; fki_u64 l1pa;
 	err = fki_window_l1(XNU_WINDOW_BASE, &l1, &l1pa);
@@ -2276,6 +2367,8 @@ static int run_m2b(void)
 	logs("xnu: bootstrap window mapped");
 
 	unsigned char *base = (unsigned char *)XNU_WINDOW_BASE;
+	err = xnu_bootstrap_window_probe(base, image_off);
+	if (err) { logkv("xnu: bootstrap window permission probe failed, err", (u64_t)err); return err; }
 	err = macho_copy(&img, base + image_off);
 	if (err) { logkv("xnu: macho_copy failed, err", (u64_t)err); return err; }
 	img.slide = 0;

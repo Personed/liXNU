@@ -72,7 +72,7 @@ else
     echo "free collection kernel slots need a relink"
     JOBS="${JOBS:-12}" bash k27/build-kernel27.sh 2>&1 | tee out/k27/xnulinux-relink.log | tail -15
   fi
-  python3 "$POC/scripts/free-kc/fit_kernel_segments.py" --check out/k27/kernel-k27.macho k27/segaddrs.sh
+  python3 "$POC/scripts/free-kc/fit_kernel_segments.py" --check out/k27/kernel-k27.macho k27/segaddrs.sh 2>&1 | tee -a "$fit_log"
 fi
 
 NATIVE=()

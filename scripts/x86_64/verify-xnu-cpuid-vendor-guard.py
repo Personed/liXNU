@@ -9,6 +9,7 @@ import hashlib
 import os
 import pathlib
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -161,7 +162,10 @@ def apply_or_verify(source_root: pathlib.Path, patch_path: pathlib.Path, apply: 
         git(source_root, "apply", "--check", "--whitespace=error", "-", data=patch_bytes)
         git(source_root, "apply", "--whitespace=error", "-", data=patch_bytes)
     source = source_root / SOURCE_FILE
-    if source_status(source_root) != EXPECTED_STATUS or source.is_symlink() or source.read_bytes() != expected:
+    mode = source.lstat().st_mode
+    if not stat.S_ISREG(mode) or mode & 0o111:
+        raise GuardError(f"{SOURCE_FILE} must remain a regular nonexecutable file")
+    if source_status(source_root) != EXPECTED_STATUS or source.read_bytes() != expected:
         raise GuardError("XNU source tree must contain exactly the committed vendor-guard patch and no other changes")
     return hashlib.sha256(patch_bytes).hexdigest()
 

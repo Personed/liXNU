@@ -68,6 +68,14 @@ jobs:
           python3 scripts/x86_64/verify-xnu-cpuid-vendor-guard.py \
             --source-root "$source_root" \
             --patch scripts/x86_64/tahoe-xnu-cpuid-vendor-guard.patch
+          chmod u+x "$source_root/osfmk/i386/cpuid.c"
+          if python3 scripts/x86_64/verify-xnu-cpuid-vendor-guard.py \
+            --source-root "$source_root" \
+            --patch scripts/x86_64/tahoe-xnu-cpuid-vendor-guard.patch; then
+            echo "the guard verifier accepted an executable source file" >&2
+            exit 1
+          fi
+          chmod u-x "$source_root/osfmk/i386/cpuid.c"
       - name: Check compatibility patch after applying the CPUID guard
         run: |
           git -C "$RUNNER_TEMP/xnu-source" apply --check --whitespace=error \

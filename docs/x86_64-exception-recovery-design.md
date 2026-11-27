@@ -4,7 +4,7 @@ This is a disposable-VM design for the next test-only boundary gate. It does not
 
 ## Requirement
 
-Before foreign kernel execution, a selected vCPU must survive one controlled page fault (`#PF`) and one controlled general-protection fault (`#GP`) raised inside the test-owned shim, one at a time. For each case the test must record the vector, faulting RIP, error code, CR2 for `#PF`, CPU identity, and recovery count; resume exactly once at the documented recovery point; then pass the existing host-state, syscall, unload, and shutdown checks. A nested or unclassified `#PF`/`#GP`, or any other synchronous exception covered by a terminal gate, is a failed test even if the disposable VM remains alive. NMI is explicitly outside this test's acceptance claim.
+Before foreign kernel execution, a selected vCPU must survive one controlled page fault (`#PF`) and one controlled general-protection fault (`#GP`) raised inside the test-owned shim, one at a time. For each case the test must record the vector, faulting RIP, error code, CR2 for `#PF`, CPU identity, and recovery count; resume exactly once at the documented recovery point; then pass the existing host-state, syscall, unload, and shutdown checks. The userspace verifier must stay pinned to that same vCPU from before the ioctl through its post-recovery syscall check; a syscall on a different vCPU does not satisfy this gate. A nested or unclassified `#PF`/`#GP`, or any other synchronous exception covered by a terminal gate, is a failed test even if the disposable VM remains alive. NMI is explicitly outside this test's acceptance claim.
 
 NMI is intentionally not claimed by this design. NMI can arrive outside the controlled instruction window, uses different completion semantics, and interacts with Linux's NMI-safe entry code and watchdogs. It remains a separate blocker.
 
@@ -33,14 +33,14 @@ In 64-bit mode the architectural exception frame includes SS, RSP, RFLAGS, CS an
 - save the general-purpose registers it needs in per-vCPU test storage before touching them;
 - record the vector selected by the independent handler entry point;
 - record the error code and hardware frame fields exactly as delivered;
-- read CR2 for `#PF` before any instruction that can take another fault;
-- restore every general-purpose register it used before `iretq`, so the recovery path starts with the fault-time register state;
+- read CR2 for `#PF` before any instruction that can take another fault, while preserving the fault-time R11 before using it as a CR2 temporary and restoring it before `iretq`;
+- restore every general-purpose register it used before `iretq`, so the recovery path starts with the fault-time register state, and compare the captured full GPR image against the exact expected per-injection image before reporting success (including registers used to form injection operands);
 - rewrite the frame exactly once: set frame RIP to the test recovery stub, set frame RSP to the test-owned recovery-stack top, keep CS/RFLAGS/SS unchanged, and account for the error-code slot before executing `iretq`; and
 - increment no counter and perform no C call in the raw handler beyond the capture writes.
 
 The stack switch is therefore explicit: `iretq` first consumes the five-slot frame left by the exception on the fault stack, then loads the rewritten frame-RSP value. Recovery begins on the test-owned recovery stack with fault-time GPRs restored. The exact recovery point must execute once; a second caught `#PF` or `#GP` for the same armed case is a nested-fault failure and takes the terminal path. Other synchronous vectors use the no-return terminal gates described below.
 
-Before arming, the test control block records the armed vector/mode, exact injection RIP, post-injection recovery target, original envelope RSP and callee-saved GPRs, fault-window RSP, original IDTR image, and both stack canaries. Capture the envelope RSP while still on the Linux task stack; then switch to the fault stack, validate it, and record the fault-window RSP immediately before the labeled injection. No push, pop, call, or other explicit RSP-changing instruction is allowed in the straight-line injection window. If the injection instruction returns normally, assembly must immediately restore and verify the original IDTR, restore the envelope RSP/GPRs, and return a distinct not-run configuration failure to C; it must never reach a pass marker. After entry on the recovery stack, the recovery stub remains assembly and follows this exact sequence:
+Before arming, the test control block records the armed vector/mode, exact injection RIP, post-injection recovery target, original envelope RSP and callee-saved GPRs, the expected full GPR image for this injection, fault-window RSP, original IDTR image, and both stack canaries. Capture the envelope RSP while still on the Linux task stack; then switch to the fault stack, validate it, and record the fault-window RSP immediately before the labeled injection. No push, pop, call, or other explicit RSP-changing instruction is allowed in the straight-line injection window. If the injection instruction returns normally, assembly must immediately restore and verify the original IDTR, restore the envelope RSP/GPRs, and return a distinct not-run configuration failure to C; it must never reach a pass marker. After entry on the recovery stack, the recovery stub remains assembly and follows this exact sequence:
 
 1. store any scratch GPRs it needs in a dedicated recovery save area before using them;
 2. validate the arm token, vector, faulting RIP, one-shot recovery count, and recovery-stack canaries; any mismatch takes the terminal path below;
@@ -58,20 +58,21 @@ The NMI descriptor remains byte-identical to Linux's gate and NMI is not injecte
 
 The first `#PF` case should use a deliberately selected unmapped canonical kernel address, preferably a fixed low address such as zero in the disposable kernel image. The test verifies that CR2 equals the selected address and that the error code is architecturally consistent with the attempted access. It must not depend on Linux keeping address zero unmapped in every configuration; the implementation probes the environment and reports a not-run configuration error rather than weakening the check.
 
-The first `#GP` case should use a read-only invalid MSR access such as `rdmsr` from a reserved MSR index. A read is preferred over `wrmsr` because a mistaken index must not mutate machine state. The expected error code is zero, and the faulting RIP is the exact instruction in the injection window.
+The `#GP` case must use `mov %ax, %ds` with selector `0xfff8` (TI=0, RPL=0), whose GDT byte offset is `0xfff8`. On the selected CPU, execute `sgdt` before arming and fail closed unless `GDTR.limit < 0xfff8`; this proves the selector index is outside the GDT without depending on LDT contents. The expected selector error code is exactly `0xfff8` (EXT=IDT=TI=0; its low three bits are zero because the selector RPL is zero). The faulting RIP is the exact `mov` instruction. Since the instruction faults before loading DS, DS must equal its pre-injection selector after recovery; if the instruction unexpectedly completes, the assembly not-run path must restore the saved DS selector before returning to C and the case must fail.
 
-Both instructions must be out-of-line, individually labeled, and reachable only in the armed test mode. Compiler-generated memory accesses in the injection window are not accepted as controlled injections.
+Both injection instructions must be out-of-line, individually labeled, and reachable only in the armed test mode. Compiler-generated memory accesses in the injection window are not accepted as controlled injections.
 
 ## Rollback and validation gates
 
-The original IDTR is restored before preemption or interrupts are re-enabled. The after snapshot must match the existing boundary baseline for CPU/task identity, stack bounds, RSP, relevant RFLAGS, CR0/CR3/CR4, EFER, FS/GS/KERNEL_GS, XCR0, GDTR/IDTR, LDTR/TR, and preemption/IRQ state. In particular, IDTR base and limit after the test must equal the values captured before shadow-IDT installation.
+The original IDTR is restored before preemption or interrupts are re-enabled. The after snapshot must match the existing boundary baseline for CPU/task identity, stack bounds, RSP, relevant RFLAGS, CR0/CR3/CR4, EFER, FS/GS/KERNEL_GS, XCR0, GDTR/IDTR, LDTR/TR, DS selector, and preemption/IRQ state. In particular, IDTR base and limit after the test must equal the values captured before shadow-IDT installation.
 
 A pass requires all of the following for both `#PF` and `#GP`:
 
-- exact vector, RIP, error code, CPU, and recovery count metadata;
+- exact vector, RIP, error code, CPU, and recovery count metadata (`#GP` error code `0xfff8`);
 - CR2 equality and access-type consistency for `#PF`;
+- exact restoration of the expected full GPR image, including fault-time R11 across CR2 capture, and unchanged DS selector;
 - exactly one recovery entry and no nested/unclassified exception;
-- normal Linux syscalls after return;
+- normal Linux syscalls after return on the same vCPU as the recovered injection;
 - byte-for-byte restoration of IDTR state before cleanup;
 - successful module unload and guest shutdown in the disposable VM.
 

@@ -257,7 +257,8 @@ def run_case(verifier, name, image, expected_success, mutate_manifest=None,
             raise AssertionError(f"{name}: startup segment was not recorded")
         if report["validation_scope"]["entry_is_file_backed"] is not True:
             raise AssertionError(f"{name}: file-backed entry was not recorded")
-        if report["validation_scope"]["entry_is_file_backed_executable"] is not (not expect_hib_metadata):
+        declared_executable = not expect_hib_metadata
+        if report["validation_scope"]["entry_is_file_backed_executable"] is not declared_executable:
             raise AssertionError(f"{name}: report misstated declared entry permissions")
         if expect_hib_metadata:
             hib_entry = report["inspection"].get("hib_entry")
@@ -277,6 +278,7 @@ def main():
              expected_subtype="X86_64_ALL")
     run_case(verifier, "x86_64 H", make_valid_image(CPU_SUBTYPE_X86_64_H), True,
              expected_subtype="X86_64_H")
+    run_case(verifier, "file-backed entry in RX __HIB", make_valid_image(hib_protections=5), True)
     run_case(verifier, "file-backed instruction entry in RW __HIB", make_valid_image(hib_protections=3),
              True, expect_hib_metadata=True)
     run_case(verifier, "pinned subtype mismatch", make_valid_image(CPU_SUBTYPE_X86_64_H),
@@ -314,6 +316,10 @@ def main():
     rw_rip_outside_text = make_valid_image(hib_protections=3)
     put_u64(rw_rip_outside_text, RIP_OFF, 0x1120)  # Exclusive end of __HIB,__text.
     run_case(verifier, "RIP outside the RW hibernation instruction section", rw_rip_outside_text, False)
+
+    mismatched_hib_maxprot = make_valid_image(hib_protections=3)
+    put_u32(mismatched_hib_maxprot, HIB_OFF + 56, 7)
+    run_case(verifier, "RW hibernation entry with executable max protections", mismatched_hib_maxprot, False)
 
     rip_in_text = make_valid_image()
     put_u64(rip_in_text, RIP_OFF, 0x4300)

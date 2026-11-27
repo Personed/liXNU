@@ -276,6 +276,7 @@ def verify_inspection(
         entry_segment is None
         or entry_segment.get("mapped") is not True
         or entry_segment.get("initprot") not in protections
+        or (hib_metadata and entry_segment.get("maxprot") != "rw-")
         or not isinstance(entry_segment.get("nsects"), int)
         or entry_segment.get("nsects", 0) < 1
     ):

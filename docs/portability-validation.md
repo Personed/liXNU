@@ -600,7 +600,7 @@ Report the profile alongside the stage:
    fi
    if ! probe_log=$(sudo dmesg); then
      echo "FKI probe evidence unverified: could not read the kernel log" >&2
-   elif ! printf '%s\n' "$probe_log" | grep -Fq -- "$probe_mark"; then
+   elif ! printf '%s\n' "$probe_log" | grep -F -- "$probe_mark" >/dev/null; then
      echo "FKI probe evidence unverified: marker missing (logging disabled or record evicted)" >&2
    else
      probe_lines=$(printf '%s\n' "$probe_log" | sed -n "/$probe_mark/,\$p" | grep -F 'fki-carve-probe:' || true)

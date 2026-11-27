@@ -244,3 +244,79 @@ index 75d172f13d69239a60e80f13bd01efa1a6de304e..a07d49be31a80df66f05c4bb823540a3
  
  	size_t oldsize, newsize;
  	hw_lck_ptr_t *oldarray;
+--- a/osfmk/kern/zalloc.c
++++ b/osfmk/kern/zalloc.c
+@@ -10576,7 +10576,7 @@
+ 	{
+ 		zone_t test_pcpu_zone;
+ 		kern_return_t kr;
+-		const int num_allocs = 8;
++		enum { num_allocs = 8 };
+ 		int idx;
+ 		vm_size_t elem_size = 2 * PAGE_SIZE / num_allocs;
+ 		void *allocs[num_allocs];
+--- a/osfmk/vm/lz4.h
++++ b/osfmk/vm/lz4.h
+@@ -45,7 +45,8 @@
+ 
+ //  Represents a position in the input stream
+ typedef struct { uint32_t offset; uint32_t word; } lz4_hash_entry_t;
+-static const size_t lz4_hash_table_size = LZ4_COMPRESS_HASH_ENTRIES * sizeof(lz4_hash_entry_t);
++#define LZ4_ENCODE_SCRATCH_SIZE (LZ4_COMPRESS_HASH_ENTRIES * sizeof(lz4_hash_entry_t))
++static const size_t lz4_hash_table_size = LZ4_ENCODE_SCRATCH_SIZE;
+ 
+ // Worker function for lz4 encode.  Underlies both the buffer and stream encode operations.
+ // Performs lz4 encoding of up to 2gb of data, updates dst_ptr and src_ptr to point to the
+--- a/osfmk/vm/vm_compressor_algorithms.c
++++ b/osfmk/vm/vm_compressor_algorithms.c
+@@ -46,12 +46,12 @@
+ #define WKC_SCRATCH_ALIGN (64)
+ 
+ typedef union {
+-	uint8_t lz4state[lz4_encode_scratch_size]__attribute((aligned(LZ4_SCRATCH_ALIGN)));
++	uint8_t lz4state[LZ4_ENCODE_SCRATCH_SIZE]__attribute((aligned(LZ4_SCRATCH_ALIGN)));
+ 	uint8_t wkscratch[0] __attribute((aligned(WKC_SCRATCH_ALIGN))); // TODO
+ } compressor_encode_scratch_t;
+ 
+ typedef union {
+-	uint8_t lz4decodestate[lz4_encode_scratch_size]__attribute((aligned(64)));
++	uint8_t lz4decodestate[LZ4_ENCODE_SCRATCH_SIZE]__attribute((aligned(64)));
+ 	uint8_t wkdecompscratch[0] __attribute((aligned(64)));
+ } compressor_decode_scratch_t;
+ 
+--- a/osfmk/vm/vm_entry_lock.c
++++ b/osfmk/vm/vm_entry_lock.c
+@@ -120,9 +120,10 @@
+ static_assert(sizeof(vm_entry_lock_t) == sizeof(uint32_t));
+ 
+ static LCK_GRP_DECLARE(vm_entry_lock_grp, "vm_entry_lock");
++#define VME_XTAIL_HASH_SIZE (8u << (32 - __builtin_clz(MAX_CPUS)))
+ __used
+-static const uint32_t vme_xtail_hash_size = 8u << (32 - __builtin_clz(MAX_CPUS));
+-static lck_mcs_id_t vme_xtail_hash[vme_xtail_hash_size];
++static const uint32_t vme_xtail_hash_size = VME_XTAIL_HASH_SIZE;
++static lck_mcs_id_t vme_xtail_hash[VME_XTAIL_HASH_SIZE];
+ 
+ 
+ #pragma mark helpers
+--- a/osfmk/vm/vm_map_lock_tests.c
++++ b/osfmk/vm/vm_map_lock_tests.c
+@@ -1144,7 +1144,8 @@
+ 	bool            create;
+ };
+ 
+-const unsigned int n_preflight_results = 8;
++enum { N_PREFLIGHT_RESULTS = 8 };
++const unsigned int n_preflight_results = N_PREFLIGHT_RESULTS;
+ 
+ struct test_map_spec {
+ 	const char            *name;
+@@ -1154,7 +1155,7 @@
+ 	vm_map_offset_t        range_end;
+ 
+ 	// Results updated by the test
+-	struct test_preflight_result    preflight_results[n_preflight_results];
++	struct test_preflight_result    preflight_results[N_PREFLIGHT_RESULTS];
+ 	unsigned int           n_valid_preflight_results;
+ 
+ 	// Adjustment for how many preflights were called twice

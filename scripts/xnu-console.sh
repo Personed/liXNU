@@ -31,15 +31,30 @@ fi
 SED_FILTER='s/\r//g; s/^\[ *[0-9.]*\] .*fki: darwin console: //p; t; s/^\[ *[0-9.]*\] fki: darwin console: //p; t; s/^fki: darwin console: //p'
 
 if [ "$MODE" = local ]; then
-  # Prefer journalctl -k -f when systemd-journald is running and actually
+  # Prefer journalctl -k -f when systemd-journald is running and actively
   # collecting kernel messages (not ReadKMsg=no): util-linux dmesg (/dev/kmsg)
   # can stop delivering records after a flood of XNU output while journald keeps
   # receiving them (see scripts/vm-dmesg-shell.sh).
+  SYSTEMD_RUNTIME_DIR=${SYSTEMD_RUNTIME_DIR:-/run/systemd/system}
+  JOURNALD_CONF_DIR=${JOURNALD_CONF_DIR:-/etc/systemd}
   JOURNAL_HAS_KMSG=0
-  if command -v journalctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-    if [ -n "$( (sudo journalctl -k -n 1 -q --no-pager 2>/dev/null || journalctl -k -n 1 -q --no-pager 2>/dev/null) | head -c 1)" ]; then
-      JOURNAL_HAS_KMSG=1
-    fi
+  if command -v journalctl >/dev/null 2>&1 && [ -d "$SYSTEMD_RUNTIME_DIR" ]; then
+    READ_KMSG=$(
+      {
+        if [ "$JOURNALD_CONF_DIR" = /etc/systemd ] && command -v systemd-analyze >/dev/null 2>&1; then
+          systemd-analyze cat-config systemd/journald.conf 2>/dev/null || true
+        else
+          cat "$JOURNALD_CONF_DIR/journald.conf" "$JOURNALD_CONF_DIR/journald.conf.d"/*.conf 2>/dev/null || true
+        fi
+      } | awk -F= '/^[[:space:]]*ReadKMsg[[:space:]]*=/{v=$2; gsub(/[[:space:]]/, "", v); last=tolower(v)} END{print last}'
+    )
+    case "$READ_KMSG" in
+      no|false|0|off) JOURNAL_HAS_KMSG=0 ;;
+      *)
+        if [ -n "$( (sudo journalctl -k -n 1 -q --no-pager 2>/dev/null || journalctl -k -n 1 -q --no-pager 2>/dev/null) | head -c 1)" ]; then
+          JOURNAL_HAS_KMSG=1
+        fi ;;
+    esac
   fi
   if [ "$JOURNAL_HAS_KMSG" = 1 ]; then
     (sudo journalctl -k -f -n 0 -q -o short-monotonic --no-pager 2>/dev/null ||

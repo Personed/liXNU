@@ -122,12 +122,13 @@ def bgra_to_pixel_bytes(
     n = len(raw_bgra) // 4
     if n == 0:
         return b""
+    raw_bgra = raw_bgra[: n * 4]
 
     b_ch = raw_bgra[0::4]
     g_ch = raw_bgra[1::4]
     r_ch = raw_bgra[2::4]
 
-    # Fast path for byte-aligned 32-bit 8-bit-per-channel formats (RGBX, XRGB, BGRX, etc.)
+    # Fast path for byte-aligned 32-bit 8-bit-per-channel formats with distinct shifts (RGBX, XRGB, BGRX, etc.)
     if (
         bpp == 32
         and red_max == 255
@@ -136,6 +137,7 @@ def bgra_to_pixel_bytes(
         and (red_shift % 8 == 0)
         and (green_shift % 8 == 0)
         and (blue_shift % 8 == 0)
+        and len({red_shift, green_shift, blue_shift}) == 3
     ):
         out = bytearray(n * 4)
         for ch, sh in ((r_ch, red_shift), (g_ch, green_shift), (b_ch, blue_shift)):

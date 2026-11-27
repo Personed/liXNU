@@ -136,16 +136,23 @@ class TestXnuVnc(unittest.TestCase):
         xrgb_be = xnu_vnc.bgra_to_pixel_bytes(red_bgra, 32, 1, 16, 8, 0, 1, 255, 255, 255)
         self.assertEqual(xrgb_be, b"\x00\xff\x00\x00")
 
-    def test_console_local_falls_back_when_journal_empty(self):
+    def test_console_local_falls_back_when_journal_empty_or_readkmsg_no(self):
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir = pathlib.Path(tmp) / "bin"
+            systemd_dir = pathlib.Path(tmp) / "systemd"
+            conf_dir = pathlib.Path(tmp) / "etc-systemd"
             bin_dir.mkdir()
+            systemd_dir.mkdir()
+            conf_dir.mkdir()
             console_in = pathlib.Path(tmp) / "console-in"
             console_in.touch()
+            probe_log = pathlib.Path(tmp) / "journalctl.called"
 
-            # Stub sudo, journalctl (returns empty, simulating ReadKMsg=no), and dmesg
+            # Stub sudo, journalctl (records invocation, returns empty), and dmesg
             (bin_dir / "sudo").write_text('#!/bin/sh\nexec "$@"\n', encoding="utf-8")
-            (bin_dir / "journalctl").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            (bin_dir / "journalctl").write_text(
+                f'#!/bin/sh\necho "$*" >> "{probe_log}"\nexit 0\n', encoding="utf-8"
+            )
             (bin_dir / "dmesg").write_text(
                 '#!/bin/sh\nprintf "[    1.234567] fki: darwin console: fallback-ok\\r\\n"\n',
                 encoding="utf-8",
@@ -157,6 +164,8 @@ class TestXnuVnc(unittest.TestCase):
                 **os.environ,
                 "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
                 "CONSOLE_IN": str(console_in),
+                "SYSTEMD_RUNTIME_DIR": str(systemd_dir),
+                "JOURNALD_CONF_DIR": str(conf_dir),
             }
             proc = subprocess.Popen(
                 ["bash", str(ROOT / "scripts" / "xnu-console.sh"), "--local"],
@@ -176,7 +185,31 @@ class TestXnuVnc(unittest.TestCase):
             finally:
                 proc.stdout.close()
                 proc.stderr.close()
+            self.assertTrue(probe_log.is_file(), "journalctl probe was not called")
             self.assertEqual(console_in.read_text(encoding="utf-8"), "echo hi\n")
+
+            # Now simulate ReadKMsg=no with stale boot messages still in journalctl
+            (conf_dir / "journald.conf").write_text("[Journal]\nReadKMsg=no\n", encoding="utf-8")
+            (bin_dir / "journalctl").write_text(
+                '#!/bin/sh\necho "[    0.000000] stale boot log"\n', encoding="utf-8"
+            )
+            proc2 = subprocess.Popen(
+                ["bash", str(ROOT / "scripts" / "xnu-console.sh"), "--local"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                text=True,
+            )
+            try:
+                line2 = proc2.stdout.readline()
+                self.assertEqual(line2.strip(), "fallback-ok")
+                proc2.stdin.close()
+                proc2.wait(timeout=5)
+                self.assertEqual(proc2.returncode, 0)
+            finally:
+                proc2.stdout.close()
+                proc2.stderr.close()
 
 
 if __name__ == "__main__":

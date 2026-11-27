@@ -29,6 +29,10 @@
 #define CPU_SUBTYPE_X86_64_H 8U
 #define LC_SEGMENT_64 0x19U
 #define LC_SYMTAB 0x2U
+#define LC_DYSYMTAB 0xbU
+#define LC_UUID 0x1bU
+#define LC_SOURCE_VERSION 0x2aU
+#define LC_BUILD_VERSION 0x32U
 #define LC_DYLD_INFO 0x22U
 #define LC_CODE_SIGNATURE 0x1dU
 #define LC_SEGMENT_SPLIT_INFO 0x1eU
@@ -49,6 +53,11 @@
 #define LINKEDIT_DATA_COMMAND_SIZE 16U
 #define DYLD_INFO_COMMAND_SIZE 48U
 #define SYMTAB_COMMAND_SIZE 24U
+#define DYSYMTAB_COMMAND_SIZE 80U
+#define UUID_COMMAND_SIZE 24U
+#define SOURCE_VERSION_COMMAND_SIZE 16U
+#define BUILD_VERSION_COMMAND_MIN_SIZE 24U
+#define BUILD_VERSION_TOOL_SIZE 8U
 #define NLIST_64_SIZE 16U
 
 #define DYLD_CHAINED_PTR_START_NONE 0xffffU
@@ -1072,6 +1081,22 @@ static int parse_image(const void *input, unsigned long file_size,
 			if (parse_symtab(file, file_size, command_off, command_size))
 				return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
 			out->inspection_flags |= XNU_MACHO_X86_64_HAS_SYMTAB;
+		} else if (command == LC_DYSYMTAB || command == LC_UUID ||
+			   command == LC_SOURCE_VERSION) {
+			xnu_macho_u32 expected_size = command == LC_DYSYMTAB ? DYSYMTAB_COMMAND_SIZE :
+				command == LC_UUID ? UUID_COMMAND_SIZE : SOURCE_VERSION_COMMAND_SIZE;
+
+			if (command_size != expected_size)
+				return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
+		} else if (command == LC_BUILD_VERSION) {
+			xnu_macho_u32 tool_count;
+
+			if (command_size < BUILD_VERSION_COMMAND_MIN_SIZE ||
+			    (command_size - BUILD_VERSION_COMMAND_MIN_SIZE) % BUILD_VERSION_TOOL_SIZE)
+				return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
+			tool_count = read_u32le(file + command_off + 20U);
+			if (tool_count != (command_size - BUILD_VERSION_COMMAND_MIN_SIZE) / BUILD_VERSION_TOOL_SIZE)
+				return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
 		} else if (is_linkedit_data_command(command)) {
 			if (parse_linkedit_data(file, file_size, command_off,
 						command_size))

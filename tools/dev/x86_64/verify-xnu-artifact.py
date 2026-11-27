@@ -24,6 +24,8 @@ SUPPORTED_SUBTYPES = {"X86_64_ALL", "X86_64_H"}
 ENTRY_SOURCE = "LC_UNIXTHREAD.x86_THREAD_STATE64.RIP"
 # The pinned XNU linker selects __start, defined in __HIB,__text by start.s.
 ENTRY_SEGMENT = "__HIB"
+HIB_ENTRY_SECTION = "__HIB,__text"
+INSPECTOR_INVALID_IMAGE = 3
 LAYOUT_PROFILE = "xnu-development-kernel-v1"
 MANIFEST_CONTRACT = "build-xnu-kernel-result-v1"
 XNU_SOURCE_PATCH = "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch"
@@ -195,7 +197,8 @@ def parse_hex(value: object, field: str) -> int:
 
 
 def verify_inspection(
-    report: object, artifact_name: str, artifact_size: int, expected_subtype: str
+    report: object, artifact_name: str, artifact_size: int, expected_subtype: str,
+    *, hib_metadata: bool,
 ) -> dict[str, object]:
     if not isinstance(report, dict):
         raise VerificationError("xnu-macho-inspect did not return a JSON object")
@@ -268,19 +271,35 @@ def verify_inspection(
             f"observed {layout_observed!r}"
         )
     entry_segment = segments_by_name.get(ENTRY_SEGMENT)
+    protections = ("rw-",) if hib_metadata else ("r-x", "rwx")
     if (
         entry_segment is None
         or entry_segment.get("mapped") is not True
-        or entry_segment.get("initprot") not in ("r-x", "rwx")
+        or entry_segment.get("initprot") not in protections
+        or (hib_metadata and entry_segment.get("maxprot") != "rw-")
         or not isinstance(entry_segment.get("nsects"), int)
         or entry_segment.get("nsects", 0) < 1
     ):
-        raise VerificationError(f"XNU entry requires a mapped, sectioned, executable {ENTRY_SEGMENT} segment")
+        raise VerificationError(
+            f"XNU entry requires a mapped, sectioned {ENTRY_SEGMENT} with protections {protections}"
+        )
     entry_vmaddr = parse_hex(entry_segment.get("vmaddr"), f"{ENTRY_SEGMENT}.vmaddr")
     entry_vmsize = parse_hex(entry_segment.get("vmsize"), f"{ENTRY_SEGMENT}.vmsize")
     entry_filesize = parse_hex(entry_segment.get("filesize"), f"{ENTRY_SEGMENT}.filesize")
-    if not 0 <= entry_address - entry_vmaddr < min(entry_vmsize, entry_filesize):
-        raise VerificationError(f"thread RIP is not inside the file-backed executable {ENTRY_SEGMENT} segment")
+    entry_delta = entry_address - entry_vmaddr
+    if not 0 <= entry_delta < min(entry_vmsize, entry_filesize):
+        raise VerificationError(f"thread RIP is not inside the file-backed {ENTRY_SEGMENT} segment")
+
+    if hib_metadata:
+        hib_entry = report.get("hib_entry")
+        if not isinstance(hib_entry, dict) or hib_entry.get("section") != HIB_ENTRY_SECTION:
+            raise VerificationError(f"inspector did not identify the {HIB_ENTRY_SECTION} entry section")
+        file_offset = parse_hex(hib_entry.get("file_offset"), "hib_entry.file_offset")
+        segment_offset = parse_hex(entry_segment.get("fileoff"), f"{ENTRY_SEGMENT}.fileoff")
+        if file_offset != segment_offset + entry_delta or file_offset >= artifact_size:
+            raise VerificationError(f"invalid file offset for the {HIB_ENTRY_SECTION} entry")
+    elif "hib_entry" in report:
+        raise VerificationError("standard inspection unexpectedly reported hibernation metadata")
 
     if report.get("unclassified_optional_commands") != 0:
         raise VerificationError(
@@ -296,12 +315,12 @@ def verify_inspection(
     return report
 
 
-def inspect_artifact(
-    inspector: pathlib.Path, artifact: pathlib.Path, size: int, expected_subtype: str
-) -> dict[str, object]:
+def run_inspector(
+    inspector: pathlib.Path, artifact: pathlib.Path, *options: str,
+) -> subprocess.CompletedProcess[str]:
     try:
-        result = subprocess.run(
-            [str(inspector), artifact.name],
+        return subprocess.run(
+            [str(inspector), *options, artifact.name],
             cwd=artifact.parent,
             check=False,
             capture_output=True,
@@ -312,8 +331,25 @@ def inspect_artifact(
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         raise VerificationError(f"could not run xnu-macho-inspect: {error}") from error
+
+
+def inspect_artifact(
+    inspector: pathlib.Path, artifact: pathlib.Path, size: int, expected_subtype: str
+) -> dict[str, object]:
+    result = run_inspector(inspector, artifact)
+    # The normal parser refuses an entry in RW __HIB. Try the dedicated
+    # userspace metadata mode after a parse rejection, without changing that parser.
+    hib_metadata = result.returncode == INSPECTOR_INVALID_IMAGE
+    standard_diagnostic = result.stderr.strip()[:2000] if hib_metadata else ""
+    if hib_metadata:
+        result = run_inspector(inspector, artifact, "--hib-entry-metadata")
     if result.returncode != 0:
         diagnostic = result.stderr.strip()[:4000]
+        if hib_metadata:
+            raise VerificationError(
+                f"xnu-macho-inspect rejected kernel.development in standard mode: {standard_diagnostic}; "
+                f"HIB metadata mode (status {result.returncode}): {diagnostic or 'no diagnostic'}"
+            )
         raise VerificationError(
             f"xnu-macho-inspect rejected kernel.development (status {result.returncode}): "
             f"{diagnostic or 'no diagnostic'}"
@@ -322,7 +358,7 @@ def inspect_artifact(
         report = json.loads(result.stdout)
     except json.JSONDecodeError as error:
         raise VerificationError(f"xnu-macho-inspect returned invalid JSON: {error}") from error
-    return verify_inspection(report, artifact.name, size, expected_subtype)
+    return verify_inspection(report, artifact.name, size, expected_subtype, hib_metadata=hib_metadata)
 
 
 def snapshot_artifact(source: pathlib.Path, destination: pathlib.Path) -> tuple[int, str]:
@@ -474,7 +510,8 @@ def main(argv: list[str]) -> int:
                 "expected_cpu_subtype": args.expected_subtype,
                 "structural_macho_validation": True,
                 "unclassified_optional_commands": 0,
-                "entry_is_file_backed_executable": True,
+                "entry_is_file_backed": True,
+                "entry_is_file_backed_executable": "hib_entry" not in inspection,
                 "entry_segment": ENTRY_SEGMENT,
                 "load_attempted": False,
                 "fixups_applied": False,

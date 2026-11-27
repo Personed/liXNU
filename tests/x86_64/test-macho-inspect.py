@@ -34,6 +34,10 @@ CPU_SUBTYPE_X86_64_ALL = 3
 CPU_SUBTYPE_X86_64_H = 8
 LC_SEGMENT_64 = 0x19
 LC_UNIXTHREAD = 0x5
+LC_DYSYMTAB = 0xB
+LC_UUID = 0x1B
+LC_SOURCE_VERSION = 0x2A
+LC_BUILD_VERSION = 0x32
 LC_DYLD_CHAINED_FIXUPS = 0x80000034
 SG_NORELOC = 4
 S_ATTR_PURE_INSTRUCTIONS = 0x80000000
@@ -545,6 +549,32 @@ def main():
         0,
         expect_unknown_optional_is_reported,
     )
+
+    def expect_no_unclassified_commands(report):
+        assert report["unclassified_optional_commands"] == 0, report
+
+    for name, command, command_size in (
+        ("dysymtab command", LC_DYSYMTAB, 80),
+        ("uuid command", LC_UUID, 24),
+        ("source version command", LC_SOURCE_VERSION, 16),
+    ):
+        data = make_valid_image()
+        append_command(data, command, command_size)
+        run_case(binary, name, data, 0, expect_no_unclassified_commands)
+
+    build_version = make_valid_image()
+    append_command(build_version, LC_BUILD_VERSION, 32)
+    put_u32(build_version, COMMANDS_END + 20, 1)
+    run_case(binary, "build version command", build_version, 0, expect_no_unclassified_commands)
+
+    bad_uuid = make_valid_image()
+    append_command(bad_uuid, LC_UUID, 16)
+    run_case(binary, "malformed uuid command", bad_uuid, 3)
+
+    bad_build_version = make_valid_image()
+    append_command(bad_build_version, LC_BUILD_VERSION, 32)
+    put_u32(bad_build_version, COMMANDS_END + 20, 2)
+    run_case(binary, "build version tool count mismatch", bad_build_version, 3)
 
     wrong_cpu = make_valid_image()
     put_u32(wrong_cpu, 4, 0x0100000C)

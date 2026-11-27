@@ -402,3 +402,14 @@ diff --git a/bsd/netinet6/frag6.c b/bsd/netinet6/frag6.c
  }
  
  /*
+--- a/bsd/kern/kern_mib.c
++++ b/bsd/kern/kern_mib.c
+@@ -320,7 +320,7 @@
+ 	 * If we are using one of the perflevel sysctls, return early if the perflevel
+ 	 * does not exist in this system.
+ 	 */
+-	int perflevel = (int)arg1;
++	int perflevel = (int)(intptr_t)arg1;
+ 	int n_perflevels = __builtin_popcount(ml_get_cpu_types());
+ 
+ 	if (arg2 & CTLHW_PERFLEVEL) {

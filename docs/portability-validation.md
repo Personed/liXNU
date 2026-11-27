@@ -154,11 +154,11 @@ for every run:
     echo "paired manifests must provide three complete 64-digit SHA-256 values" >&2
     exit 1
   }
-  if [ "${CHECK_RUN_140:-0}" = 1 ]; then
+  if [ "${CHECK_RUN_158:-0}" = 1 ]; then
     test "$image_sha" = "02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6" && \
-    test "$initramfs_sha" = "431c6a2dcdbb77fc1131a8359149a59ad5f4aa5867eff3cf182175cf8a24e322" && \
-    test "$disk_sha" = "84fc7065d5a9bfb87a8db4fe1c3e7c5f485a0c1b23cdcb7beccdd426f03528a1" || {
-      echo "manifest hashes do not identify the run #140 input set" >&2
+    test "$initramfs_sha" = "fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667" && \
+    test "$disk_sha" = "7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f" || {
+      echo "manifest hashes do not identify the run #158 input set" >&2
       exit 1
     }
   fi
@@ -170,6 +170,7 @@ for every run:
   python3 tests/puredarwin/run-tcg-e2e.py \
     --timeout-seconds 5400 \
     --qemu-memory 6G \
+    --qemu-cpu cortex-a710 \
     --linux-memory 2G \
     --fki-carve-base 0xc0000000 \
     --fki-carve-mb 3072 \
@@ -189,45 +190,38 @@ for every run:
 The guest writes to the HFS+ disk. Keep the downloaded `pd.img` as the pristine input;
 the checksum preflight confirms the Image, initramfs, and disk match their paired manifests
 before QEMU starts, and the final command confirms none of those original inputs changed.
-Export `CHECK_RUN_140=1` before running the block to require the exact Image, initramfs,
-and disk hashes from run #140's table below. Leave it unset for a regenerated artifact set;
+Export `CHECK_RUN_158=1` before running the block to require the exact Image, initramfs,
+and disk hashes from run #158's table below. Leave it unset for a regenerated artifact set;
 those files must still come from the same workflow run and match that run's manifests.
 The plain `cp` works with BusyBox and GNU coreutils without the nonportable
 `--reflink` option. Reserve the logical size of `pd.img` as a conservative
 space budget; sparse-file or reflink behavior may make the actual allocated copy smaller.
 
-The command uses ARM64 `virt`, multi-threaded TCG, 2 guest CPUs, and the reduced 6 GiB profile.
+The command uses ARM64 `virt`, multi-threaded TCG, 2 guest CPUs, the tested `cortex-a710` model, and the reduced 6 GiB profile.
 It records host and QEMU facts, captures the serial console, sends the required Darwin
 command and guest halt, checks XNU/FKI unload and Linux power-off, and returns success
 only if QEMU exits 0 and RSS stays below the cap. The full 16 GiB profile is historical
 reference evidence, not the current standard-runner target; test it only on a sufficiently
 provisioned host. This acceptance workflow is on the #52 branch and is not yet in `main`.
 
-### Run #140 artifact identity
+### Run #158 artifact identity
 
-The paired artifacts linked from [run #140](https://github.com/Personed/xnulinux/actions/runs/45891917494)
-are a reproducible input set while GitHub retains them. Their manifests record:
+The paired artifacts linked from [run #158](https://github.com/Personed/xnulinux/actions/runs/45911026412) provide the tested guest input set:
+[puredarwin-e2e-guest](https://github.com/Personed/xnulinux/actions/runs/45911026412/artifacts/15161900498)
+and [puredarwin-e2e-disk](https://github.com/Personed/xnulinux/actions/runs/45911026412/artifacts/15161666268).
+GitHub lists both as expiring on 2026-12-27. Their manifests record:
 
 | File / input | SHA-256 |
 | --- | --- |
 | Guest kernel `Image` | `02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6` |
-| Guest `initramfs.cpio.gz` | `431c6a2dcdbb77fc1131a8359149a59ad5f4aa5867eff3cf182175cf8a24e322` |
-| Guest disk `pd.img` | `84fc7065d5a9bfb87a8db4fe1c3e7c5f485a0c1b23cdcb7beccdd426f03528a1` |
-| Free kernel collection `kc-free.bin` | `a75c376745786254a827db587a96bd359ccc274db8685f9ed276c734d1536889` |
-| Darwin kernel `kernel.macho` | `a708781c01b971a7837e70ae1118e70ccf5d513db64948c92b92f744c6e34f94` |
-| Ubuntu kernel `.deb` | `fa46ed1dc9e13d1c15772122e2cf18622e8cf0aa27b280f6fcb1ccfa196d9048` |
-| Ubuntu modules `.deb` | `27cdb8fd11379b622264b224b1f59ae7ecf2b27f387b6a2d0e4a383eae9c3688` |
+| Guest `initramfs.cpio.gz` | `fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667` |
+| Guest disk `pd.img` | `7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f` |
 
-The guest manifest also records kernel package version `7.0.0-44.44~24.04.1`, kernel
-release `7.0.0-44-generic`, 4 KiB pages, runtime PAC, EL1, and source revisions
-`xnulinux=7971b6e`, `DroidVM=524d27b`, and `PureDarwin=b3b4b28`. GitHub's API reports
-artifact archive digests `sha256:d7f7d21c025249655ab206ab79d208d3354866a1d21bfbabc25eb37a9194b196`
-for `puredarwin-e2e-guest` and
-`sha256:936add32c29fab498bba74181ede349431e7c84afb4be859cfd4eefa88183dfa` for
-`puredarwin-e2e-disk`. Both artifacts expire on 2026-11-29; regenerate the set from the
-pinned workflow after expiry. The reproducer reads hashes from the manifests downloaded
-with that same run, so a regenerated disk with new GPT identifiers is checked against its
-own input hash. The table identifies the #140 input set, not a permanent download mirror.
+The run used QEMU `cortex-a710`, 6 GiB guest RAM, Linux `mem=2G`, FKI 3,072 MiB
+at `0xc0000000`, and XNU RAM 2,816 MiB. The table identifies the host-side guest input
+set; the same-run build artifacts include the collection and build manifests. Artifacts
+are not a permanent download mirror. The reproducible source revision is [PR #98 head
+`589c40e`](https://github.com/Personed/xnulinux/commit/589c40ead54a63946fb44e8bdb35eb6add9adffe).
 
 Report the profile alongside the stage:
 

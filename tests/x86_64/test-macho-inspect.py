@@ -15,7 +15,8 @@ import tempfile
 FILE_SIZE = 1024
 HEADER_SIZE = 32
 SEGMENT_COMMAND_SIZE = 72
-TEXT_SIZE = SEGMENT_COMMAND_SIZE + 80
+SECTION_SIZE = 80
+TEXT_SIZE = SEGMENT_COMMAND_SIZE + SECTION_SIZE
 THREAD_SIZE = 8 + 8 + 42 * 4
 COMMAND_BYTES = SEGMENT_COMMAND_SIZE + TEXT_SIZE + THREAD_SIZE
 PAGEZERO_OFF = HEADER_SIZE
@@ -34,6 +35,7 @@ CPU_SUBTYPE_X86_64_H = 8
 LC_SEGMENT_64 = 0x19
 LC_UNIXTHREAD = 0x5
 LC_DYLD_CHAINED_FIXUPS = 0x80000034
+SG_NORELOC = 4
 X86_THREAD_STATE64 = 4
 X86_THREAD_STATE64_COUNT = 42
 DYLD_CHAINED_PTR_X86_64_KERNEL_CACHE = 11
@@ -147,19 +149,39 @@ def make_chained_image(text_page_start=None):
 def make_chained_image_with_omitted_ctf():
     data = make_valid_image()
     ctf = COMMANDS_END
-    linkedit = ctf + SEGMENT_COMMAND_SIZE
+    ctf_section = ctf + SEGMENT_COMMAND_SIZE
+    ctf_command_size = SEGMENT_COMMAND_SIZE + SECTION_SIZE
+    linkedit = ctf + ctf_command_size
     fixups_command = linkedit + SEGMENT_COMMAND_SIZE
-    for offset, name in ((ctf, "__CTF"), (linkedit, "__LINKEDIT")):
-        put_u32(data, offset, LC_SEGMENT_64)
-        put_u32(data, offset + 4, SEGMENT_COMMAND_SIZE)
-        put_name(data, offset + 8, name)
-        put_u64(data, offset + 24, 0x3000)
     put_u32(data, 16, 6)
-    put_u32(data, 20, COMMAND_BYTES + 2 * SEGMENT_COMMAND_SIZE + 16)
+    put_u32(data, 20, COMMAND_BYTES + ctf_command_size + SEGMENT_COMMAND_SIZE + 16)
 
-    payload = 768
+    ctf_address = 0x3000
+    ctf_fileoff = 768
+    ctf_filesize = 128
+    put_u64(data, TEXT_OFF + 48, ctf_fileoff)
+    put_u32(data, ctf, LC_SEGMENT_64)
+    put_u32(data, ctf + 4, ctf_command_size)
+    put_name(data, ctf + 8, "__CTF")
+    put_u64(data, ctf + 24, ctf_address)
+    put_u64(data, ctf + 40, ctf_fileoff)
+    put_u64(data, ctf + 48, ctf_filesize)
+    put_u32(data, ctf + 56, 1)  # maxprot: read-only
+    put_u32(data, ctf + 60, 1)  # initprot: read-only
+    put_u32(data, ctf + 64, 1)  # nsects
+    put_u32(data, ctf + 68, SG_NORELOC)
+    put_name(data, ctf_section, "__ctf")
+    put_name(data, ctf_section + 16, "__CTF")
+    put_u64(data, ctf_section + 32, ctf_address)
+    put_u64(data, ctf_section + 40, 64)  # CTF bytes before segment padding
+    put_u32(data, ctf_section + 48, ctf_fileoff)
+
+    payload = ctf_fileoff + ctf_filesize
     payload_size = 44
-    put_u64(data, TEXT_OFF + 48, payload)
+    put_u32(data, linkedit, LC_SEGMENT_64)
+    put_u32(data, linkedit + 4, SEGMENT_COMMAND_SIZE)
+    put_name(data, linkedit + 8, "__LINKEDIT")
+    put_u64(data, linkedit + 24, 0x4000)
     put_u64(data, linkedit + 32, 0x1000)
     put_u64(data, linkedit + 40, payload)
     put_u64(data, linkedit + 48, payload_size)
@@ -278,6 +300,8 @@ def expect_chained_starts_with_omitted_ctf(report):
     assert report["linkedit_metadata"]["chained_starts_segment_count"] == 3, report
     assert report["linkedit_metadata"]["chained_starts_nonempty_segment_count"] == 0, report
     assert all(segment["chained_starts"] is None for segment in report["segments"]), report
+    assert report["segments"][2]["filesize"] == "0x0000000000000080", report
+    assert report["segments"][2]["mapped"] is False, report
 
 
 def expect_x86_64_h(report):

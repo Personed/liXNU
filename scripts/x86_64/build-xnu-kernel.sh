@@ -434,6 +434,8 @@ enum xnu_void_enum_probe xnu_convert_void_pointer(void *value) {
   return (enum xnu_void_enum_probe)value;
 }
 struct xnu_object_pointer_probe { int value; };
+unsigned int xnu_convert_object_pointer(struct xnu_object_pointer_probe *);
+unsigned int xnu_convert_void_pointer_to_int(void *);
 unsigned int xnu_convert_object_pointer(struct xnu_object_pointer_probe *value) {
   return (unsigned int)value;
 }

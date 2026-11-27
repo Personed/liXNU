@@ -3,8 +3,9 @@
 ## Project goal and current boundary
 
 The active PC goal uses x86-64 hosts to run QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin. Linux x86-64 is
-the currently required host profile; Windows and Intel macOS remain candidates until the full route passes there (see the
-[validation matrix](portability-validation.md)). Preserve the direct hosted-XNU path on compatible ARM64 Linux hosts
+the currently required host profile. Windows Server 2025 and Intel macOS 15 passed the full route on hosted runners at
+PR #98 head `589c40e` in [run #158](https://github.com/Personed/xnulinux/actions/runs/45911026412) with QEMU
+`cortex-a710`; these results do not establish physical-PC support. See the [validation matrix](portability-validation.md). Preserve the direct hosted-XNU path on compatible ARM64 Linux hosts
 and its macOS 27 target. This document describes a separate native x86_64/Tahoe 26 experiment; it is not the active
 PC route and has no native XNU execution support yet. The QEMU/KVM macOS guest launcher is another separate experiment
 and provides no evidence for either hosted-XNU route.

@@ -116,15 +116,21 @@ def qemu_facts(executable="qemu-system-aarch64"):
     return facts
 
 
-def linux_cpu_flags(path="/proc/cpuinfo"):
+def linux_cpu_info(path="/proc/cpuinfo"):
+    """Read selected fields from the first CPU entry Linux reports."""
+    fields = {}
     try:
         with open(path, encoding="utf-8") as cpuinfo:
             for line in cpuinfo:
-                if line.lower().startswith("flags") or line.lower().startswith("features"):
-                    return set(line.partition(":")[2].strip().split())
+                if not line.strip() and fields:
+                    break
+                name, separator, value = line.partition(":")
+                key = name.strip().lower()
+                if separator and key in {"vendor_id", "model name", "flags", "features"}:
+                    fields[key] = value.strip()
     except OSError:
-        pass
-    return set()
+        return {}
+    return fields
 
 
 def collect_facts():
@@ -132,7 +138,9 @@ def collect_facts():
     machine = platform.machine() or "unknown"
     total, available = memory_facts(system)
     qemu = qemu_facts()
-    flags = linux_cpu_flags() if system == "Linux" else set()
+    cpu_info = linux_cpu_info() if system == "Linux" else {}
+    flags = set(cpu_info.get("flags", cpu_info.get("features", "")).split())
+    linux_page_size = os.sysconf("SC_PAGE_SIZE") if system == "Linux" else None
     try:
         free_disk = shutil.disk_usage(os.getcwd()).free
     except OSError:
@@ -148,6 +156,9 @@ def collect_facts():
         "free_disk_bytes": free_disk,
         "qemu": qemu,
         "linux_cpu_flags": sorted(flags.intersection(X86_64H_FEATURES)),
+        "linux_cpu_vendor": cpu_info.get("vendor_id"),
+        "linux_cpu_model": cpu_info.get("model name"),
+        "linux_page_size_bytes": linux_page_size,
     }
 
 
@@ -243,11 +254,10 @@ def evaluate(facts):
         flags = set(facts["linux_cpu_flags"])
         missing = [feature for feature in X86_64H_FEATURES if feature not in flags]
         details = {"missing_features": missing, "note": "informational for the experimental native x86_64 port; not required by QEMU TCG"}
-        checks.append(check(
-            "native-x86-feature-floor", "info",
-            "native x86_64 feature floor is " + ("present" if not missing else "missing " + " ".join(missing)),
-            details,
-        ))
+        summary = "First Linux CPU entry reports all listed x86_64h flags"
+        if missing:
+            summary = "Flags missing from the first Linux CPU entry: " + " ".join(missing)
+        checks.append(check("native-x86-feature-floor", "info", summary, details))
         kvm_access = os.access("/dev/kvm", os.R_OK | os.W_OK)
         checks.append(check(
             "kvm", "info",
@@ -267,6 +277,12 @@ def human_report(report):
         "xnulinux doctor (diagnostic only; not a compatibility certification)",
         f"Host: {report['facts']['system']} {report['facts']['release']} ({report['facts']['machine']}), logical CPUs: {report['facts']['logical_cpus']}",
     ]
+    facts = report["facts"]
+    cpu_parts = (facts.get("linux_cpu_vendor"), facts.get("linux_cpu_model"))
+    if any(cpu_parts):
+        lines.append("Linux CPU: " + ", ".join(part for part in cpu_parts if part))
+    if facts.get("linux_page_size_bytes") is not None:
+        lines.append(f"Linux page size: {facts['linux_page_size_bytes']} bytes")
     for item in report["checks"]:
         lines.append(f"{item['status'].upper()}: {item['name']}: {item['summary']}")
     lines.append(f"Overall: {report['overall']}")

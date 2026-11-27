@@ -277,11 +277,13 @@ static long run_probe(void __user *arg)
 		probe_result.idtr_before_limit = idtr.size;
 	}
 
+#ifdef X86_FEATURE_FRED
 	if (cpu_feature_enabled(X86_FEATURE_FRED)) {
 		probe_result.failure_flags |= X86_NMI_BOUNDARY_FAIL_FRED;
 		ret = -EOPNOTSUPP;
 		goto copy_result;
 	}
+#endif
 	if (!boot_cpu_has(X86_FEATURE_HYPERVISOR)) {
 		probe_result.failure_flags |= X86_NMI_BOUNDARY_FAIL_ENVIRONMENT;
 		ret = -EPERM;

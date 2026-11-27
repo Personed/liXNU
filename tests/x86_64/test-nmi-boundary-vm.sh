@@ -10,7 +10,7 @@ fi
 
 KDIR=$(cd "$1" && pwd)
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
-for tool in apt-cache apt-get cat chmod cp cpio dpkg-deb find gcc grep gzip id install make mkdir mktemp mknod python3 qemu-system-x86_64 rm sort; do
+for tool in apt-cache apt-get awk cat chmod cp cpio dpkg-deb find gcc grep gzip id install make mkdir mktemp mknod python3 qemu-system-x86_64 rm sort; do
 	command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
 if [ "$(id -u)" -ne 0 ]; then
@@ -19,6 +19,26 @@ fi
 
 KERNEL_RELEASE=$(cat "$KDIR/include/config/kernel.release")
 test -n "$KERNEL_RELEASE" || { echo "kernel release metadata is missing from KDIR" >&2; exit 1; }
+NMI_HEADER="$KDIR/arch/x86/include/asm/nmi.h"
+if [ ! -f "$NMI_HEADER" ] || ! grep -Eq '^[[:space:]]*#define[[:space:]]+register_nmi_handler([[:space:]]|\()' "$NMI_HEADER"; then
+	echo "unsupported kernel headers at $KDIR: asm/nmi.h does not define register_nmi_handler()" >&2
+	exit 1
+fi
+if [ ! -f "$KDIR/Module.symvers" ]; then
+	echo "unsupported kernel headers at $KDIR: Module.symvers is missing; NMI handler exports must be available before building this probe" >&2
+	exit 1
+fi
+require_nmi_export() {
+	local symbol="$1"
+	if ! awk -v symbol="$symbol" '$2 == symbol && $4 ~ /^EXPORT_SYMBOL(_GPL)?$/ { found = 1 } END { exit !found }' \
+		"$KDIR/Module.symvers"; then
+		echo "unsupported kernel headers at $KDIR: $symbol is not exported in Module.symvers; this probe requires __register_nmi_handler and unregister_nmi_handler" >&2
+		exit 1
+	fi
+}
+require_nmi_export __register_nmi_handler
+require_nmi_export unregister_nmi_handler
+
 KERNEL_IMAGE_PACKAGE=
 for candidate in "linux-image-unsigned-$KERNEL_RELEASE" "linux-image-$KERNEL_RELEASE-unsigned"; do
 	if apt-cache show "$candidate" 2>/dev/null | grep -F "Package: $candidate" >/dev/null; then

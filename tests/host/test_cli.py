@@ -12,6 +12,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CLI = ROOT / "scripts" / "xnulinux"
 INSTALLER = ROOT / "scripts" / "install.sh"
+DIRECT_BOOT = ROOT / "scripts" / "xnulinux-boot.sh"
 
 
 class TestCliAndInstaller(unittest.TestCase):
@@ -76,6 +77,37 @@ class TestCliAndInstaller(unittest.TestCase):
         res_mem = subprocess.run([str(CLI), "setup-mem", "--dry-run"], capture_output=True, text=True)
         self.assertNotEqual(res_mem.returncode, 0)
         self.assertIn("ARM64", res_mem.stderr)
+
+    def test_stop_refuses_unsupported_hosts_before_sudo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            shim = pathlib.Path(tmp)
+            fake_uname = shim / "uname"
+            fake_uname.write_text('#!/bin/sh\nprintf "%s\\n" "$TEST_HOST"\n', encoding="utf-8")
+            fake_uname.chmod(0o755)
+            sudo_log = shim / "sudo.log"
+            console_in = shim / "console-in"
+            fake_sudo = shim / "sudo"
+            fake_sudo.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$TEST_SUDO_LOG"\nexit 99\n', encoding="utf-8")
+            fake_sudo.chmod(0o755)
+            env = {
+                **os.environ,
+                "PATH": f"{shim}{os.pathsep}{os.environ.get('PATH', '')}",
+                "TEST_SUDO_LOG": str(sudo_log),
+                "CONSOLE_IN": str(console_in),
+            }
+            for host in ("Linux x86_64", "Darwin arm64"):
+                for command in (CLI, DIRECT_BOOT):
+                    with self.subTest(host=host, command=command.name):
+                        result = subprocess.run(
+                            [str(command), "stop"],
+                            env={**env, "TEST_HOST": host},
+                            capture_output=True,
+                            text=True,
+                        )
+                        self.assertEqual(result.returncode, 1, result)
+                        self.assertIn(f"requires ARM64 Linux for direct hosted XNU (detected {host})", result.stderr)
+                        self.assertFalse(sudo_log.exists())
+                        self.assertFalse(console_in.exists())
 
     def test_install_relative_prefix_and_uninstall(self):
         with tempfile.TemporaryDirectory() as tmp:

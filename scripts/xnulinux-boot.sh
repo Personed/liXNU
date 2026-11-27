@@ -18,6 +18,16 @@
 #   IMAGE (xnu/kc.bin: the kernel collection under /lib/firmware)  GPU (auto|off)  CPUS (1: the hosted system's CPUs, 32 at most)  XNU_ARGS (more xnu.ko parameters)
 set -euo pipefail
 cd "$(dirname "$0")/.."
+case "${1:-}" in
+  ""|--wait|--check|stop) ;;
+  *) echo "usage: ${0##*/} [--wait|--check|stop]" >&2; exit 2 ;;
+esac
+HOST=$(uname -sm)
+if [ "$HOST" != "Linux aarch64" ]; then
+  printf 'xnulinux requires ARM64 Linux for direct hosted XNU (detected %s).\n' "$HOST" >&2
+  exit 1
+fi
+
 if [ "${1:-}" = stop ]; then	# end the running hosted system (its disk synced first) and remove xnu.ko
   if [ ! -d /sys/module/xnu ]; then
     sudo systemctl stop xnudrmd 2>/dev/null || true
@@ -33,19 +43,9 @@ if [ "${1:-}" = stop ]; then	# end the running hosted system (its disk synced fi
   echo "hosted system stopped"
   exit
 fi
-case "${1:-}" in
-  ""|--wait|--check) ;;
-  *) echo "usage: ${0##*/} [--wait|--check|stop]" >&2; exit 2 ;;
-esac
 
 check_host() {
-  local os arch page_size tool
-  os=$(uname -s)
-  arch=$(uname -m)
-  if [ "$os" != Linux ] || [ "$arch" != aarch64 ]; then
-    echo "xnulinux requires an ARM64 Linux host to load its kernel modules (detected $os $arch)." >&2
-    return 1
-  fi
+  local page_size tool
   page_size=$(getconf PAGESIZE) || return 1
   if [ "$page_size" != 4096 ]; then
     echo "xnulinux requires a Linux kernel with 4 KiB pages (detected $page_size bytes)." >&2

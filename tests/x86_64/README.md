@@ -78,8 +78,9 @@ tests/x86_64/test-boundary-probe-vm.sh /path/to/kernel-headers /path/to/vmlinuz 
 ```
 
 The runner builds its own initramfs and checks the booted kernel release against the headers before loading a module.
-Both modes require compiler and kernel build tools, static C libraries, `cpio`, and QEMU. Use the kernel configuration
-that produced the headers so the disposable guest can load the test modules.
+The BusyBox binary must support `--install -s` and include `sh`, `cat`, `uname`, `mount`, `insmod`, `rmmod`,
+`dmesg`, `sync`, and `poweroff`. Both modes require compiler and kernel build tools, static C libraries, `cpio`, and
+QEMU. Use the kernel configuration that produced the headers so the disposable guest can load the test modules.
 
 The boundary probe builds a separate test module and boots it only in a disposable x86_64 Linux VM. It runs a synthetic
 assembly call on each requested online CPU via `work_on_cpu`, switches to a temporary stack with low/high canaries,

@@ -24,7 +24,7 @@ jobs:
           test -n "$pkg" || { echo "no x86_64 generic kernel headers found" >&2; exit 1; }
           sudo apt-get install -y -qq build-essential busybox-static cpio qemu-system-x86 "$pkg" >/dev/null
           echo "KDIR=/usr/src/$pkg" >> "$GITHUB_ENV"
-      - name: Build and run boundary probe in disposable TCG VM
+      - name: Run boundary probe and check kernel release rejection in QEMU TCG
         run: |
           release=$(cat "$KDIR/include/config/kernel.release")
           stage=$(mktemp -d "$RUNNER_TEMP/x86-boundary.XXXXXX")
@@ -34,5 +34,30 @@ jobs:
             apt-get download "linux-image-unsigned-$release"
             dpkg-deb -x ./*.deb image
           )
-          tests/x86_64/test-boundary-probe-vm.sh "$KDIR" \
-            "$stage/image/boot/vmlinuz-$release" "$(command -v busybox)"
+          kernel="$stage/image/boot/vmlinuz-$release"
+          busybox=$(command -v busybox)
+          tests/x86_64/test-boundary-probe-vm.sh "$KDIR" "$kernel" "$busybox"
+
+          # Keep the same bootable image and modules. Change only the expected
+          # release inside the test initramfs to exercise the guest-side check.
+          mkdir -p "$stage/mismatch-bin"
+          cat > "$stage/mismatch-bin/cpio" <<'CPIO'
+          #!/bin/sh
+          set -eu
+          test -f expected-kernel-release
+          printf '%s\n' boundary-release-fixture > expected-kernel-release
+          exec /usr/bin/cpio "$@"
+          CPIO
+          chmod +x "$stage/mismatch-bin/cpio"
+          log="$stage/mismatch.log"
+          status=0
+          PATH="$stage/mismatch-bin:$PATH" tests/x86_64/test-boundary-probe-vm.sh \
+            "$KDIR" "$kernel" "$busybox" > "$log" 2>&1 || status=$?
+          cat "$log"
+          test "$status" -eq 1
+          grep -F "kernel release mismatch: headers boundary-release-fixture, booted kernel $release" "$log"
+          grep -F 'reboot: Power down' "$log"
+          if grep -Fq 'X86_BOUNDARY_PROBE_VM_PASS' "$log"; then
+            echo "boundary probe reported success with a mismatched kernel release" >&2
+            exit 1
+          fi

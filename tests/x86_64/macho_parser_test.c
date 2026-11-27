@@ -20,9 +20,15 @@ _Static_assert(sizeof(struct xnu_macho_x86_64_info) <= 2048,
 #define THREAD_SIZE (8U + 8U + 42U * 4U)
 #define COMMAND_BYTES (PAGEZERO_SIZE + TEXT_SIZE + THREAD_SIZE)
 #define COMMANDS_END (HEADER_SIZE + COMMAND_BYTES)
+#define FILESET_KERNEL_OFF 4096U
+#define FILESET_COMMAND_OFF HEADER_SIZE
+#define FILESET_ENTRY_COMMAND_SIZE 56U
+#define FILESET_KERNEL_COMMAND_SIZE 8U
 
 #define MH_MAGIC_64 0xfeedfacfU
 #define MH_EXECUTE 2U
+#define MH_FILESET 12U
+#define MH_KEXT_BUNDLE 11U
 #define CPU_TYPE_X86_64 0x01000007U
 #define CPU_SUBTYPE_X86_64_ALL 3U
 #define CPU_SUBTYPE_X86_64_H 8U
@@ -30,6 +36,7 @@ _Static_assert(sizeof(struct xnu_macho_x86_64_info) <= 2048,
 #define LC_UNIXTHREAD 0x5U
 #define LC_DYLD_INFO_ONLY 0x80000022U
 #define LC_DYLD_CHAINED_FIXUPS 0x80000034U
+#define LC_FILESET_ENTRY 0x80000035U
 #define X86_THREAD_STATE64 4U
 #define X86_THREAD_STATE64_COUNT 42U
 #define RIP_OFFSET (THREAD_OFF + 16U + 16U * 8U)
@@ -107,6 +114,65 @@ static void make_valid_image(unsigned char *file, unsigned int subtype)
 	put_u64(file + RIP_OFFSET, 0x1100);
 }
 
+static unsigned int write_fileset_entry_at_offset(unsigned char *file,
+						   unsigned int command_off,
+						   const char *entry_id,
+						   unsigned long long vmaddr,
+						   unsigned long long fileoff,
+						   unsigned int entry_id_offset)
+{
+	unsigned int command_size = (entry_id_offset +
+				     (unsigned int)strlen(entry_id) + 1U + 7U) & ~7U;
+	unsigned char *command = file + command_off;
+
+	memset(command, 0, command_size);
+	put_u32(command, LC_FILESET_ENTRY);
+	put_u32(command + 4, command_size);
+	put_u64(command + 8, vmaddr);
+	put_u64(command + 16, fileoff);
+	put_u32(command + 24, entry_id_offset);
+	put_u32(command + 28, 0);
+	memcpy(command + entry_id_offset, entry_id, strlen(entry_id) + 1);
+	return command_size;
+}
+
+static unsigned int write_fileset_entry(unsigned char *file,
+					 unsigned int command_off,
+					 const char *entry_id,
+					 unsigned long long vmaddr,
+					 unsigned long long fileoff)
+{
+	return write_fileset_entry_at_offset(file, command_off, entry_id, vmaddr,
+					     fileoff, 32U);
+}
+
+static void make_valid_fileset(unsigned char *file, unsigned int outer_subtype,
+			       unsigned int kernel_subtype)
+{
+	unsigned char *kernel = file + FILESET_KERNEL_OFF;
+	unsigned int entry_size;
+
+	memset(file, 0, FILE_BYTES);
+	put_u32(file, MH_MAGIC_64);
+	put_u32(file + 4, CPU_TYPE_X86_64);
+	put_u32(file + 8, outer_subtype);
+	put_u32(file + 12, MH_FILESET);
+	put_u32(file + 16, 1);
+	entry_size = write_fileset_entry(file, FILESET_COMMAND_OFF,
+					 "com.apple.kernel", 0xffffff8000200000ULL,
+					 FILESET_KERNEL_OFF);
+	put_u32(file + 20, entry_size);
+
+	put_u32(kernel, MH_MAGIC_64);
+	put_u32(kernel + 4, CPU_TYPE_X86_64);
+	put_u32(kernel + 8, kernel_subtype);
+	put_u32(kernel + 12, MH_EXECUTE);
+	put_u32(kernel + 16, 1);
+	put_u32(kernel + 20, FILESET_KERNEL_COMMAND_SIZE);
+	put_u32(kernel + HEADER_SIZE, 0x1234U);
+	put_u32(kernel + HEADER_SIZE + 4, FILESET_KERNEL_COMMAND_SIZE);
+}
+
 static int info_is_zero(const struct xnu_macho_x86_64_info *info)
 {
 	const unsigned char *bytes = (const unsigned char *)info;
@@ -132,6 +198,8 @@ static int expect_ok(const char *name, unsigned int subtype)
 	if (result || info.vm_low != 0x1000 || info.vm_high != 0x3000 ||
 	    info.entry != 0x1100 || info.segment_count != 2 ||
 	    info.mapped_segment_count != 1 || info.inspection_flags ||
+	    info.file_type != MH_EXECUTE || info.cpu_subtype != subtype ||
+	    info.load_command_count != 3 || info.load_command_bytes != COMMAND_BYTES ||
 	    info.unclassified_load_command_count || info.linkedit_data_command_count ||
 	    info.segments[0].vmaddr != 0 || info.segments[0].vmsize != 0x1000 ||
 	    info.segments[0].fileoff || info.segments[0].filesize ||
@@ -143,6 +211,69 @@ static int expect_ok(const char *name, unsigned int subtype)
 	    memcmp(file, original, sizeof(file))) {
 		fprintf(stderr, "FAIL: %s (result=%d, low=%llx, high=%llx, entry=%llx)\n",
 			name, result, info.vm_low, info.vm_high, info.entry);
+		return 1;
+	}
+	return 0;
+}
+
+static int expect_fileset_ok(const char *name, unsigned int outer_subtype,
+			    unsigned int kernel_subtype, int with_near_match,
+			    unsigned int kernel_id_offset)
+{
+	unsigned char file[FILE_BYTES];
+	unsigned char original[FILE_BYTES];
+	struct xnu_macho_x86_64_info info;
+	unsigned int expected_entries = with_near_match ? 2U : 1U;
+	unsigned int first_entry_size = FILESET_ENTRY_COMMAND_SIZE;
+	unsigned int command_bytes;
+	int result;
+
+	make_valid_fileset(file, outer_subtype, kernel_subtype);
+	if (kernel_id_offset != 32U) {
+		first_entry_size = write_fileset_entry_at_offset(
+			file, FILESET_COMMAND_OFF, "com.apple.kernel",
+			0xffffff8000200000ULL, FILESET_KERNEL_OFF,
+			kernel_id_offset);
+		put_u32(file + 20, first_entry_size);
+	}
+	command_bytes = first_entry_size;
+	if (with_near_match) {
+		unsigned char *other = file + 8192U;
+		unsigned int other_entry_size;
+
+		other_entry_size = write_fileset_entry_at_offset(
+			file, FILESET_COMMAND_OFF + first_entry_size,
+			"com.apple.kernol", 0xffffff8000300000ULL, 8192U, 32U);
+		command_bytes += other_entry_size;
+		put_u32(file + 16, 2);
+		put_u32(file + 20, command_bytes);
+		put_u32(other, MH_MAGIC_64);
+		put_u32(other + 4, CPU_TYPE_X86_64);
+		put_u32(other + 8, CPU_SUBTYPE_X86_64_ALL);
+		put_u32(other + 12, MH_KEXT_BUNDLE);
+	}
+	memcpy(original, file, sizeof(file));
+	memset(&info, 0xa5, sizeof(info));
+	result = xnu_macho_x86_64_parse(file, FILE_BYTES, &info);
+	if (result || info.file_type != MH_FILESET || info.cpu_subtype != outer_subtype ||
+	    info.load_command_count != expected_entries ||
+	    info.load_command_bytes != command_bytes ||
+	    info.inspection_flags != (XNU_MACHO_X86_64_IS_FILESET |
+				      XNU_MACHO_X86_64_HAS_KERNEL_ENTRY) ||
+	    info.fileset_entry_count != expected_entries ||
+	    info.kernel_entry_filetype != MH_EXECUTE ||
+	    info.kernel_entry_cpusubtype != kernel_subtype ||
+	    info.kernel_entry_ncmds != 1 ||
+	    info.kernel_entry_sizeofcmds != FILESET_KERNEL_COMMAND_SIZE ||
+	    info.kernel_entry_vmaddr != 0xffffff8000200000ULL ||
+	    info.kernel_entry_fileoff != FILESET_KERNEL_OFF ||
+	    info.vm_low || info.vm_high || info.entry || info.segment_count ||
+	    info.mapped_segment_count || info.chained_starts_segment_count ||
+	    info.chained_starts_nonempty_segment_count ||
+	    info.linkedit_data_command_count || info.unclassified_load_command_count ||
+	    memcmp(file, original, sizeof(file))) {
+		fprintf(stderr, "FAIL: %s (result=%d fileset_entries=%u flags=%x)\n",
+			name, result, info.fileset_entry_count, info.inspection_flags);
 		return 1;
 	}
 	return 0;
@@ -875,10 +1006,34 @@ static int expect_rejected(const char *name, int expected,
 	return 0;
 }
 
+static int expect_fileset_rejected(const char *name, int expected,
+				   void (*mutate)(unsigned char *))
+{
+	unsigned char file[FILE_BYTES];
+	unsigned char original[FILE_BYTES];
+	struct xnu_macho_x86_64_info info;
+	int result;
+
+	make_valid_fileset(file, CPU_SUBTYPE_X86_64_ALL,
+			   CPU_SUBTYPE_X86_64_ALL);
+	mutate(file);
+	memcpy(original, file, sizeof(file));
+	memset(&info, 0xa5, sizeof(info));
+	result = xnu_macho_x86_64_parse(file, FILE_BYTES, &info);
+	if (result != expected || !info_is_zero(&info) ||
+	    memcmp(file, original, sizeof(file))) {
+		fprintf(stderr, "FAIL: %s (result=%d expected=%d output_zero=%d input_unchanged=%d)\n",
+			name, result, expected, info_is_zero(&info),
+			!memcmp(file, original, sizeof(file)));
+		return 1;
+	}
+	return 0;
+}
+
 static void wrong_cpu(unsigned char *f) { put_u32(f + 4, 0x0100000cU); }
 static void unknown_subtype(unsigned char *f) { put_u32(f + 8, 2); }
 static void subtype_capability(unsigned char *f) { put_u32(f + 8, 0x80000003U); }
-static void fileset_type(unsigned char *f) { put_u32(f + 12, 12); }
+static void unsupported_filetype(unsigned char *f) { put_u32(f + 12, 1); }
 static void nonzero_reserved(unsigned char *f) { put_u32(f + 28, 1); }
 static void command_area_overflow(unsigned char *f) { put_u32(f + 20, 0xffffffffU); }
 static void command_area_unaligned(unsigned char *f) { put_u32(f + 20, COMMAND_BYTES + 1); }
@@ -946,12 +1101,150 @@ static int expect_duplicate_thread_rejected(void)
 	return 0;
 }
 
+static void fileset_missing_kernel(unsigned char *f)
+{
+	memcpy(f + FILESET_COMMAND_OFF + 32U, "com.apple.kernol",
+	       sizeof("com.apple.kernol"));
+}
+
+static void fileset_kernel_suffix(unsigned char *f)
+{
+	memset(f + FILESET_COMMAND_OFF + 32U, 0,
+	       FILESET_ENTRY_COMMAND_SIZE - 32U);
+	memcpy(f + FILESET_COMMAND_OFF + 32U, "com.apple.kernel.extra",
+	       sizeof("com.apple.kernel.extra"));
+}
+
+static void fileset_entry_short(unsigned char *f)
+{
+	put_u32(f + FILESET_COMMAND_OFF + 4U, 32U);
+	put_u32(f + 20U, 32U);
+}
+
+static void fileset_entry_id_before_string(unsigned char *f)
+{
+	put_u32(f + FILESET_COMMAND_OFF + 24U, 24U);
+}
+
+static void fileset_entry_id_outside_command(unsigned char *f)
+{
+	put_u32(f + FILESET_COMMAND_OFF + 24U, 0xffffU);
+}
+
+static void fileset_entry_unterminated_id(unsigned char *f)
+{
+	memset(f + FILESET_COMMAND_OFF + 32U, 'A',
+	       FILESET_ENTRY_COMMAND_SIZE - 32U);
+}
+
+static void fileset_entry_nonzero_padding(unsigned char *f)
+{
+	f[FILESET_COMMAND_OFF + 49U] = 1;
+}
+
+static void fileset_entry_nonzero_pre_id_padding(unsigned char *f)
+{
+	unsigned int command_size = write_fileset_entry_at_offset(
+		f, FILESET_COMMAND_OFF, "com.apple.kernel",
+		0xffffff8000200000ULL, FILESET_KERNEL_OFF, 40U);
+
+	put_u32(f + 20U, command_size);
+	f[FILESET_COMMAND_OFF + 35U] = 1;
+}
+
+static void fileset_entry_reserved_nonzero(unsigned char *f)
+{
+	put_u32(f + FILESET_COMMAND_OFF + 28U, 1U);
+}
+
+static void fileset_entry_fileoff_outside_file(unsigned char *f)
+{
+	put_u64(f + FILESET_COMMAND_OFF + 16U, FILE_BYTES - 16U);
+}
+
+static void fileset_entry_fileoff_truncated_header(unsigned char *f)
+{
+	put_u64(f + FILESET_COMMAND_OFF + 16U, FILE_BYTES - HEADER_SIZE + 1U);
+}
+
+static void fileset_duplicate_kernel_entry(unsigned char *f)
+{
+	write_fileset_entry(f, FILESET_COMMAND_OFF + FILESET_ENTRY_COMMAND_SIZE,
+			    "com.apple.kernel", 0xffffff8000300000ULL, 8192U);
+	put_u32(f + 16U, 2U);
+	put_u32(f + 20U, FILESET_ENTRY_COMMAND_SIZE * 2U);
+}
+
+static void fileset_outer_command_too_large(unsigned char *f)
+{
+	put_u32(f + FILESET_COMMAND_OFF + 4U, FILESET_ENTRY_COMMAND_SIZE + 8U);
+}
+
+static void fileset_kernel_wrong_magic(unsigned char *f)
+{
+	put_u32(f + FILESET_KERNEL_OFF, 0U);
+}
+
+static void fileset_kernel_wrong_cpu(unsigned char *f)
+{
+	put_u32(f + FILESET_KERNEL_OFF + 4U, 0x0100000cU);
+}
+
+static void fileset_kernel_unknown_subtype(unsigned char *f)
+{
+	put_u32(f + FILESET_KERNEL_OFF + 8U, 2U);
+}
+
+static void fileset_kernel_wrong_filetype(unsigned char *f)
+{
+	put_u32(f + FILESET_KERNEL_OFF + 12U, MH_KEXT_BUNDLE);
+}
+
+static void fileset_kernel_command_area_overflow(unsigned char *f)
+{
+	put_u32(f + FILESET_KERNEL_OFF + 20U, 0xffffffffU);
+}
+
+static void fileset_kernel_command_area_unaligned(unsigned char *f)
+{
+	put_u32(f + FILESET_KERNEL_OFF + 20U, 9U);
+}
+
+static void fileset_kernel_command_too_large(unsigned char *f)
+{
+	put_u32(f + FILESET_KERNEL_OFF + HEADER_SIZE + 4U,
+		FILESET_KERNEL_COMMAND_SIZE + 8U);
+}
+
+static void fileset_kernel_command_count_too_high(unsigned char *f)
+{
+	put_u32(f + FILESET_KERNEL_OFF + 16U, 2U);
+}
+
+static void fileset_kernel_command_bytes_unclaimed(unsigned char *f)
+{
+	put_u32(f + FILESET_KERNEL_OFF + 20U,
+		FILESET_KERNEL_COMMAND_SIZE + 8U);
+}
+
 int main(void)
 {
 	int failures = 0;
 
 	failures += expect_ok("x86_64 ALL", CPU_SUBTYPE_X86_64_ALL);
 	failures += expect_ok("x86_64 H", CPU_SUBTYPE_X86_64_H);
+	failures += expect_fileset_ok("fileset with x86_64 ALL kernel entry",
+				      CPU_SUBTYPE_X86_64_ALL,
+				      CPU_SUBTYPE_X86_64_ALL, 0, 32U);
+	failures += expect_fileset_ok("fileset with x86_64 H kernel entry",
+				      CPU_SUBTYPE_X86_64_H,
+				      CPU_SUBTYPE_X86_64_H, 0, 32U);
+	failures += expect_fileset_ok("fileset with bounded offset-40 kernel ID",
+				      CPU_SUBTYPE_X86_64_ALL,
+				      CPU_SUBTYPE_X86_64_ALL, 0, 40U);
+	failures += expect_fileset_ok("exact kernel ID among other entries",
+				      CPU_SUBTYPE_X86_64_ALL,
+				      CPU_SUBTYPE_X86_64_ALL, 1, 32U);
 	failures += expect_rejected("truncated header", -XNU_MACHO_X86_64_PARSE_ENOEXEC,
 				    HEADER_SIZE - 1, NULL);
 	failures += expect_rejected("wrong CPU type", -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP,
@@ -960,8 +1253,8 @@ int main(void)
 				    FILE_BYTES, unknown_subtype);
 	failures += expect_rejected("unsupported subtype capability bits", -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP,
 				    FILE_BYTES, subtype_capability);
-	failures += expect_rejected("fileset filetype", -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP,
-				    FILE_BYTES, fileset_type);
+	failures += expect_rejected("unsupported filetype", -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP,
+				    FILE_BYTES, unsupported_filetype);
 	failures += expect_rejected("nonzero reserved header field", -XNU_MACHO_X86_64_PARSE_ENOEXEC,
 				    FILE_BYTES, nonzero_reserved);
 	failures += expect_rejected("command area overflow", -XNU_MACHO_X86_64_PARSE_ENOEXEC,
@@ -1016,6 +1309,72 @@ int main(void)
 				    FILE_BYTES, pagezero_has_protection);
 	failures += expect_rejected("missing LC_UNIXTHREAD", -XNU_MACHO_X86_64_PARSE_ENOEXEC,
 				    FILE_BYTES, drop_thread_count);
+	failures += expect_fileset_rejected("fileset missing com.apple.kernel",
+					    -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP,
+					    fileset_missing_kernel);
+	failures += expect_fileset_rejected("fileset kernel ID requires an exact match",
+					    -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP,
+					    fileset_kernel_suffix);
+	failures += expect_fileset_rejected("duplicate com.apple.kernel entries",
+					    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+					    fileset_duplicate_kernel_entry);
+	failures += expect_fileset_rejected("short fileset entry command",
+					    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+					    fileset_entry_short);
+	failures += expect_fileset_rejected("fileset entry ID before structure end",
+					    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+					    fileset_entry_id_before_string);
+	failures += expect_fileset_rejected("fileset entry ID outside command",
+					    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+					    fileset_entry_id_outside_command);
+	failures += expect_fileset_rejected("unterminated fileset entry ID",
+					    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+					    fileset_entry_unterminated_id);
+	failures += expect_fileset_rejected("nonzero fileset ID tail padding",
+					    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+					    fileset_entry_nonzero_padding);
+	failures += expect_fileset_rejected("nonzero padding before fileset ID",
+					    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+					    fileset_entry_nonzero_pre_id_padding);
+	failures += expect_fileset_rejected("nonzero fileset entry reserved field",
+					    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+					    fileset_entry_reserved_nonzero);
+	failures += expect_fileset_rejected("fileset entry file offset outside file",
+					    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+					    fileset_entry_fileoff_outside_file);
+	failures += expect_fileset_rejected("fileset entry truncated embedded header",
+					    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+					    fileset_entry_fileoff_truncated_header);
+	failures += expect_fileset_rejected("malformed outer fileset command region",
+					    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+					    fileset_outer_command_too_large);
+	failures += expect_fileset_rejected("bad embedded header magic",
+					    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+					    fileset_kernel_wrong_magic);
+	failures += expect_fileset_rejected("embedded header requires x86_64",
+					    -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP,
+					    fileset_kernel_wrong_cpu);
+	failures += expect_fileset_rejected("unsupported embedded CPU subtype",
+					    -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP,
+					    fileset_kernel_unknown_subtype);
+	failures += expect_fileset_rejected("com.apple.kernel entry must be executable",
+					    -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP,
+					    fileset_kernel_wrong_filetype);
+	failures += expect_fileset_rejected("embedded command region outside file",
+					    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+					    fileset_kernel_command_area_overflow);
+	failures += expect_fileset_rejected("unaligned embedded command region",
+					    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+					    fileset_kernel_command_area_unaligned);
+	failures += expect_fileset_rejected("embedded command exceeds its region",
+					    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+					    fileset_kernel_command_too_large);
+	failures += expect_fileset_rejected("embedded command count exceeds its region",
+					    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+					    fileset_kernel_command_count_too_high);
+	failures += expect_fileset_rejected("embedded command bytes remain unclaimed",
+					    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
+					    fileset_kernel_command_bytes_unclaimed);
 	failures += expect_rejected("chained-fixup extent outside file",
 				    -XNU_MACHO_X86_64_PARSE_ENOEXEC,
 				    FILE_BYTES, append_chained_fixups_outside_file);

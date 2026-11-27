@@ -22,6 +22,8 @@ typedef unsigned long long xnu_macho_u64;
 #define XNU_MACHO_X86_64_HAS_CHAINED_FIXUPS (1U << 2)
 #define XNU_MACHO_X86_64_HAS_UNINTERPRETED_LINKEDIT (1U << 3)
 #define XNU_MACHO_X86_64_HAS_UNCLASSIFIED_COMMANDS (1U << 4)
+#define XNU_MACHO_X86_64_IS_FILESET (1U << 5)
+#define XNU_MACHO_X86_64_HAS_KERNEL_ENTRY (1U << 6)
 
 struct xnu_macho_x86_64_segment {
 	unsigned char name[16];
@@ -53,14 +55,29 @@ struct xnu_macho_x86_64_info {
 	/* Counts from dyld_chained_starts_in_image, zero without that command. */
 	xnu_macho_u32 chained_starts_segment_count;
 	xnu_macho_u32 chained_starts_nonempty_segment_count;
+	/* Root header identity and nested fileset metadata; never a load plan. */
+	xnu_macho_u32 file_type;
+	xnu_macho_u32 cpu_subtype;
+	xnu_macho_u32 load_command_count;
+	xnu_macho_u32 load_command_bytes;
+	xnu_macho_u32 fileset_entry_count;
+	xnu_macho_u32 kernel_entry_filetype;
+	xnu_macho_u32 kernel_entry_cpusubtype;
+	xnu_macho_u32 kernel_entry_ncmds;
+	xnu_macho_u32 kernel_entry_sizeofcmds;
+	xnu_macho_u64 kernel_entry_vmaddr;
+	xnu_macho_u64 kernel_entry_fileoff;
 	struct xnu_macho_x86_64_segment segments[XNU_MACHO_X86_64_MAX_SEGMENTS];
 };
 
 /*
- * Return 0 for the metadata inspection subset. Return -EOPNOTSUPP for a
- * required command, ABI, segment count, page size, or pointer format outside
- * that subset and -ENOEXEC for malformed input. The output contains at most
- * XNU_MACHO_X86_64_MAX_SEGMENTS descriptors in Mach-O command order. Chained-
+ * Return 0 for the metadata inspection subset, including bounded outer and
+ * embedded MH_FILESET header/load-command framing for exactly one
+ * com.apple.kernel entry. Fileset metadata is not validated for loading.
+ * Return -EOPNOTSUPP for a required command, ABI, segment count, page size, or
+ * pointer format outside that subset and -ENOEXEC for malformed input. The
+ * output contains at most XNU_MACHO_X86_64_MAX_SEGMENTS descriptors in Mach-O
+ * command order. Chained-
  * fixup headers and starts tables are structurally validated and summarized,
  * never interpreted or applied. For nonzero import counts, a nonempty symbols
  * pool after the header is required and the import table extent is checked;

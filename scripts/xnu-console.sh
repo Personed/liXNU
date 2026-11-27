@@ -81,12 +81,11 @@ if [ "$MODE" = local ]; then
           next
         }
         if (continuation != "") {
-          sub(/^[[:space:]]*/, "", line)
           line = continuation line
           continuation = ""
         }
         if (line ~ /\\[[:space:]]*$/) {
-          sub(/\\[[:space:]]*$/, "", line)
+          sub(/\\[[:space:]]*$/, " ", line)
           continuation = continuation line
           next
         }

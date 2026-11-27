@@ -134,8 +134,8 @@ the x86_64 parser job. No Tahoe artifact has yet been confirmed against this sub
 - ARM64 `fki.ko` and `xnu.ko` cross-compiled against Debian 6.12.118 ARM64 headers. This is a build check, not an ARM64
   runtime smoke test.
 - The XNU-stub test boots a feature-complete Intel Haswell profile in TCG and requires the final world-switch refusal.
-  It also probes the host CPU through `/dev/kvm` where available. Tahoe boot and physical Intel/AMD/ARM host acceptance
-  are still pending.
+  The optional KVM probe requires write access to `/dev/kvm` and all CPU features checked by the script. Tahoe boot,
+  host-integrity checks, and physical Intel/AMD/ARM acceptance are still pending.
 
 ## Acceptance evidence still required
 

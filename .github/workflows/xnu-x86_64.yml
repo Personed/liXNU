@@ -30,7 +30,13 @@ jobs:
       - name: Run synthetic x86_64 Mach-O parser fixtures
         run: tests/x86_64/test-macho-parser.sh
       - name: Run x86_64 bootstrap page directory fixtures
-        run: bash tests/x86_64/test-x86-boot-ptd.sh
+        run: |
+          bash tests/x86_64/test-x86-boot-ptd.sh
+          build=$(mktemp -d)
+          trap 'rm -rf -- "$build"' EXIT
+          cp -a xnu-ko "$build/xnu-ko"
+          make -C "$KDIR" ARCH=x86_64 M="$build/xnu-ko" x86_64_boot_ptd.o
+          test -s "$build/xnu-ko/x86_64_boot_ptd.o"
       - name: Run source-pinned x86 CPU eligibility fixtures
         run: tests/x86_64/test-x86-cpu-compat.sh
       - name: Run read-only Mach-O artifact inspector fixtures

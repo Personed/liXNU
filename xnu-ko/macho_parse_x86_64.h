@@ -122,6 +122,8 @@ int xnu_macho_x86_64_parse(const void *file, unsigned long file_size,
  * Inspect the standalone XNU __HIB,__text entry variant in userspace.
  * Report its file offset after finding exactly one file-backed __text
  * section marked S_ATTR_PURE_INSTRUCTIONS under a read-write __HIB segment.
+ * The entry file offset must be at or beyond the end of the load commands. The
+ * first byte after the commands is accepted.
  * The regular parser still requires an executable segment. Results describe
  * artifact metadata only.
  */

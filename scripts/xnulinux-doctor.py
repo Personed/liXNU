@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """Report host facts relevant to xnulinux without changing the host.
 
-The report is diagnostic input for the active QEMU TCG/PureDarwin route,
-with supplemental ARM64/native-x86 context. It is not a compatibility
+The report is diagnostic input for the complementary QEMU TCG/PureDarwin
+route, with ARM64/native-x86 context for the hosted-XNU port. It is not a compatibility
 certification or a physical-hardware test.
 """
 
@@ -168,7 +168,7 @@ def evaluate(facts):
     if x86 and system == "Linux":
         checks.append(check(
             "host-profile", "pass",
-            "x86-64 Linux is the current required host profile for the QEMU TCG/PureDarwin route",
+            "x86-64 Linux is the required host profile for the complementary QEMU TCG/PureDarwin route",
         ))
     elif x86 and system in {"Windows", "Darwin"}:
         checks.append(check(
@@ -196,7 +196,7 @@ def evaluate(facts):
         else:
             checks.append(check(
                 "qemu", "fail",
-                "qemu-system-aarch64 was not found in PATH; the active ARM64 guest route cannot start",
+                "qemu-system-aarch64 was not found in PATH; the complementary ARM64 guest route cannot start",
             ))
     elif qemu["version_parts"]:
         version = qemu["version_parts"]
@@ -242,7 +242,7 @@ def evaluate(facts):
     if x86 and system == "Linux":
         flags = set(facts["linux_cpu_flags"])
         missing = [feature for feature in X86_64H_FEATURES if feature not in flags]
-        details = {"missing_features": missing, "note": "informational for the separate native x86_64 experiment; not required by QEMU TCG"}
+        details = {"missing_features": missing, "note": "informational for the experimental native x86_64 port; not required by QEMU TCG"}
         checks.append(check(
             "native-x86-feature-floor", "info",
             "native x86_64 feature floor is " + ("present" if not missing else "missing " + " ".join(missing)),

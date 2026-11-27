@@ -1070,7 +1070,11 @@ AVAILABILITY_TOOL_SHA256="$(shasum -a 256 "$SDK_DIR/usr/local/libexec/availabili
 MACHINE_CPU_NUMBER_SHA256="$(shasum -a 256 "$SDK_DIR/usr/local/include/machine/cpu_number.h" | awk '{print $1}')"
 I386_CPU_NUMBER_SHA256="$(shasum -a 256 "$SDK_DIR/usr/local/include/i386/cpu_number.h" | awk '{print $1}')"
 
-cat >"$OUT_DIR/x86_64-build.env" <<EOF
+XNU_COMPAT_PATCH="$SCRIPT_DIR/tahoe-xnu-pointer-casts.patch"
+XNU_COMPAT_PATCH_SHA256="$(shasum -a 256 "$XNU_COMPAT_PATCH" | awk '{print $1}')"
+
+write_build_environment() {
+  cat >"$OUT_DIR/x86_64-build.env" <<EOF
 source=$XNU_URL@$XNU_COMMIT
 source_tag=$XNU_TAG
 availability_source=$AVAILABILITY_URL@$AVAILABILITY_COMMIT
@@ -1145,7 +1149,12 @@ build_host_mode=$BUILD_HOST_MODE
 build_process_arch=$HOST_PROCESS_ARCH
 build_process_translated=$HOST_PROCESS_TRANSLATED
 target_arch=x86_64
+xnu_compat_patch_sha256=$XNU_COMPAT_PATCH_SHA256
 EOF
+}
+
+# Retain the inputs and preflight state if compilation or verification fails.
+write_build_environment
 
 printf 'Building XNU %s for X86_64/NONE with %s\n' "$XNU_TAG" "$ACTUAL_XCODE_VERSION"
 rm -rf -- "$OBJROOT" "$SYMROOT" "$DSTROOT"
@@ -1154,9 +1163,6 @@ rm -rf -- "$OBJROOT" "$SYMROOT" "$DSTROOT"
 # stores (including ARM-only trace arguments), and the intentional enum-as-
 # opaque-sysctl-argument round trip. Keep the warnings visible and all other
 # warnings fatal; apply these exceptions only to X86_64/NONE.
-XNU_COMPAT_PATCH="$SCRIPT_DIR/tahoe-xnu-pointer-casts.patch"
-XNU_COMPAT_PATCH_SHA256="$(shasum -a 256 "$XNU_COMPAT_PATCH" | awk '{print $1}')"
-printf 'xnu_compat_patch_sha256=%s\n' "$XNU_COMPAT_PATCH_SHA256" >> "$OUT_DIR/x86_64-build.env"
 if (
   # Keep the pinned checkout pristine, including on compile failure.
   git -C "$SOURCE_DIR" apply --whitespace=error "$XNU_COMPAT_PATCH" || exit 1
@@ -1190,6 +1196,9 @@ ARCHS="$(xcrun lipo -archs "$KERNEL")"
 [[ "$ARCHS" == x86_64 ]] || fail "kernel architecture is '$ARCHS'; expected exactly x86_64"
 PACKAGE_KERNEL="$OUT_DIR/kernel.development"
 cp -L "$KERNEL" "$PACKAGE_KERNEL"
+
+# The success artifact must report the same verification state as the manifest.
+write_build_environment
 
 python3 - "$PACKAGE_KERNEL" "$RESULT" "$XNU_COMMIT" "$XNU_TAG" "$SOURCE_VERSION" \
   "$KERNEL_VERSION" "$SDK_VERSION" "$XCODE_VERSION" "$ARCHS" \

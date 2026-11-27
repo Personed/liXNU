@@ -22,7 +22,7 @@ OPENCORE_COMMIT = "ebea824880706ac9faa8ee45604245de62be658b"
 OPENCORE_URL = "https://github.com/acidanthera/OpenCorePkg.git"
 BOARD_ID = "Mac-CFF7D910A743CAAF"
 MLB = "00000000000000000"
-TARGET_RUNTIME_VERSION = "26.7.2"
+TARGET_RUNTIME_VERSION = "26.7.3"
 XNU_RELEASE_PATTERN = re.compile(rb"xnu-([0-9]+\.[0-9]+\.[0-9]+(?:~[0-9]+)?)/RELEASE_X86_64\b")
 
 

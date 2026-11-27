@@ -200,7 +200,7 @@ $expected = @{
 foreach ($path in $expected.Keys) {
   $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
   if ($actual -ne $expected[$path]) {
-    throw "SHA-256 mismatch for $path: expected $($expected[$path]), got $actual"
+    throw "SHA-256 mismatch for $($path): expected $($expected[$path]), got $actual"
   }
 }
 Copy-Item .\artifacts\disk\pd.img .\artifacts\disk\pd-tcg-test.img

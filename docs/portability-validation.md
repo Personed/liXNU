@@ -51,7 +51,7 @@ PR #83 run [#149](https://github.com/Personed/xnulinux/actions/runs/45902502697)
 
 
 PR #52 run [#148](https://github.com/Personed/xnulinux/actions/runs/45902417451) passed all four image, disk/collection, guest-preparation, and TCG-boot jobs on current head `24e4a9c`. The boot ran on Ubuntu 24.04.5 in an Azure VM under Microsoft virtualization, with 4 vCPUs and a virtual AMD EPYC 7763. QEMU 8.2.2 used 6 GiB RAM, Linux `mem=2G`, a 3,072 MiB FKI carve-out at `0xc0000000`, and 2,816 MiB XNU RAM. Host `MemTotal` was 16,367,500 kB; `MemAvailable` was 15,418,148 kB before artifacts and 14,965,924 kB at boot. Peak QEMU RSS was 3,833,380 KiB (3.66 GiB). The log reached Darwin, `XNULINUX_USERLAND_OK`, guest halt, `XNULINUX_E2E_XNU_UNLOADED`, and Linux power-off. The successful boot job means the harness's zero-QEMU-exit requirement passed, although the retained log has no separate exit-status line. This confirms the 6 GiB profile on the current virtual runner, not a physical-PC or RAM floor.
-PR #46's older cross-host branch used the historical 16 GiB profile and its earlier run #79 failed in `kclink` before guest boot; it is not evidence for the current reduced profile. PR #89 run #151 used head `3fbfa6a` on the earlier #83/#52 stack, before PR #89 was retargeted to integrated base `cc4574a`. Ubuntu/QEMU 8.2.2 passed the 6 GiB route; Windows and Intel macOS/QEMU 11.1.0 `-cpu max` failed at the same XNU write-permission fault. PR #98 run #158 then passed all three hosted OS jobs once with `cortex-a710`; its base is still the older #89 head, and the changed CPU model does not isolate S1PIE. The PIE-aware correction in PR #102 and a strict QEMU 11.1.0 `-cpu max` profile requiring PIE=1 are needed to validate that separate compatibility path; they do not gate the passing A710 hosted profile. Run #158 is positive evidence for the tested hosted OS/CPU profiles, not physical-PC support. Current #52 run #148 and PR #83 run #149 independently passed the 6 GiB Linux profile; PR #96 run [#157](https://github.com/Personed/xnulinux/actions/runs/45907949989) passed the standard 6 GiB route and all five experimental profiles from 5 GiB to 2 GiB, each requiring the console and guest shutdown path. The single sweep's 2 GiB pass is experimental, not a support claim or repeatable minimum. PR #99 run [#159](https://github.com/Personed/xnulinux/actions/runs/45911321313) is being rerun after its initial disk/collection build failed when the remote AppleClang SDK fetch exceeded its 90-second read timeout; a retry was canceled during fetch, and the full rerun is queued as of 00:28 UTC. No memory-profile result is available from that head yet. PR #102 head `9e15d68` run [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121) passed image build but was canceled during disk/collection build; its stage-210/pmap PIE changes remain in progress, with no QEMU 11 `-cpu max` PIE=1 result. PR #89 run #162 was canceled during image setup on head `3020e23`; current head `ac74d61` changes documentation only and has no new workflow run, so the current branch still lacks a completed integrated full-route result. Earlier run #147 belongs to a superseded #89 head. Module jobs are stage smoke tests, not a full route. Do not claim physical-PC support until representative Intel and AMD hardware is tested; neither host RAM floor nor repeatable 2 GiB support is established.
+PR #46's older cross-host branch used the historical 16 GiB profile and its earlier run #79 failed in `kclink` before guest boot; it is not evidence for the current reduced profile. PR #89 run #151 used head `3fbfa6a` on the earlier #83/#52 stack, before PR #89 was retargeted to integrated base `cc4574a`. Ubuntu/QEMU 8.2.2 passed the 6 GiB route; Windows and Intel macOS/QEMU 11.1.0 `-cpu max` failed at the same XNU write-permission fault. PR #98 run #158 then passed all three hosted OS jobs once with `cortex-a710`; its base is still the older #89 head, and the changed CPU model does not isolate S1PIE. The PIE-aware work in PR #102 and a strict QEMU 11.1.0 `-cpu max` profile requiring PIE=1 are needed to validate that separate compatibility path; they do not gate the passing A710 hosted profile. Run #158 is positive evidence for the tested hosted OS/CPU profiles, not physical-PC support. Current #52 run #148 and PR #83 run #149 independently passed the 6 GiB Linux profile; PR #96 run [#157](https://github.com/Personed/xnulinux/actions/runs/45907949989) passed the standard 6 GiB route and all five experimental profiles from 5 GiB to 2 GiB, each requiring the console and guest shutdown path. The run #157 and supplemental local 2 GiB passes are experimental, not a support claim or repeatable minimum. PR #99 run [#159](https://github.com/Personed/xnulinux/actions/runs/45911321313) remains queued after its initial disk/collection build failed when the remote AppleClang SDK fetch exceeded its 90-second read timeout and a retry was canceled during fetch; the supplemental local six-profile QEMU 6.2.0/KVM results using paired #157 artifacts are recorded above, but no current-head workflow memory-profile result is available. PR #102 head `241c9c7` publishes PIE-aware changes; run [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121) tested old head `9e15d68`, passed image build, and was canceled during disk/collection build. New automated review findings say patch hunks may prevent XNU compilation and the real boot does not require PIE=1; no real PIE boot result exists. PR #89 run #162 was canceled during image setup on head `3020e23`; current head `ac74d61` changes documentation only and has no new workflow run, so the current branch still lacks a completed integrated full-route result. Earlier run #147 belongs to a superseded #89 head. Module jobs are stage smoke tests, not a full route. Do not claim physical-PC support until representative Intel and AMD hardware is tested; neither host RAM floor nor repeatable 2 GiB support is established.
 
 The historical full-route TCG reference assigns 16 GiB to the ARM64 guest, with Linux
 `mem=7G`, an 8,156 MiB FKI carve-out at `0x200000000`, and 7,900 MiB XNU RAM. The
@@ -115,11 +115,30 @@ AMD EPYC and KVM-hosted Intel Xeon profiles:
 | 2.5 GiB | `mem=512M` / 1,536 MiB at `0x60000000` / 1,280 MiB | 4-vCPU KVM VM, Intel Xeon 6975P-C; 16,078,416 / 15,147,636 kB | 2,212,348 KiB (2.11 GiB) | Full route passed once |
 | 2 GiB | `mem=512M` / 1,280 MiB at `0x60000000` / 1,024 MiB | 4-vCPU KVM VM, Intel Xeon 6975P-C; 16,078,412 / 15,168,000 kB | 1,946,084 KiB (1.86 GiB) | Full route passed once |
 
-The 2 GiB pass is the lowest guest allocation currently observed, but it is one
-experimental pass on a hosted virtual runner. It does not establish a supported guest
-minimum or a physical host-RAM floor. Repeat these profiles and validate them on
-representative bare-metal Intel and AMD PCs before publishing resource floors. The
-current 6 GiB profile remains the repeated baseline, not a measured minimum.
+The 2 GiB pass in run #157 was the lowest guest allocation observed in that hosted
+workflow sweep. A second local harness pass was then made under QEMU 6.2.0 in an x86-64
+KVM VM, reusing the paired image, initramfs, and disk from #157. It completed the full
+console/shutdown route at all six allocations. The local VM's physical host RAM was not
+reported, so this measures guest allocation and QEMU RSS only; it does not establish a
+host-RAM floor or physical-PC support.
+
+| QEMU guest RAM | Peak QEMU RSS | Result |
+| --- | --- | --- |
+| 6 GiB | 3,846,244 KiB | Full route passed once |
+| 5 GiB | 3,832,984 KiB | Full route passed once |
+| 4 GiB | 2,542,120 KiB | Full route passed once |
+| 3 GiB | 2,504,468 KiB | Full route passed once |
+| 2.5 GiB | 2,242,084 KiB | Full route passed once |
+| 2 GiB | 1,976,184 KiB | Full route passed once |
+
+Inputs reused from run #157: image SHA-256
+`02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6`, initramfs SHA-256
+`b95568af05be7ada731758193599f839be555392135614888d3586645904b1b6`, and disk SHA-256
+`9ee6ac83e443d0edb50e73169b6c0b26bdce194a7c83ec1a5a8938555ebc6280`. This is a
+supplemental local run using the current harness, not a #99 workflow/build result. The
+two virtualized 2 GiB observations remain experimental and do not establish a supported
+guest minimum. Repeat the profiles on representative bare-metal Intel and AMD PCs before
+publishing guest or host resource floors; the 6 GiB profile remains the repeated baseline.
 
 ## Reproducing the active QEMU TCG boot
 
@@ -317,14 +336,15 @@ Report the profile alongside the stage:
   are recorded above. This is one hosted-VM sweep and does not establish a supported guest
   minimum. PR #98 run #158 passed the full 6 GiB matrix on Ubuntu, Windows Server 2025,
   and Intel macOS once with `cortex-a710`; the route and host measurements are recorded
-  above. The run is on the older #89 code stack and does not validate PIE; that status does not
-  invalidate its A710 hosted-runner pass. PR #99 rebases the
+  above. The run is on the older #89 code stack and does not validate PIE; that status does not invalidate its A710 hosted-runner pass. PR #99 rebases the
   memory sweep onto the integrated chain; run [#159](https://github.com/Personed/xnulinux/actions/runs/45911321313)
-  has a full rerun queued after the initial disk build hit a remote SDK-fetch timeout and a retry was canceled; no
-  current-head memory results are available. PR #102 head `9e15d68` run
-  [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121) passed image build but was canceled during
-  disk/collection build; stage-210/pmap PIE work continues, with no real PIE boot result yet. PR #89 run #162 was
-  canceled during image setup on head `3020e23`; current head `ac74d61` changes documentation only and has no new
+  remains queued after the initial disk build hit a remote SDK-fetch timeout and a retry was canceled. The
+  supplemental local six-profile QEMU 6.2.0/KVM results using paired #157 artifacts are recorded above; no
+  current-head workflow memory results are available. PR #102 head `241c9c7` publishes PIE-aware changes; run
+  [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121) tested old head `9e15d68`, passed image build,
+  and was canceled during disk/collection build. New automated review findings say patch hunks may prevent XNU
+  compilation and the real boot does not require PIE=1; no real PIE boot result exists. PR #89 run #162 was
+  canceled during image setup on old head `3020e23`; current head `ac74d61` changes documentation only and has no new
   workflow run. This is the current PR-head CI record only; the completed #158 A710 pass
   remains valid evidence for its tested hosted profiles and does not require a new
   current-chain rerun. Earlier run #147 belongs to a

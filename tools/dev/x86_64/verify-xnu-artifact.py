@@ -22,6 +22,8 @@ MAX_MANIFEST_SIZE = 4 << 20
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 SUPPORTED_SUBTYPES = {"X86_64_ALL", "X86_64_H"}
 ENTRY_SOURCE = "LC_UNIXTHREAD.x86_THREAD_STATE64.RIP"
+# The pinned XNU linker selects __start, defined in __HIB,__text by start.s.
+ENTRY_SEGMENT = "__HIB"
 LAYOUT_PROFILE = "xnu-development-kernel-v1"
 MANIFEST_CONTRACT = "build-xnu-kernel-result-v1"
 XNU_SOURCE_PATCH = "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch"
@@ -219,26 +221,21 @@ def verify_inspection(
     segments = report.get("segments")
     if not isinstance(segments, list):
         raise VerificationError("inspector report has no segment list")
-    text_segments = []
-    pagezero_indexes = []
-    segment_names = []
+    segments_by_name = {}
     for index, segment in enumerate(segments):
         if not isinstance(segment, dict):
             raise VerificationError("inspector report contains a malformed segment")
         name = segment.get("name")
         if not isinstance(name, str) or not name:
             raise VerificationError("inspector report contains a segment without a name")
-        segment_names.append(name)
-        if name == "__TEXT":
-            text_segments.append(segment)
-        if name == "__PAGEZERO":
-            pagezero_indexes.append(index)
-    if len(set(segment_names)) != len(segment_names):
-        raise VerificationError("XNU development layout contains duplicate segment names")
-    if len(text_segments) != 1:
+        if name in segments_by_name:
+            raise VerificationError("XNU development layout contains duplicate segment names")
+        if name == "__PAGEZERO" and index != 0:
+            raise VerificationError("XNU development layout permits one leading __PAGEZERO segment")
+        segments_by_name[name] = segment
+    text_segment = segments_by_name.get("__TEXT")
+    if text_segment is None:
         raise VerificationError("XNU development layout must contain exactly one __TEXT segment")
-    if len(pagezero_indexes) > 1 or (pagezero_indexes and pagezero_indexes[0] != 0):
-        raise VerificationError("XNU development layout permits one leading __PAGEZERO segment")
     if report.get("segment_count") != len(segments):
         raise VerificationError("inspector segment_count does not match the segment list")
     if report.get("mapped_segment_count") != sum(
@@ -246,7 +243,6 @@ def verify_inspection(
     ):
         raise VerificationError("inspector mapped_segment_count does not match the segment list")
 
-    text_segment = text_segments[0]
     layout_observed = {
         key: text_segment.get(key)
         for key in ("vmaddr", "vmsize", "fileoff", "filesize", "initprot", "maxprot", "nsects", "mapped")
@@ -264,7 +260,6 @@ def verify_inspection(
             "XNU development layout requires one file-backed, sectioned, read/execute-only "
             f"__TEXT at file offset zero; observed {layout_observed!r}"
         )
-    text_vmaddr = parse_hex(text_segment.get("vmaddr"), "__TEXT.vmaddr")
     text_vmsize = parse_hex(text_segment.get("vmsize"), "__TEXT.vmsize")
     text_filesize = parse_hex(text_segment.get("filesize"), "__TEXT.filesize")
     if text_vmsize == 0 or text_filesize > text_vmsize:
@@ -272,15 +267,20 @@ def verify_inspection(
             "__TEXT must have a non-empty file-backed range within its VM range; "
             f"observed {layout_observed!r}"
         )
-    entry_is_in_text = False
-    for segment in segments:
-        if segment.get("name") != "__TEXT":
-            continue
-        offset = entry_address - text_vmaddr if entry_address >= text_vmaddr else -1
-        if 0 <= offset < text_vmsize and offset < text_filesize:
-            entry_is_in_text = True
-    if not entry_is_in_text:
-        raise VerificationError("thread RIP is not inside the file-backed executable __TEXT segment")
+    entry_segment = segments_by_name.get(ENTRY_SEGMENT)
+    if (
+        entry_segment is None
+        or entry_segment.get("mapped") is not True
+        or entry_segment.get("initprot") not in ("r-x", "rwx")
+        or not isinstance(entry_segment.get("nsects"), int)
+        or entry_segment.get("nsects", 0) < 1
+    ):
+        raise VerificationError(f"XNU entry requires a mapped, sectioned, executable {ENTRY_SEGMENT} segment")
+    entry_vmaddr = parse_hex(entry_segment.get("vmaddr"), f"{ENTRY_SEGMENT}.vmaddr")
+    entry_vmsize = parse_hex(entry_segment.get("vmsize"), f"{ENTRY_SEGMENT}.vmsize")
+    entry_filesize = parse_hex(entry_segment.get("filesize"), f"{ENTRY_SEGMENT}.filesize")
+    if not 0 <= entry_address - entry_vmaddr < min(entry_vmsize, entry_filesize):
+        raise VerificationError(f"thread RIP is not inside the file-backed executable {ENTRY_SEGMENT} segment")
 
     if report.get("unclassified_optional_commands") != 0:
         raise VerificationError(
@@ -475,6 +475,7 @@ def main(argv: list[str]) -> int:
                 "structural_macho_validation": True,
                 "unclassified_optional_commands": 0,
                 "entry_is_file_backed_executable": True,
+                "entry_segment": ENTRY_SEGMENT,
                 "load_attempted": False,
                 "fixups_applied": False,
                 "execution_attempted": False,

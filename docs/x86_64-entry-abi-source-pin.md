@@ -15,7 +15,7 @@ The source-declared entry environment is:
 - 32-bit protected mode;
 - paging disabled;
 - flat code/data/stack segments with base zero and a 4 GiB limit;
-- `%eax` contains the kernbootstruct pointer. Early startup copies it to `%edi` and later passes it to `vstart()` as the first argument. The zero-extended value is the boot-argument physical address used before paging is enabled;
+- `%eax` contains the kernbootstruct pointer. Early startup copies it to `%edi` and later passes it to `vstart()` as the first argument. The 32-bit value is the boot-argument physical/linear address used before paging is enabled; the source does not pin the upper 32 bits of the 64-bit destination register when the CPU enters long mode, so the host/loader must establish that state explicitly in the implementation contract;
 - the initial `%esp` is the low 32 bits of `low_eintstack`, a boot stack in the kernel's `__HIB` data area. The value is not supplied by the caller;
 - the pinned source does not state the incoming interrupt-enable, NMI, or debug-register state as part of this entry comment. Those inputs remain unpinned and must not be invented by the loader.
 

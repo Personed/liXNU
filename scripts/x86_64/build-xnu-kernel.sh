@@ -1128,7 +1128,14 @@ rm -rf -- "$OBJROOT" "$SYMROOT" "$DSTROOT"
 # stores (including ARM-only trace arguments), and the intentional enum-as-
 # opaque-sysctl-argument round trip. Keep the warnings visible and all other
 # warnings fatal; apply these exceptions only to X86_64/NONE.
-if make -C "$SOURCE_DIR" build \
+XNU_COMPAT_PATCH="$SCRIPT_DIR/tahoe-xnu-pointer-casts.patch"
+XNU_COMPAT_PATCH_SHA256="$(shasum -a 256 "$XNU_COMPAT_PATCH" | awk '{print $1}')"
+printf 'xnu_compat_patch_sha256=%s\n' "$XNU_COMPAT_PATCH_SHA256" >> "$OUT_DIR/x86_64-build.env"
+if (
+  # Keep the pinned checkout pristine, including on compile failure.
+  git -C "$SOURCE_DIR" apply "$XNU_COMPAT_PATCH" || exit 1
+  trap 'rc=$?; trap - EXIT; git -C "$SOURCE_DIR" apply -R "$XNU_COMPAT_PATCH" || exit 1; exit "$rc"' EXIT
+  make -C "$SOURCE_DIR" build \
   SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$BASE_SDK_DIR" \
   SDKVERSION="$SDK_VERSION" KDKROOT="$KDKROOT" PLATFORM=MacOSX \
   OTHER_CFLAGS='$(RC_NONARCH_CFLAGS) -isysroot $(SDKROOT)' \
@@ -1137,12 +1144,15 @@ if make -C "$SOURCE_DIR" build \
   INCFLAGS_PLATFORM='$(if $(KDKROOT),-I$(KDKROOT)/$(KINCDIR)/platform -I$(KDKROOT)/$(KPINCDIR)/platform)' \
   RC_DARWIN_KERNEL_VERSION="$KERNEL_VERSION" RC_ProjectSourceVersion="$SOURCE_VERSION" \
   OBJROOT="$OBJROOT" SYMROOT="$SYMROOT" DSTROOT="$DSTROOT" VERBOSE=YES \
-  MAKEJOBS="-j$JOBS" >"$LOG" 2>&1; then
+  MAKEJOBS="-j$JOBS"
+) >"$LOG" 2>&1; then
   tail -n 20 "$LOG"
 else
+  awk '/fatal error:|: error:|^Undefined symbols|^ld: / {print; if (++count == 15) exit}' "$LOG" >&2
   tail -n 100 "$LOG" >&2
   fail "XNU build failed; see $LOG"
 fi
+verify_source
 verify_xnu_host_tool_compile_commands
 verify_xnu_target_compile_commands
 
@@ -1170,7 +1180,7 @@ python3 - "$PACKAGE_KERNEL" "$RESULT" "$XNU_COMMIT" "$XNU_TAG" "$SOURCE_VERSION"
   "$KDK_PRIVATE_HEADER_SHA256" "$HOST_OS_VERSION" "$XNU_SOURCE_RELEASE" "$RUNTIME_TARGET_VERSION" \
   "$KDK_PRESENT" "$KDK_REQUIRED" "$KDK_PRODUCT_VERSION" "$KDK_PRODUCT_BUILD" "$KDK_XNU_VERSION" \
   "$TRUSTCACHE_HEADER_SOURCE" "$TRUSTCACHE_HEADER_SHA256" "$TRUSTCACHE_HEADER" \
-  "$RUNTIME_TARGET_BUILD" <<'PY'
+  "$RUNTIME_TARGET_BUILD" "$XNU_COMPAT_PATCH_SHA256" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -1239,6 +1249,7 @@ result = {
     "xnu_source_release": sys.argv[44],
     "runtime_target_os_version": sys.argv[45],
     "runtime_target_os_build": sys.argv[54],
+    "xnu_source_compat_patch_sha256": sys.argv[55],
     "runtime_compatibility_verified": False,
     "kernel_source_runtime_match": False,
     "darwin_kernel_version": sys.argv[6],

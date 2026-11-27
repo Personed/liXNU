@@ -1,0 +1,32 @@
+--- a/bsd/net/necp.c
++++ b/bsd/net/necp.c
+@@ -766,3 +766,3 @@
+     NECPDATATRACELOG(LOG_ERR, "DATA-TRACE <%s>: %s - fam %d proto %d port <local %d/%d remote %d/%d> <local %s remote %s> <drop-all order %d> <BoundInterface %d> <socket policy id %d socket skip id %d> <mbuf %X len %d %d>", \
+-	        caller, log_msg, local_addr.sin.sin_family, protocol, ntohs(local_addr.sin.sin_port), ntohs(local_addr.sin6.sin6_port), ntohs(remote_addr.sin.sin_port), ntohs(remote_addr.sin6.sin6_port), necp_get_address_string(&local_addr, laddr_str), necp_get_address_string(&remote_addr, raddr_str), necp_drop_all_order, bound_interface_index, socket_policy_id, socket_skip_policy_id, (unsigned int)packet, ip->ip_len, ntohs(ip->ip_len)); \
++	        caller, log_msg, local_addr.sin.sin_family, protocol, ntohs(local_addr.sin.sin_port), ntohs(local_addr.sin6.sin6_port), ntohs(remote_addr.sin.sin_port), ntohs(remote_addr.sin6.sin6_port), necp_get_address_string(&local_addr, laddr_str), necp_get_address_string(&remote_addr, raddr_str), necp_drop_all_order, bound_interface_index, socket_policy_id, socket_skip_policy_id, (unsigned int)(uintptr_t)packet, ip->ip_len, ntohs(ip->ip_len)); \
+     }
+@@ -774,3 +774,3 @@
+     NECPDATATRACELOG(LOG_ERR, "DATA-TRACE <%s>: %s - fam %d proto %d port <local %d/%d remote %d/%d> <local %s remote %s> <drop-all order %d> <BoundInterface %d> <socket policy id %d socket skip id %d> <mbuf %X len %d %d %d>", \
+-caller, log_msg, local_addr.sin.sin_family, protocol, ntohs(local_addr.sin.sin_port), ntohs(local_addr.sin6.sin6_port), ntohs(remote_addr.sin.sin_port), ntohs(remote_addr.sin6.sin6_port), necp_get_address_string(&local_addr, laddr_str), necp_get_address_string(&remote_addr, raddr_str), necp_drop_all_order, bound_interface_index, socket_policy_id, socket_skip_policy_id, (unsigned int)packet, ip6->ip6_plen, ntohs(ip6->ip6_plen), packet ? packet->m_pkthdr.len : 0); \
++caller, log_msg, local_addr.sin.sin_family, protocol, ntohs(local_addr.sin.sin_port), ntohs(local_addr.sin6.sin6_port), ntohs(remote_addr.sin.sin_port), ntohs(remote_addr.sin6.sin6_port), necp_get_address_string(&local_addr, laddr_str), necp_get_address_string(&remote_addr, raddr_str), necp_drop_all_order, bound_interface_index, socket_policy_id, socket_skip_policy_id, (unsigned int)(uintptr_t)packet, ip6->ip6_plen, ntohs(ip6->ip6_plen), packet ? packet->m_pkthdr.len : 0); \
+     }
+--- a/bsd/net/trie_utility.c
++++ b/bsd/net/trie_utility.c
+@@ -274,6 +274,6 @@
+ 	    __FUNCTION__,
+-	    (unsigned int)new_trie->memory, new_trie->trie_memory_size,
+-	    (unsigned int)new_trie->nodes, new_trie->nodes_mem_size, new_trie->nodes_count,
+-	    (unsigned int)new_trie->child_maps, new_trie->child_maps_mem_size, new_trie->child_maps_count,
+-	    (unsigned int)new_trie->bytes, new_trie->bytes_mem_size, new_trie->bytes_count);
++	    (unsigned int)(uintptr_t)new_trie->memory, new_trie->trie_memory_size,
++	    (unsigned int)(uintptr_t)new_trie->nodes, new_trie->nodes_mem_size, new_trie->nodes_count,
++	    (unsigned int)(uintptr_t)new_trie->child_maps, new_trie->child_maps_mem_size, new_trie->child_maps_count,
++	    (unsigned int)(uintptr_t)new_trie->bytes, new_trie->bytes_mem_size, new_trie->bytes_count);
+ 
+--- a/osfmk/i386/machine_routines.c
++++ b/osfmk/i386/machine_routines.c
+@@ -223,3 +223,3 @@
+ 		ppn = pmap_find_phys(kernel_pmap, vaddr_cur);
+-		assert(ppn != (ppnum_t)NULL);
++		assert(ppn != 0);
+ 

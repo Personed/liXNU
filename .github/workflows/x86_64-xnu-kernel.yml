@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/x86_64-xnu-kernel.yml"
       - "scripts/x86_64/build-xnu-kernel.sh"
+      - "scripts/x86_64/tahoe-xnu-pointer-casts.patch"
       - "scripts/x86_64/xnu-trustcache-scan-workspace.sh"
       - "scripts/x86_64/verify-xnu-kdk.py"
       - "scripts/x86_64/verify-xnu-target-build.py"
@@ -15,6 +16,7 @@ on:
     paths:
       - ".github/workflows/x86_64-xnu-kernel.yml"
       - "scripts/x86_64/build-xnu-kernel.sh"
+      - "scripts/x86_64/tahoe-xnu-pointer-casts.patch"
       - "scripts/x86_64/xnu-trustcache-scan-workspace.sh"
       - "scripts/x86_64/verify-xnu-kdk.py"
       - "scripts/x86_64/verify-xnu-target-build.py"
@@ -146,6 +148,7 @@ jobs:
           assert manifest["runtime_compatibility_verified"] is False, manifest
           assert manifest["kernel_source_runtime_match"] is False, manifest
           assert manifest["xnu_source_release"] == "26.5", manifest
+          assert len(manifest["xnu_source_compat_patch_sha256"]) == 64, manifest
           assert manifest["host_os_version"].startswith("26."), manifest
           assert manifest["sdk_version"] == "26.5", manifest
           assert manifest["xcode_version"] == "26.6", manifest
@@ -289,6 +292,7 @@ jobs:
           assert manifest["runtime_compatibility_verified"] is False, manifest
           assert manifest["kernel_source_runtime_match"] is False, manifest
           assert manifest["xnu_source_release"] == "26.5", manifest
+          assert len(manifest["xnu_source_compat_patch_sha256"]) == 64, manifest
           assert manifest["host_os_version"].startswith("26."), manifest
           assert manifest["sdk_version"] == "26.5", manifest
           assert manifest["xcode_version"] == "26.6", manifest

@@ -88,7 +88,7 @@ static_assert(offsetof(struct bp_asm_result, gprs_return) == BP_OFF_GPRS_RETURN)
 static_assert(-ECANCELED == -125);
 static_assert(X86_BOUNDARY_PROBE_RUN == _IOW(0xb7, 1, struct x86_boundary_probe_request));
 static_assert(X86_BOUNDARY_PROBE_TASK_CONTINUATION ==
-	      _IOW(0xb7, 2, struct x86_boundary_continuation_request));
+	      _IOW(0xb7, 3, struct x86_boundary_continuation_request));
 
 void x86_boundary_probe_switch_stack(void *stack_top, struct bp_asm_result *result,
 				     unsigned int mode);

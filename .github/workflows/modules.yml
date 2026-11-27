@@ -58,6 +58,56 @@ jobs:
         run: make -C "$KDIR" ARCH=x86_64 M="$PWD/fki-ko" CONFIG_DEBUG_INFO_BTF_MODULES= modules
       - name: Build x86_64 fail-closed XNU module
         run: make -C "$KDIR" ARCH=x86_64 M="$PWD/xnu-ko" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
+      - name: Verify Debian 13 x86_64 modules and record build inputs
+        shell: bash
+        run: |
+          export LC_ALL=C
+          release=$(cat "$KDIR/include/config/kernel.release")
+          test -n "$release"
+          source_commit=$(git -c safe.directory="$PWD" rev-parse --verify 'HEAD^{commit}')
+          source_tree=$(git -c safe.directory="$PWD" rev-parse --verify 'HEAD^{tree}')
+          stage="$RUNNER_TEMP/debian13-x86_64-module-build"
+          mkdir "$stage"
+          cp fki-ko/fki.ko xnu-ko/xnu.ko "$stage/"
+          (
+            echo 'profile=debian13-x86_64-fail-closed'
+            printf 'source_commit=%s\nsource_tree=%s\n' "$source_commit" "$source_tree"
+            echo "kernel_release=$release"
+            echo 'kbuild_arch=x86_64'
+            echo 'fki_btf_modules=disabled'
+            echo '[os-release]'
+            cat /etc/os-release
+            echo '[build-packages]'
+            dpkg-query -W -f='${binary:Package}=${Version}\n' "${KDIR##*/}" \
+              'linux-headers-*-common' 'linux-kbuild-*' gcc gcc-14 binutils make pahole kmod | sort
+            echo '[kernel-header-checksums]'
+            (cd "$KDIR" && sha256sum include/config/auto.conf Module.symvers)
+            echo '[module-vermagic]'
+            cd "$stage"
+            for module in fki.ko xnu.ko; do
+              elf=$(readelf -h "$module")
+              if ! grep -qE '^[[:space:]]*Class:[[:space:]]+ELF64$' <<< "$elf" ||
+                 ! grep -qE '^[[:space:]]*Type:[[:space:]]+REL[[:space:]]' <<< "$elf" ||
+                 ! grep -qE '^[[:space:]]*Machine:[[:space:]]+Advanced Micro Devices X86-64$' <<< "$elf"; then
+                echo "$module is not an ELF64 x86-64 relocatable file" >&2
+                exit 1
+              fi
+              vermagic=$(modinfo -F vermagic "./$module")
+              if [[ ${vermagic%% *} != "$release" ]]; then
+                echo "$module has vermagic '$vermagic', expected release '$release'" >&2
+                exit 1
+              fi
+              printf '%s=%s\n' "$module" "$vermagic"
+            done
+            sha256sum fki.ko xnu.ko > SHA256SUMS
+          ) > "$stage/build-manifest.txt"
+      - uses: actions/upload-artifact@v4
+        # Keep the build outputs for diagnosis if a later VM check fails.
+        with:
+          name: debian13-x86_64-module-build
+          path: ${{ runner.temp }}/debian13-x86_64-module-build/
+          if-no-files-found: error
+          retention-days: 5
       - name: Test x86_64 XNU stub refusal on Debian 13
         run: tests/x86_64/test-xnu-stub-vm.sh "$KDIR"
       - name: Test x86_64 host-state boundary on Debian 13

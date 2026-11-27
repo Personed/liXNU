@@ -115,7 +115,7 @@ ARM64 host has not been revalidated against this revision.
 PR #89 was merged into `main` at `09428b5`; `main` has since advanced to `9317eac`.
 Run [#184](https://github.com/Personed/xnulinux/actions/runs/46000976799) completed at
 14:04:56 UTC on 2026-11-27, before that merge at 14:06 UTC. It passed all six jobs on
-synthetic merge `5159a3e` (base `ed620d2`, #89 head `cb4fed3]): image, HFS+ disk/source
+synthetic merge `5159a3e` (base `ed620d2`, #89 head `cb4fed3`): image, HFS+ disk/source
 XNU collection, ARM64 guest preparation, and three TCG boots on hosted Ubuntu, Windows
 Server 2025, and Intel macOS. Each boot reached PureDarwin userland, guest halt, XNU/FKI
 unload, Linux power-off, and QEMU exit 0. This is hosted-VM evidence for that tested

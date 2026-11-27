@@ -68,7 +68,12 @@
 #define ER_OFF_RESULT_SS             344
 #define ER_OFF_EXPECTED_RAX          352
 #define ER_OFF_SAVED_DS              360
+#define ER_OFF_ENVELOPE_RIP          368
+#define ER_OFF_TASK_STACK_LOW        376
+#define ER_OFF_TASK_STACK_END        384
 #define ER_RESULT_GPRS_MATCHED       0x40
+#define ER_RESULT_ENVELOPE_MATCHED   0x80
+#define ER_TASK_STACK_FAULT_HEADROOM 256
 
 #define ER_IDTR_LIMIT_OFF             0
 #define ER_IDTR_BASE_OFF              2
@@ -90,5 +95,8 @@
 #define ER_SCRATCH_R15              112
 #define ER_SCRATCH_FLAGS            120
 #define ER_SCRATCH_ENVELOPE_RSP     128
+#define ER_SCRATCH_ENVELOPE_RIP     136
+#define ER_SCRATCH_TASK_STACK_LOW   144
+#define ER_SCRATCH_TASK_STACK_END   152
 
 #endif

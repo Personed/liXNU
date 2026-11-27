@@ -56,12 +56,19 @@ SYM_FUNC_START(x86_er_inject)
 	pushq %r13
 	pushq %r14
 	pushq %r15
+	movq %r12, ER_OFF_SAVED_R12(%rdi)
 	movq %rdi, %r12
 	movq %rsp, ER_OFF_ENVELOPE_RSP(%r12)
+	movq %rsp, er_recovery_scratch+ER_SCRATCH_ENVELOPE_RSP(%rip)
+	movq 48(%rsp), %rax
+	movq %rax, ER_OFF_ENVELOPE_RIP(%r12)
+	movq %rax, er_recovery_scratch+ER_SCRATCH_ENVELOPE_RIP(%rip)
+	movq ER_OFF_TASK_STACK_LOW(%r12), %rax
+	movq %rax, er_recovery_scratch+ER_SCRATCH_TASK_STACK_LOW(%rip)
+	movq ER_OFF_TASK_STACK_END(%r12), %rax
+	movq %rax, er_recovery_scratch+ER_SCRATCH_TASK_STACK_END(%rip)
 	movq %rbx, ER_OFF_SAVED_RBX(%r12)
 	movq %rbp, ER_OFF_SAVED_RBP(%r12)
-	movq 24(%rsp), %rax
-	movq %rax, ER_OFF_SAVED_R12(%r12)
 	movq %r13, ER_OFF_SAVED_R13(%r12)
 	movq %r14, ER_OFF_SAVED_R14(%r12)
 	movq %r15, ER_OFF_SAVED_R15(%r12)
@@ -198,10 +205,12 @@ SYM_FUNC_START(x86_er_inject)
 	RET
 
 .Lpost_injection:
-	/* The recovery stub restored the task-stack RSP before this label. */
+	/* Validate the real task-stack return before counting or restoring Linux's IDT. */
 	movq er_active_state(%rip), %rax
 	testq %rax, %rax
 	jz .Lterminal_restore_failure
+	cmpq $0, ER_OFF_RECOVERY_COUNT(%rax)
+	jne .Lterminal_restore_failure
 	popq %r15
 	popq %r14
 	popq %r13
@@ -223,10 +232,56 @@ SYM_FUNC_START(x86_er_inject)
 	leaq -48(%rsp), %rdx
 	cmpq ER_OFF_ENVELOPE_RSP(%rax), %rdx
 	jne .Lterminal_restore_failure
+	cmpq er_recovery_scratch+ER_SCRATCH_ENVELOPE_RSP(%rip), %rdx
+	jne .Lterminal_restore_failure
+	movq ER_OFF_ENVELOPE_RIP(%rax), %rdx
+	cmpq %rdx, 0(%rsp)
+	jne .Lterminal_restore_failure
+	cmpq er_recovery_scratch+ER_SCRATCH_ENVELOPE_RIP(%rip), %rdx
+	jne .Lterminal_restore_failure
+
+	/* Count only after the task-stack registers, RSP, and return RIP validate. */
+	incq ER_OFF_RECOVERY_COUNT(%rax)
+	movq ER_OFF_CAPTURED_VECTOR(%rax), %rdx
+	movq %rdx, ER_OFF_RESULT_VECTOR(%rax)
+	movq ER_OFF_ERROR_CODE(%rax), %rdx
+	movq %rdx, ER_OFF_RESULT_ERROR_CODE(%rax)
+	movq ER_OFF_CR2(%rax), %rdx
+	movq %rdx, ER_OFF_RESULT_CR2(%rax)
+	movq ER_OFF_FAULT_RIP(%rax), %rdx
+	movq %rdx, ER_OFF_RESULT_RIP(%rax)
+	movq ER_OFF_FAULT_CS(%rax), %rdx
+	movq %rdx, ER_OFF_RESULT_CS(%rax)
+	movq er_recovery_scratch+ER_SCRATCH_FLAGS(%rip), %rdx
+	movq %rdx, ER_OFF_RESULT_RFLAGS(%rax)
+	movq ER_OFF_FAULT_RSP(%rax), %rdx
+	movq %rdx, ER_OFF_RESULT_RSP(%rax)
+	movq ER_OFF_FAULT_SS(%rax), %rdx
+	movq %rdx, ER_OFF_RESULT_SS(%rax)
+	movq $0, ER_OFF_ARMED(%rax)
+
+	/* Keep the shadow IDT installed until task-stack return validation passes. */
+	lidt ER_OFF_ORIGINAL_IDTR(%rax)
+	sidt ER_OFF_VERIFY_IDTR(%rax)
+	movzwq ER_OFF_ORIGINAL_IDTR+ER_IDTR_LIMIT_OFF(%rax), %rdx
+	cmpw ER_OFF_VERIFY_IDTR+ER_IDTR_LIMIT_OFF(%rax), %dx
+	jne .Lterminal_recovery_idtr
+	movq ER_OFF_ORIGINAL_IDTR+ER_IDTR_BASE_OFF(%rax), %rdx
+	cmpq ER_OFF_VERIFY_IDTR+ER_IDTR_BASE_OFF(%rax), %rdx
+	jne .Lterminal_recovery_idtr
+	movq $3, ER_OFF_IDTR_PROOF(%rax)
+	movq $0xfd, ER_OFF_RESULT_FLAGS(%rax)
+	cmpq $14, ER_OFF_EXPECTED_VECTOR(%rax)
+	jne .Lresult_flags_ready
+	orq $0x2, ER_OFF_RESULT_FLAGS(%rax)
+.Lresult_flags_ready:
 	xorl %eax, %eax
 	RET
 .Lterminal_restore_failure:
 	movl $0x4552ff03, %eax
+	jmp .Lterminal_common
+.Lterminal_recovery_idtr:
+	movl $0x4552ff02, %eax
 	jmp .Lterminal_common
 SYM_FUNC_END(x86_er_inject)
 
@@ -401,11 +456,56 @@ SYM_CODE_START(x86_er_recovery_stub)
 	jne .Lterminal_recovery_state
 .Lrecovery_metadata_checked:
 
-	/* Keep the task-stack return envelope in dedicated scratch before IDT work. */
+	/* Validate the independent return envelope before using its task-stack RSP. */
 	movq ER_OFF_ENVELOPE_RSP(%r15), %rax
-	movq %rax, er_recovery_scratch+ER_SCRATCH_ENVELOPE_RSP(%rip)
-	movq %rax, %rdx
-	cmpq %rdx, ER_OFF_ENVELOPE_RSP(%r15)
+	cmpq er_recovery_scratch+ER_SCRATCH_ENVELOPE_RSP(%rip), %rax
+	jne .Lterminal_recovery_state
+	movq ER_OFF_ENVELOPE_RIP(%r15), %rdx
+	cmpq er_recovery_scratch+ER_SCRATCH_ENVELOPE_RIP(%rip), %rdx
+	jne .Lterminal_recovery_state
+	movq ER_OFF_TASK_STACK_LOW(%r15), %rdx
+	cmpq er_recovery_scratch+ER_SCRATCH_TASK_STACK_LOW(%rip), %rdx
+	jne .Lterminal_recovery_state
+	movq ER_OFF_TASK_STACK_END(%r15), %rdx
+	cmpq er_recovery_scratch+ER_SCRATCH_TASK_STACK_END(%rip), %rdx
+	jne .Lterminal_recovery_state
+	testq $7, %rax
+	jnz .Lterminal_recovery_state
+	movq ER_OFF_TASK_STACK_LOW(%r15), %rdx
+	cmpq ER_OFF_TASK_STACK_END(%r15), %rdx
+	jae .Lterminal_recovery_state
+	addq $ER_TASK_STACK_FAULT_HEADROOM, %rdx
+	jc .Lterminal_recovery_state
+	cmpq ER_OFF_TASK_STACK_END(%r15), %rdx
+	jae .Lterminal_recovery_state
+	cmpq %rdx, %rax
+	jb .Lterminal_recovery_state
+	movq ER_OFF_TASK_STACK_END(%r15), %rdx
+	cmpq $56, %rdx
+	jb .Lterminal_recovery_state
+	subq $56, %rdx
+	cmpq %rdx, %rax
+	ja .Lterminal_recovery_state
+	movq ER_OFF_SAVED_R15(%r15), %rdx
+	cmpq %rdx, 0(%rax)
+	jne .Lterminal_recovery_state
+	movq ER_OFF_SAVED_R14(%r15), %rdx
+	cmpq %rdx, 8(%rax)
+	jne .Lterminal_recovery_state
+	movq ER_OFF_SAVED_R13(%r15), %rdx
+	cmpq %rdx, 16(%rax)
+	jne .Lterminal_recovery_state
+	movq ER_OFF_SAVED_R12(%r15), %rdx
+	cmpq %rdx, 24(%rax)
+	jne .Lterminal_recovery_state
+	movq ER_OFF_SAVED_RBX(%r15), %rdx
+	cmpq %rdx, 32(%rax)
+	jne .Lterminal_recovery_state
+	movq ER_OFF_SAVED_RBP(%r15), %rdx
+	cmpq %rdx, 40(%rax)
+	jne .Lterminal_recovery_state
+	movq ER_OFF_ENVELOPE_RIP(%r15), %rdx
+	cmpq %rdx, 48(%rax)
 	jne .Lterminal_recovery_state
 
 	/* Check both stacks before disarming or leaving the shadow IDT active. */
@@ -433,46 +533,7 @@ SYM_CODE_START(x86_er_recovery_stub)
 	andq %rdx, %rax
 	jnz .Lterminal_recovery_state
 
-	/* Count only after the recovery entry and preserved state validate. */
-	incq ER_OFF_RECOVERY_COUNT(%r15)
-
-	/* Publish the captured architectural record before the single disarm write. */
-	movq ER_OFF_CAPTURED_VECTOR(%r15), %rax
-	movq %rax, ER_OFF_RESULT_VECTOR(%r15)
-	movq ER_OFF_ERROR_CODE(%r15), %rax
-	movq %rax, ER_OFF_RESULT_ERROR_CODE(%r15)
-	movq ER_OFF_CR2(%r15), %rax
-	movq %rax, ER_OFF_RESULT_CR2(%r15)
-	movq ER_OFF_FAULT_RIP(%r15), %rax
-	movq %rax, ER_OFF_RESULT_RIP(%r15)
-	movq ER_OFF_FAULT_CS(%r15), %rax
-	movq %rax, ER_OFF_RESULT_CS(%r15)
-	movq er_recovery_scratch+ER_SCRATCH_FLAGS(%rip), %rax
-	movq %rax, ER_OFF_RESULT_RFLAGS(%r15)
-	movq ER_OFF_FAULT_RSP(%r15), %rax
-	movq %rax, ER_OFF_RESULT_RSP(%r15)
-	movq ER_OFF_FAULT_SS(%r15), %rax
-	movq %rax, ER_OFF_RESULT_SS(%r15)
-	movq $0, ER_OFF_ARMED(%r15)
-
-	lidt ER_OFF_ORIGINAL_IDTR(%r15)
-	sidt ER_OFF_VERIFY_IDTR(%r15)
-	movzwq ER_OFF_ORIGINAL_IDTR+ER_IDTR_LIMIT_OFF(%r15), %rax
-	cmpw ER_OFF_VERIFY_IDTR+ER_IDTR_LIMIT_OFF(%r15), %ax
-	jne .Lterminal_recovery_idtr
-	movq ER_OFF_ORIGINAL_IDTR+ER_IDTR_BASE_OFF(%r15), %rax
-	cmpq ER_OFF_VERIFY_IDTR+ER_IDTR_BASE_OFF(%r15), %rax
-	jne .Lterminal_recovery_idtr
-	movq $3, ER_OFF_IDTR_PROOF(%r15)
-	movq $0x7d, ER_OFF_RESULT_FLAGS(%r15)
-	cmpq $14, ER_OFF_EXPECTED_VECTOR(%r15)
-	jne .Lresult_flags_ready
-	orq $0x2, ER_OFF_RESULT_FLAGS(%r15)
-.Lresult_flags_ready:
-	movq ER_OFF_ENVELOPE_RSP(%r15), %rax
-	movq %rax, er_recovery_scratch+ER_SCRATCH_ENVELOPE_RSP(%rip)
-
-	/* Restore fault-time RFLAGS/GPRs, then the saved Linux envelope RSP. */
+	/* Restore GPRs and RSP only after the task-stack envelope has passed bounds checks. */
 	pushq er_recovery_scratch+ER_SCRATCH_FLAGS(%rip)
 	popfq
 	movq er_recovery_scratch+ER_SCRATCH_RAX(%rip), %rax
@@ -495,9 +556,6 @@ SYM_CODE_START(x86_er_recovery_stub)
 
 .Lterminal_recovery_state:
 	movl $0x4552f001, %eax
-	jmp .Lterminal_common
-.Lterminal_recovery_idtr:
-	movl $0x4552ff02, %eax
 	jmp .Lterminal_common
 SYM_CODE_END(x86_er_recovery_stub)
 
@@ -557,4 +615,4 @@ ER_TERMINAL_VECTOR 31
 .balign 8
 .globl er_recovery_scratch
 er_recovery_scratch:
-	.zero 136
+	.zero 160

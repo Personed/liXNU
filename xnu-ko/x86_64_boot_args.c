@@ -12,6 +12,8 @@
 
 #define XNU_X86_U32_LIMIT ((xnu_boot_u64)0xffffffffU)
 #define XNU_X86_U32_END   (XNU_X86_U32_LIMIT + 1)
+#define XNU_X86_EFI_PAGE_SHIFT 12U
+#define XNU_X86_EFI_PAGE_MASK  ((1U << XNU_X86_EFI_PAGE_SHIFT) - 1)
 
 /* A u32 physical base plus a u32 length may end exactly at 4 GiB. */
 static int pa_range_fits_u32(xnu_boot_u64 start, xnu_boot_u64 size)
@@ -66,6 +68,38 @@ int xnu_x86_boot_args_validate(const struct xnu_x86_boot_args *args)
 		return -ERANGE;
 	if (args->bootMemStart > ~(xnu_boot_u64)0 - args->bootMemSize)
 		return -ERANGE;
+	return 0;
+}
+
+int xnu_x86_boot_memory_map_validate(const struct xnu_x86_boot_args *args,
+				     const void *map, unsigned long map_size)
+{
+	const unsigned char *bytes = map;
+	unsigned long offset;
+	int err;
+
+	if (!map)
+		return -EINVAL;
+	err = xnu_x86_boot_args_validate(args);
+	if (err)
+		return err;
+	if (map_size != args->MemoryMapSize)
+		return -ENOEXEC;
+
+	for (offset = 0; offset < map_size; offset += args->MemoryMapDescriptorSize) {
+		struct xnu_x86_efi_memory_range range;
+		xnu_boot_u64 first_page;
+
+		/* Firmware strides can include padding. The caller's buffer can be unaligned. */
+		memcpy(&range, bytes + offset, sizeof(range));
+		if (!range.NumberOfPages || (range.PhysicalStart & XNU_X86_EFI_PAGE_MASK))
+			return -ENOEXEC;
+		first_page = range.PhysicalStart >> XNU_X86_EFI_PAGE_SHIFT;
+		/* i386_vm_init() narrows both inclusive page indices to ppnum_t. */
+		if (first_page > XNU_X86_U32_LIMIT ||
+		    range.NumberOfPages - 1 > XNU_X86_U32_LIMIT - first_page)
+			return -ERANGE;
+	}
 	return 0;
 }
 

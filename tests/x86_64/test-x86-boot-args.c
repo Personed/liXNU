@@ -197,6 +197,51 @@ static void test_reject_unsupported_or_malformed_output(void)
 	assert(xnu_x86_boot_args_validate(NULL) == -EINVAL);
 }
 
+static void test_efi_memory_map_page_indices(void)
+{
+	enum { STRIDE = sizeof(struct xnu_x86_efi_memory_range) + 8 };
+	struct xnu_x86_boot_args args;
+	struct xnu_x86_boot_args_core in = valid_input();
+	struct xnu_x86_efi_memory_range first = {
+		.PhysicalStart = 0x100000000ULL,
+		.NumberOfPages = 2,
+	};
+	struct xnu_x86_efi_memory_range second = {
+		.PhysicalStart = (uint64_t)UINT32_MAX << 12,
+		.NumberOfPages = 1,
+	};
+	unsigned char storage[1 + 2 * STRIDE] = { 0 };
+	unsigned char *map = storage + 1;
+
+	in.memory_map_size = 2 * STRIDE;
+	in.memory_map_descriptor_size = STRIDE;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+	memcpy(map, &first, sizeof(first));
+	memcpy(map + STRIDE, &second, sizeof(second));
+
+	assert(xnu_x86_boot_memory_map_validate(&args, map, 2 * STRIDE) == 0);
+	assert(xnu_x86_boot_memory_map_validate(&args, map, 2 * STRIDE - 1) == -ENOEXEC);
+	assert(xnu_x86_boot_memory_map_validate(&args, NULL, 2 * STRIDE) == -EINVAL);
+
+	second.NumberOfPages = 2;
+	memcpy(map + STRIDE, &second, sizeof(second));
+	assert(xnu_x86_boot_memory_map_validate(&args, map, 2 * STRIDE) == -ERANGE);
+
+	second.PhysicalStart += 0x1000;
+	second.NumberOfPages = 1;
+	memcpy(map + STRIDE, &second, sizeof(second));
+	assert(xnu_x86_boot_memory_map_validate(&args, map, 2 * STRIDE) == -ERANGE);
+
+	second.PhysicalStart = first.PhysicalStart + 1;
+	memcpy(map + STRIDE, &second, sizeof(second));
+	assert(xnu_x86_boot_memory_map_validate(&args, map, 2 * STRIDE) == -ENOEXEC);
+
+	second.PhysicalStart = 0;
+	second.NumberOfPages = 0;
+	memcpy(map + STRIDE, &second, sizeof(second));
+	assert(xnu_x86_boot_memory_map_validate(&args, map, 2 * STRIDE) == -ENOEXEC);
+}
+
 int main(void)
 {
 	test_valid_core_fields();
@@ -205,6 +250,7 @@ int main(void)
 	test_last_u32_page_ranges();
 	test_validator_rejects_u32_overflow();
 	test_reject_unsupported_or_malformed_output();
+	test_efi_memory_map_page_indices();
 	puts("xnu x86 boot_args layout/validation fixtures passed");
 	return 0;
 }

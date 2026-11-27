@@ -18,14 +18,15 @@ SPEC.loader.exec_module(audit)
 class RecoveryInspectionTests(unittest.TestCase):
     def test_inspection_outcomes(self):
         cases = (
-            ("accepted", True, "recovery_downloaded_and_inspected"),
-            ("parser_rejected", True, "recovery_downloaded_and_inspected"),
-            ("not_fileset", True, "recovery_downloaded_and_inspected"),
-            ("helper_failed", True, "recovery_downloaded_but_inspection_failed"),
-            ("accepted", False, "recovery_mount_cleanup_failed"),
+            ("accepted", True, False, "recovery_downloaded_and_inspected"),
+            ("parser_rejected", True, False, "recovery_downloaded_and_inspected"),
+            ("not_fileset", True, False, "recovery_downloaded_and_inspected"),
+            ("helper_failed", True, False, "recovery_downloaded_but_inspection_failed"),
+            ("accepted", False, False, "recovery_mount_cleanup_failed"),
+            ("accepted", True, True, "recovery_mount_cleanup_failed"),
         )
-        for helper_status, detached, expected in cases:
-            with self.subTest(helper_status=helper_status, detached=detached):
+        for helper_status, detached, residue, expected in cases:
+            with self.subTest(helper_status=helper_status, detached=detached, residue=residue):
                 with tempfile.TemporaryDirectory() as workspace:
                     temporary = Path(workspace) / "download"
                     temporary.mkdir()
@@ -33,12 +34,18 @@ class RecoveryInspectionTests(unittest.TestCase):
                     helper = temporary / "xnu-fileset-metadata"
                     mounted = {"boot_kernel_collection_fileset": {"status": helper_status}}
                     report = {}
+
+                    def detach_image(_hdiutil, _image, mount):
+                        if residue:
+                            (mount / "leftover").touch()
+                        return detached
+
                     with (
                         patch.object(audit.shutil, "which", return_value="/usr/bin/hdiutil"),
                         patch.object(audit, "run", return_value=subprocess.CompletedProcess([], 0)),
                         patch.object(Path, "is_mount", return_value=True),
                         patch.object(audit, "inspect_mounted_image", return_value=mounted) as inspect,
-                        patch.object(audit, "detach_recovery", return_value=detached) as detach,
+                        patch.object(audit, "detach_recovery", side_effect=detach_image) as detach,
                     ):
                         audit.inspect_recovery(report, image, helper, temporary)
 
@@ -48,8 +55,8 @@ class RecoveryInspectionTests(unittest.TestCase):
                     self.assertEqual(report["audit_status"], expected)
                     self.assertEqual(report["recovery_image"], mounted)
                     self.assertEqual(report["recovery_detached"], detached)
-                    self.assertTrue(report["temporary_mount_directory_removed"])
-                    self.assertFalse(mount.exists())
+                    self.assertEqual(report["temporary_mount_directory_removed"], not residue)
+                    self.assertEqual(mount.exists(), residue)
 
 
 if __name__ == "__main__":

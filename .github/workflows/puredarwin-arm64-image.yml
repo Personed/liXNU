@@ -4,9 +4,25 @@ on:
   pull_request:
     paths:
       - '.github/workflows/puredarwin-arm64-image.yml'
+      - 'README.md'
       - 'docs/free-kc.md'
+      - 'docs/qemu.md'
+      - 'docs/portability-validation.md'
+      - 'scripts/free-kc/**'
+      - 'scripts/vm-xnu-build.sh'
+      - 'scripts/vm-xnu-rebuild.sh'
+      - 'scripts/xnulinux-boot.sh'
       - 'scripts/puredarwin-root.sh'
       - 'scripts/mk-puredarwin-disk.sh'
+      - 'scripts/kclink/**'
+      - 'scripts/kc-amfi-platform.py'
+      - 'scripts/apple-kc/keep.txt'
+      - 'scripts/apple-kc/rebind.txt'
+      - 'fki-ko/**'
+      - 'xnu-ko/**'
+      - 'xnu-patches/**'
+      - 'kexts/**'
+      - 'tests/puredarwin/**'
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.ref || github.ref_name }}
@@ -64,3 +80,370 @@ jobs:
             ${{ runner.temp }}/puredarwin-*.img.zst.sha256
           if-no-files-found: error
           retention-days: 3
+
+  puredarwin-build:
+    name: Build the real PureDarwin disk and collection
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the pinned PureDarwin image
+        uses: actions/download-artifact@v4
+        with:
+          name: puredarwin-arm64-virt
+          path: ${{ runner.temp }}/puredarwin-image
+      - name: Install Linux disk tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq e2fsprogs fdisk hfsprogs util-linux zstd
+          sudo modprobe hfsplus 2>/dev/null || true
+          grep -qw hfsplus /proc/filesystems
+      - name: Export the real userland and build its HFS+ disk
+        run: |
+          set -euo pipefail
+          image=$(find "$RUNNER_TEMP/puredarwin-image" -maxdepth 1 -type f -name '*.img.zst' -print -quit)
+          test -n "$image"
+          (
+            cd "$(dirname "$image")"
+            sha256sum --check "$(basename "$image").sha256"
+          )
+          mkdir -p "$RUNNER_TEMP/puredarwin-e2e-inputs"
+          zstd --decompress --stdout "$image" > "$RUNNER_TEMP/puredarwin-e2e-inputs/puredarwin.img"
+          bash scripts/puredarwin-root.sh \
+            "$RUNNER_TEMP/puredarwin-e2e-inputs/puredarwin.img" \
+            "$RUNNER_TEMP/puredarwin-e2e-inputs/root.tar.gz"
+          bash scripts/mk-puredarwin-disk.sh \
+            "$RUNNER_TEMP/puredarwin-e2e-inputs/root.tar.gz" \
+            "$RUNNER_TEMP/puredarwin-e2e-inputs/pd.img" \
+            > "$RUNNER_TEMP/puredarwin-e2e-inputs/pd.conf"
+          chmod 0644 "$RUNNER_TEMP/puredarwin-e2e-inputs/pd.img" \
+            "$RUNNER_TEMP/puredarwin-e2e-inputs/pd.conf"
+          cat "$RUNNER_TEMP/puredarwin-e2e-inputs/pd.conf"
+          rm -f "$RUNNER_TEMP/puredarwin-e2e-inputs/puredarwin.img" \
+            "$RUNNER_TEMP/puredarwin-e2e-inputs/root.tar.gz"
+      - name: Build the source XNU kernel and free collection
+        env:
+          JOBS: "2"
+          INSTALL_HOST_HEADERS: "0"
+          BUILD_NATIVE_KEXTS: "1"
+          DVM_REV: 524d27bf57ae92375aa39e3a81e11727c08973ff
+          OUT: ${{ runner.temp }}/puredarwin-e2e-inputs/kc-free.bin
+        run: |
+          python3 tests/puredarwin/test-template-layout.py
+          python3 tests/puredarwin/test-segment-copies.py
+          python3 tests/puredarwin/test-kernel-segments.py
+          bash scripts/vm-xnu-build.sh
+          bash scripts/free-kc/build.sh
+          cp "$HOME/w/dvm/out/k27/kernel-k27.macho" "$RUNNER_TEMP/puredarwin-e2e-inputs/kernel.macho"
+          repo_sha=$(git rev-parse HEAD)
+          image_sha=$(find "$RUNNER_TEMP/puredarwin-image" -maxdepth 1 -type f -name '*.img.zst' -exec sha256sum {} \; | awk '{print $1}')
+          disk_sha=$(sha256sum "$RUNNER_TEMP/puredarwin-e2e-inputs/pd.img" | awk '{print $1}')
+          kc_sha=$(sha256sum "$RUNNER_TEMP/puredarwin-e2e-inputs/kc-free.bin" | awk '{print $1}')
+          kernel_sha=$(sha256sum "$RUNNER_TEMP/puredarwin-e2e-inputs/kernel.macho" | awk '{print $1}')
+          {
+            echo "xnulinux_repo_commit=$repo_sha"
+            echo "droidvm_source_revision=$DVM_REV"
+            echo 'puredarwin_source_revision=b3b4b2812fdd1c5c251dc3089b5a1a9e00d29970'
+            echo "puredarwin_compressed_image_sha256=$image_sha"
+            echo "puredarwin_disk_sha256=$disk_sha"
+            echo "free_collection_sha256=$kc_sha"
+            echo "xnu_kernel_sha256=$kernel_sha"
+          } > "$RUNNER_TEMP/puredarwin-e2e-inputs/manifest.txt"
+          cat "$RUNNER_TEMP/puredarwin-e2e-inputs/manifest.txt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Collect XNU build logs after failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          logs="$RUNNER_TEMP/puredarwin-xnu-build-diagnostics"
+          mkdir -p "$logs"
+          dvm="$HOME/w/dvm/out/k27"
+          for path in "$dvm/xnulinux-rebuild.log" "$dvm/xnulinux-relink.log" "$dvm/kernel-slot-fit.log" "$dvm/build-bootstrap.log" "$dvm/build-raw.log"; do
+            if [ -f "$path" ]; then
+              cp "$path" "$logs/"
+            fi
+          done
+      - name: Retain XNU build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puredarwin-xnu-build-diagnostics
+          path: ${{ runner.temp }}/puredarwin-xnu-build-diagnostics/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Retain the guest disk inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: puredarwin-e2e-disk
+          path: |
+            ${{ runner.temp }}/puredarwin-e2e-inputs/pd.img
+            ${{ runner.temp }}/puredarwin-e2e-inputs/pd.conf
+          if-no-files-found: error
+          retention-days: 30
+      - name: Retain the source-built kernel collection
+        uses: actions/upload-artifact@v4
+        with:
+          name: puredarwin-e2e-kernel
+          path: |
+            ${{ runner.temp }}/puredarwin-e2e-inputs/kc-free.bin
+            ${{ runner.temp }}/puredarwin-e2e-inputs/kernel.macho
+            ${{ runner.temp }}/puredarwin-e2e-inputs/pd.conf
+            ${{ runner.temp }}/puredarwin-e2e-inputs/manifest.txt
+          if-no-files-found: error
+          retention-days: 3
+
+  arm64-guest:
+    name: Prepare an ARM64 Linux guest with FKI and XNU
+    needs: puredarwin-build
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    env:
+      KERNEL_ABI: 7.0.0-44
+      KERNEL_RELEASE: 7.0.0-44-generic
+      KERNEL_PACKAGE_VERSION: "7.0.0-44.44~24.04.1"
+      KERNEL_APT_SNAPSHOT: "20261126T000000Z"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the source-built PureDarwin collection
+        uses: actions/download-artifact@v4
+        with:
+          name: puredarwin-e2e-kernel
+          path: ${{ runner.temp }}/puredarwin-e2e-inputs
+      - name: Install matching ARM64 kernel headers and image tools
+        run: |
+          sudo apt-get --snapshot="$KERNEL_APT_SNAPSHOT" update -qq
+          headers="linux-headers-$KERNEL_RELEASE"
+          common_headers="linux-hwe-7.0-headers-$KERNEL_ABI"
+          sudo apt-get --snapshot="$KERNEL_APT_SNAPSHOT" install -y -qq \
+            "$headers=$KERNEL_PACKAGE_VERSION" \
+            "$common_headers=$KERNEL_PACKAGE_VERSION" \
+            busybox-static cpio kmod xz-utils zstd
+          for package in "$headers" "$common_headers"; do
+            version=$(dpkg-query -W -f='${Version}' "$package")
+            test "$version" = "$KERNEL_PACKAGE_VERSION" || {
+              echo "$package: expected $KERNEL_PACKAGE_VERSION, found $version" >&2
+              exit 1
+            }
+          done
+          echo "KDIR=/usr/src/$headers" >> "$GITHUB_ENV"
+          echo "Pinned ARM64 kernel release: $KERNEL_RELEASE ($KERNEL_PACKAGE_VERSION)"
+      - name: Test VirtIO module format handling
+        run: bash tests/puredarwin/test-prepare-guest-virtio-modules.sh
+      - name: Build FKI and XNU against the guest kernel
+        run: |
+          make -s -C "$KDIR" M="$GITHUB_WORKSPACE/fki-ko" modules
+          make -s -C "$KDIR" M="$GITHUB_WORKSPACE/xnu-ko" \
+            KBUILD_EXTRA_SYMBOLS="$GITHUB_WORKSPACE/fki-ko/Module.symvers" modules
+      - name: Prepare the direct-boot guest initramfs
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/puredarwin-e2e-guest" "$RUNNER_TEMP/linux-packages"
+          cd "$RUNNER_TEMP/linux-packages"
+          image_package="linux-image-unsigned-$KERNEL_RELEASE"
+          modules_package="linux-modules-$KERNEL_RELEASE"
+          expected_image_deb_sha="fa46ed1dc9e13d1c15772122e2cf18622e8cf0aa27b280f6fcb1ccfa196d9048"
+          expected_modules_deb_sha="27cdb8fd11379b622264b224b1f59ae7ecf2b27f387b6a2d0e4a383eae9c3688"
+          apt-get --snapshot="$KERNEL_APT_SNAPSHOT" download \
+            "$image_package=$KERNEL_PACKAGE_VERSION" \
+            "$modules_package=$KERNEL_PACKAGE_VERSION"
+          image_deb_sha=
+          modules_deb_sha=
+          for package in ./*.deb; do
+            name=$(dpkg-deb -f "$package" Package)
+            version=$(dpkg-deb -f "$package" Version)
+            test "$version" = "$KERNEL_PACKAGE_VERSION" || {
+              echo "$name: expected $KERNEL_PACKAGE_VERSION, found $version" >&2
+              exit 1
+            }
+            digest=$(sha256sum "$package" | awk '{print $1}')
+            case "$name" in
+              "$image_package")
+                test "$digest" = "$expected_image_deb_sha" || {
+                  echo "$name: expected sha256 $expected_image_deb_sha, found $digest" >&2
+                  exit 1
+                }
+                image_deb_sha=$digest
+                ;;
+              "$modules_package")
+                test "$digest" = "$expected_modules_deb_sha" || {
+                  echo "$name: expected sha256 $expected_modules_deb_sha, found $digest" >&2
+                  exit 1
+                }
+                modules_deb_sha=$digest
+                ;;
+              *) echo "Unexpected kernel package: $name" >&2; exit 1 ;;
+            esac
+            echo "$name=$version sha256=$digest"
+          done
+          test -n "$image_deb_sha" && test -n "$modules_deb_sha"
+          mkdir kernel
+          for package in ./*.deb; do dpkg-deb -x "$package" kernel; done
+          modules="kernel/lib/modules/$KERNEL_RELEASE"
+          test -d "$modules"
+          kernel_config="kernel/boot/config-$KERNEL_RELEASE"
+          grep -q '^CONFIG_ARM64_4K_PAGES=y' "$kernel_config"
+          source "$GITHUB_WORKSPACE/tests/puredarwin/virtio-modules.sh"
+          if [ -z "$(virtio_module_path "$modules" virtio_mmio)" ]; then
+            grep -q '^CONFIG_VIRTIO_MMIO=y' "$kernel_config" || {
+              echo 'virtio_mmio has no module and is not built into the pinned kernel' >&2
+              exit 1
+            }
+          fi
+          if [ -z "$(virtio_module_path "$modules" virtio_blk)" ]; then
+            grep -q '^CONFIG_VIRTIO_BLK=y' "$kernel_config" || {
+              echo 'virtio_blk has no module and is not built into the pinned kernel' >&2
+              exit 1
+            }
+          fi
+          "$GITHUB_WORKSPACE/tests/puredarwin/prepare-guest.sh" \
+            "kernel/boot/vmlinuz-$KERNEL_RELEASE" \
+            "$(command -v busybox)" \
+            "$GITHUB_WORKSPACE/fki-ko/fki.ko" \
+            "$GITHUB_WORKSPACE/xnu-ko/xnu.ko" \
+            "$RUNNER_TEMP/puredarwin-e2e-inputs/kc-free.bin" \
+            "$RUNNER_TEMP/puredarwin-e2e-inputs/pd.conf" \
+            "$modules" \
+            "$RUNNER_TEMP/puredarwin-e2e-guest"
+          cp "$RUNNER_TEMP/puredarwin-e2e-inputs/manifest.txt" \
+            "$RUNNER_TEMP/puredarwin-e2e-guest/build-manifest.txt"
+          vmlinuz_sha=$(sha256sum "kernel/boot/vmlinuz-$KERNEL_RELEASE" | awk '{print $1}')
+          config_sha=$(sha256sum "$kernel_config" | awk '{print $1}')
+          modules_tree_sha=$(cd "$modules" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
+          image_sha=$(sha256sum "$RUNNER_TEMP/puredarwin-e2e-guest/Image" | awk '{print $1}')
+          initramfs_sha=$(sha256sum "$RUNNER_TEMP/puredarwin-e2e-guest/initramfs.cpio.gz" | awk '{print $1}')
+          fki_sha=$(sha256sum "$GITHUB_WORKSPACE/fki-ko/fki.ko" | awk '{print $1}')
+          xnu_sha=$(sha256sum "$GITHUB_WORKSPACE/xnu-ko/xnu.ko" | awk '{print $1}')
+          {
+            echo "arm64_guest_kernel_release=$KERNEL_RELEASE"
+            echo "arm64_guest_kernel_package_version=$KERNEL_PACKAGE_VERSION"
+            echo "arm64_guest_kernel_image_deb_sha256=$image_deb_sha"
+            echo "arm64_guest_kernel_modules_deb_sha256=$modules_deb_sha"
+            echo 'arm64_guest_page_size=4096 (CONFIG_ARM64_4K_PAGES=y)'
+            echo 'arm64_guest_pac=runtime checked through /proc/cpuinfo paca and FKI_CAP_PAC'
+            echo 'arm64_guest_exception_level=EL1 (QEMU virt,virtualization=off)'
+            echo "arm64_guest_vmlinuz_sha256=$vmlinuz_sha"
+            echo "arm64_guest_kernel_config_sha256=$config_sha"
+            echo "arm64_guest_kernel_modules_tree_sha256=$modules_tree_sha"
+            echo "arm64_guest_image_sha256=$image_sha"
+            echo "arm64_guest_initramfs_sha256=$initramfs_sha"
+            echo "arm64_guest_fki_module_sha256=$fki_sha"
+            echo "arm64_guest_xnu_module_sha256=$xnu_sha"
+          } > "$RUNNER_TEMP/puredarwin-e2e-guest/guest-manifest.txt"
+          cat "$RUNNER_TEMP/puredarwin-e2e-guest/guest-manifest.txt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain the ARM64 Linux guest inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: puredarwin-e2e-guest
+          path: ${{ runner.temp }}/puredarwin-e2e-guest/
+          if-no-files-found: error
+          retention-days: 30
+
+  puredarwin-tcg-boot:
+    name: ${{ matrix.job_name }}
+    needs: [puredarwin-build, arm64-guest]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: ubuntu-24.04
+            runner: ubuntu-24.04
+            job_name: Boot PureDarwin under x86-64 QEMU TCG
+          - label: windows-2025
+            runner: windows-2025
+            job_name: Boot PureDarwin under x86-64 QEMU TCG (windows-2025)
+          - label: macos-15-intel
+            runner: macos-15-intel
+            job_name: Boot PureDarwin under x86-64 QEMU TCG (macos-15-intel)
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      XNULINUX_RUNNER_LABEL: ${{ matrix.label }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record host memory before artifact downloads (POSIX)
+        if: runner.os != 'Windows'
+        run: python3 tests/puredarwin/record-tcg-host.py
+      - name: Record host memory before artifact downloads (Windows)
+        if: runner.os == 'Windows'
+        run: python tests/puredarwin/record-tcg-host.py
+      - name: Download the ARM64 Linux guest inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: puredarwin-e2e-guest
+          path: ${{ runner.temp }}/puredarwin-e2e-guest
+      - name: Download the PureDarwin system disk
+        uses: actions/download-artifact@v4
+        with:
+          name: puredarwin-e2e-disk
+          path: ${{ runner.temp }}/puredarwin-e2e-disk
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install QEMU ARM system emulation
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-arm
+      - name: Install QEMU ARM system emulation on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install qemu --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Join-Path $env:ProgramFiles 'qemu' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install QEMU ARM system emulation on macOS
+        if: runner.os == 'macOS'
+        run: brew install qemu
+      - name: Test RSS measurement and manifest validation
+        run: python tests/puredarwin/test-run-tcg-e2e-rss.py
+      - name: Boot reduced-memory PureDarwin and require guest userspace plus clean halt (POSIX)
+        if: runner.os != 'Windows'
+        id: boot_posix
+        run: |
+          set -o pipefail
+          python tests/puredarwin/run-tcg-e2e.py \
+            --timeout-seconds 5400 \
+            --qemu-memory 6G \
+            --linux-memory 2G \
+            --fki-carve-base 0xc0000000 \
+            --fki-carve-mb 3072 \
+            --xnu-ram-mb 2816 \
+            --max-rss-mib 6144 \
+            "$RUNNER_TEMP/puredarwin-e2e-guest/Image" \
+            "$RUNNER_TEMP/puredarwin-e2e-guest/initramfs.cpio.gz" \
+            "$RUNNER_TEMP/puredarwin-e2e-disk/pd.img" \
+            "$RUNNER_TEMP/puredarwin-tcg-serial.log" 2>&1 |
+            tee "$RUNNER_TEMP/puredarwin-tcg-output.log"
+      - name: Boot reduced-memory PureDarwin and require guest userspace plus clean halt (Windows)
+        if: runner.os == 'Windows'
+        id: boot_windows
+        shell: pwsh
+        run: |
+          $arguments = @(
+            "--timeout-seconds", "5400",
+            "--qemu-memory", "6G",
+            "--linux-memory", "2G",
+            "--fki-carve-base", "0xc0000000",
+            "--fki-carve-mb", "3072",
+            "--xnu-ram-mb", "2816",
+            "--max-rss-mib", "6144",
+            (Join-Path $env:RUNNER_TEMP "puredarwin-e2e-guest\Image"),
+            (Join-Path $env:RUNNER_TEMP "puredarwin-e2e-guest\initramfs.cpio.gz"),
+            (Join-Path $env:RUNNER_TEMP "puredarwin-e2e-disk\pd.img"),
+            (Join-Path $env:RUNNER_TEMP "puredarwin-tcg-serial.log")
+          )
+          python tests/puredarwin/run-tcg-e2e.py @arguments 2>&1 |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP "puredarwin-tcg-output.log")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain host-specific TCG boot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puredarwin-tcg-boot-${{ matrix.label }}
+          path: |
+            ${{ runner.temp }}/puredarwin-tcg-serial.log
+            ${{ runner.temp }}/puredarwin-tcg-output.log
+            ${{ runner.temp }}/puredarwin-tcg-boot-report.json
+            ${{ runner.temp }}/puredarwin-tcg-host-memory.txt
+          if-no-files-found: ignore
+          retention-days: 30

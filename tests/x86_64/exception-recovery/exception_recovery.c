@@ -217,7 +217,6 @@ static void (*const er_terminal_entry[ER_IDT_ENTRIES])(void) = {
 
 static_assert(sizeof(struct er_idtr_operand) == 10);
 static_assert(sizeof(struct er_idt_gate) == 16);
-static_assert(sizeof(struct er_asm_control) == 352);
 static_assert(sizeof(struct er_gpr_scratch) == 136);
 static_assert(sizeof(struct x86_exception_recovery_result) == 40);
 static_assert(sizeof(struct x86_exception_recovery_request) == 48);

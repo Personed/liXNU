@@ -497,6 +497,11 @@ def main() -> int:
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"Recovery audit report written: {report_path}")
     print(f"Audit status: {report['audit_status']}")
+    fileset = report.get("recovery_image", {}).get("boot_kernel_collection_fileset")
+    if fileset:
+        print(f"Fileset inspection: {fileset['status']} (parser result: {fileset.get('parser_result')})")
+    print(f"Recovery detached: {report.get('recovery_detached')}")
+    print(f"Temporary Recovery files removed: {report['temporary_recovery_files_removed']}")
     if not report["temporary_recovery_files_removed"]:
         return 1
     return 0 if report["audit_status"] == "recovery_downloaded_and_inspected" else 1

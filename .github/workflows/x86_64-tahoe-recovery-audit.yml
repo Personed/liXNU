@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/x86_64-tahoe-recovery-audit.yml"
       - "scripts/x86_64/audit-tahoe-recovery.py"
+      - "tests/x86_64/test-fileset-metadata.py"
       - "tools/dev/x86_64/xnu-fileset-metadata.c"
       - "xnu-ko/macho_parse_x86_64.c"
       - "xnu-ko/macho_parse_x86_64.h"
@@ -14,6 +15,17 @@ permissions:
   contents: read
 
 jobs:
+  validate-fileset-metadata:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and exercise the fileset JSON helper
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror \
+            tools/dev/x86_64/xnu-fileset-metadata.c xnu-ko/macho_parse_x86_64.c \
+            -o "$RUNNER_TEMP/xnu-fileset-metadata"
+          python3 tests/x86_64/test-fileset-metadata.py "$RUNNER_TEMP/xnu-fileset-metadata"
+
   inspect-official-recovery:
     runs-on: macos-26-intel
     timeout-minutes: 90

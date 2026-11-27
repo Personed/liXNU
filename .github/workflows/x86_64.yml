@@ -2,6 +2,10 @@
 name: x86_64 launcher
 on:
   pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
 permissions:
   contents: read
 jobs:
@@ -14,6 +18,7 @@ jobs:
       - name: Install QEMU image tools for overlay integration test
         run: |
           if ! command -v qemu-img >/dev/null || ! command -v qemu-io >/dev/null; then
+            scripts/ci/disable-microsoft-apt-feed.sh
             sudo apt-get update
             sudo apt-get install -y --no-install-recommends qemu-utils
           fi

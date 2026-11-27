@@ -8,13 +8,20 @@ on:
       - 'docs/free-kc.md'
       - '.github/workflows/puredarwin-root-export.yml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
 jobs:
   root-export:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Install ext4 and partition tools
-        run: sudo apt-get update && sudo apt-get install -y fdisk e2fsprogs nfs-common nfs-kernel-server
+        run: |
+          scripts/ci/disable-microsoft-apt-feed.sh
+          sudo apt-get update
+          sudo apt-get install -y fdisk e2fsprogs nfs-common nfs-kernel-server
       - name: Check shell syntax
         run: |
           for script in scripts/puredarwin-root.sh tests/test-puredarwin-root-export.sh tests/test-puredarwin-root-export-nfs.sh tests/test-puredarwin-root-export-signals.sh; do

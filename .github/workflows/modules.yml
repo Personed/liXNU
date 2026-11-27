@@ -90,6 +90,14 @@ jobs:
       - name: Install QEMU on Linux
         if: runner.os == 'Linux'
         run: |
+          # The hosted Ubuntu image's Microsoft feed can return transient 403s and fail the whole apt update.
+          # qemu-system-arm comes from Ubuntu's own indexes, so disable only that third-party feed in this ephemeral runner.
+          for source in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            [ -e "$source" ] || continue
+            if grep -q 'packages\.microsoft\.com' "$source"; then
+              sudo mv "$source" "$source.xnulinux-disabled"
+            fi
+          done
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends qemu-system-arm
       - name: Install QEMU on Windows

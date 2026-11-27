@@ -122,11 +122,17 @@ the disk archive contains `pd.img`. The three boot inputs have these SHA-256 val
 | `initramfs.cpio.gz` | `fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667` |
 | `pd.img` | `7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f` |
 
-Install QEMU system ARM emulation 8.2 or later and Python 3. On Ubuntu or Debian:
+Install QEMU system ARM emulation 8.2 or later and Python 3. The `cortex-a710`
+model used in run #158 is available starting with QEMU 8.2. On Ubuntu 24.04 or a
+Debian release whose package meets this version requirement:
 
 ```sh
 sudo apt-get install qemu-system-arm python3 coreutils util-linux
+qemu-system-aarch64 -cpu help | grep -F cortex-a710
 ```
+
+Debian 12 ships QEMU 7.2, which is too old for this profile; install a QEMU 8.2+
+build there or use the tested Ubuntu 24.04 package.
 
 Run the download commands from the repository root; they extract the files under `artifacts/guest` and `artifacts/disk`. The command below verifies the three hashes from run #158, then copies the disk so the source artifact remains unchanged.
 
@@ -156,8 +162,11 @@ The manifest-aware validation script and optional exact-hash guard are in
 [`docs/portability-validation.md`](portability-validation.md#reproducing-the-active-qemu-tcg-boot).
 The command runs TCG with a 6 GiB guest, Linux `mem=2G`, a 3,072 MiB FKI carve-out,
 and 2,816 MiB XNU RAM. The harness requires the Darwin console and userland marker,
-guest-requested halt, successful XNU/FKI unload, and QEMU exit 0; it also enforces the
-configured RSS limit. This guest allocation is not a physical host-memory minimum.
+guest-requested halt, successful XNU/FKI unload, and QEMU exit 0. It enforces the
+configured RSS limit on hosts where process RSS is measurable; when the runner cannot
+measure it, the log reports that fact instead of treating it as zero. In run #158,
+Windows boot passed but process RSS was not measured. This guest allocation is not a
+physical host-memory minimum.
 
 Run #158 passed once on each hosted Ubuntu, Windows Server 2025, and Intel macOS profile
 with `cortex-a710`. This supports the tested hosted profiles only; representative

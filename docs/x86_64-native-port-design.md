@@ -32,6 +32,14 @@ The fileset fields are grounded in the pinned public XNU [`loader.h`](https://gi
 
 The parser continues to reject `LC_MAIN`, additional thread-state flavors, unknown x86 subtypes, more than 24 segments, unsupported chained pointer formats/page sizes, `MULTI/LAST`, malformed ranges, and other unsupported `MH_EXECUTE` variants. A successful parse is structural inspection only; callers must not infer that the image is loadable or that its fixups are supported. Synthetic fixtures exercise the production parser API directly, including malformed starts and imports, valid page-prefix metadata, a lower-than-`__TEXT` segment, uniform-format enforcement, the narrow zero-VM segment omission, and malformed/valid fileset metadata with an offset-40 ID. CI also compiles the same parser and `macho.c` as x86_64 ELF objects in a temporary copy. The parser does not allocate or map executable memory, rebase pointers, apply fixups, or enter XNU. `macho_load()` still returns `-EOPNOTSUPP` after a successful fileset parse. [Recovery audit #12](https://github.com/Personed/liXNU/actions/runs/46001678966) accepted the fileset metadata of the Intel Recovery image that reported Tahoe 26.6.2 (25G83) and XNU `12377.161.14~5`. The Apple chunklist verified the image bytes; the HTTP catalog did not authenticate selection for the requested board or the latest version. The Tahoe 26.7.3 (25G342) runtime collection still needs verification, and `xnu.ko` remains a refusal stub.
 
+The fileset JSON reports `chained_fixups` separately for the outer collection
+and the embedded kernel. When present, the command must fit within its
+header's unique `__LINKEDIT` file and VM ranges. The inspect-only report
+includes collection-relative offsets and the offset within `__LINKEDIT`.
+The payload bytes, chain targets, slides, and rebases are outside this check.
+The pinned XNU source uses the outer header for collection fixups after EFI
+has rebased the kernel image ([i386_init.c](https://github.com/apple-oss-distributions/xnu/blob/ac9718fb1af618d5ce8678d0dc6e8a58f252216f/osfmk/i386/i386_init.c#L620-L673)).
+
 ## Default and validation artifacts
 
 The boundary probe and the prerequisites for the next synthetic one-CPU entry/return test are specified in

@@ -253,9 +253,10 @@ static int fileset_entry_id(const unsigned char *command,
 	return 0;
 }
 
-static int collect_fileset_segments(const unsigned char *file, unsigned long file_size,
-				    const struct header_region *kernel,
-				    struct xnu_macho_x86_64_info *out);
+static int collect_fileset_metadata(const unsigned char *file, unsigned long file_size,
+				    const struct header_region *header,
+				    struct xnu_macho_x86_64_info *nested,
+				    struct xnu_macho_x86_64_fixup_extent *fixups);
 
 static int parse_fileset(const unsigned char *file, unsigned long file_size,
 			struct xnu_macho_x86_64_info *out)
@@ -311,7 +312,10 @@ static int parse_fileset(const unsigned char *file, unsigned long file_size,
 		return err;
 	if (kernel.file_type != MH_EXECUTE)
 		return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
-	err = collect_fileset_segments(file, file_size, &kernel, out);
+	err = collect_fileset_metadata(file, file_size, &outer, 0, &out->fileset_fixups);
+	if (err)
+		return err;
+	err = collect_fileset_metadata(file, file_size, &kernel, out, &out->kernel_entry_fixups);
 	if (err)
 		return err;
 
@@ -846,33 +850,73 @@ static void export_segment(struct xnu_macho_x86_64_segment *out,
 	out->section_count = in->nsects;
 }
 
-static int collect_fileset_segments(const unsigned char *file, unsigned long file_size,
-				    const struct header_region *kernel,
-				    struct xnu_macho_x86_64_info *out)
+static int collect_fileset_metadata(const unsigned char *file, unsigned long file_size,
+				    const struct header_region *header,
+				    struct xnu_macho_x86_64_info *nested,
+				    struct xnu_macho_x86_64_fixup_extent *fixups)
 {
-	unsigned long command_off = kernel->command_off;
-	xnu_macho_u32 i;
+	unsigned long command_off = header->command_off;
+	unsigned long linkedit_off = 0;
+	xnu_macho_u32 linkedit_command_size = 0;
+	xnu_macho_u32 i, linkedit_count = 0;
+	struct segment_info segment;
+	xnu_macho_u64 offset;
+	int err;
 
-	for (i = 0; i < kernel->ncmds; i++) {
+	for (i = 0; i < header->ncmds; i++) {
 		xnu_macho_u32 command = read_u32le(file + command_off);
 		xnu_macho_u32 command_size = read_u32le(file + command_off + 4);
 
 		if (command == LC_SEGMENT_64) {
-			struct segment_info segment;
-			int err;
-
-			if (out->kernel_entry_segment_count >= XNU_MACHO_X86_64_MAX_SEGMENTS)
-				return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
-			/* Member offsets are relative to the containing collection. */
-			err = read_segment_bounds(file, file_size, command_off,
-						  command_size, &segment);
-			if (err)
-				return err;
-			export_segment(&out->segments[out->kernel_entry_segment_count++],
-				       &segment);
+			if (command_size >= LOAD_COMMAND_SIZE + 16 &&
+			    fixed_name_is(file + command_off + LOAD_COMMAND_SIZE, "__LINKEDIT", 10)) {
+				linkedit_count++;
+				linkedit_off = command_off;
+				linkedit_command_size = command_size;
+			}
+			if (nested) {
+				if (nested->kernel_entry_segment_count >= XNU_MACHO_X86_64_MAX_SEGMENTS)
+					return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
+				/* Member offsets are relative to the complete collection. */
+				err = read_segment_bounds(file, file_size, command_off, command_size,
+							  &segment);
+				if (err)
+					return err;
+				export_segment(&nested->segments[nested->kernel_entry_segment_count++],
+					       &segment);
+			}
+		} else if (command == LC_DYLD_CHAINED_FIXUPS) {
+			if (fixups->datasize || parse_linkedit_data(file, file_size,
+							    command_off, command_size))
+				return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+			fixups->dataoff = read_u32le(file + command_off + 8);
+			fixups->datasize = read_u32le(file + command_off + 12);
+			if (fixups->datasize < DYLD_CHAINED_FIXUPS_HEADER_SIZE)
+				return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
 		}
 		command_off += command_size;
 	}
+
+	/* Only inspect outer segment bounds for the __LINKEDIT used by fixups. */
+	if (!fixups->datasize)
+		return 0;
+	if (linkedit_count != 1)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	err = read_segment_bounds(file, file_size, linkedit_off, linkedit_command_size, &segment);
+	if (err)
+		return err;
+	if (fixups->dataoff < segment.fileoff)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	/* XNU's dyld_kernel_fixups.h uses this delta inside the mapped segment. */
+	offset = fixups->dataoff - segment.fileoff;
+	if (offset > segment.filesize || fixups->datasize > segment.filesize - offset ||
+	    offset > segment.vmsize || fixups->datasize > segment.vmsize - offset)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+
+	fixups->linkedit_vmaddr = segment.vmaddr;
+	fixups->linkedit_vmsize = segment.vmsize;
+	fixups->linkedit_fileoff = segment.fileoff;
+	fixups->linkedit_filesize = segment.filesize;
 	return 0;
 }
 

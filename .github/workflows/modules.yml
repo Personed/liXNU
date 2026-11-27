@@ -62,13 +62,14 @@ jobs:
           export LC_ALL=C
           release=$(cat "$KDIR/include/config/kernel.release")
           test -n "$release"
+          source_commit=$(git -c safe.directory="$PWD" rev-parse --verify 'HEAD^{commit}')
+          source_tree=$(git -c safe.directory="$PWD" rev-parse --verify 'HEAD^{tree}')
           stage="$RUNNER_TEMP/debian13-x86_64-module-build"
           mkdir "$stage"
           cp fki-ko/fki.ko xnu-ko/xnu.ko "$stage/"
           (
             echo 'profile=debian13-x86_64-fail-closed'
-            echo "source_commit=$(git rev-parse HEAD)"
-            echo "source_tree=$(git rev-parse 'HEAD^{tree}')"
+            printf 'source_commit=%s\nsource_tree=%s\n' "$source_commit" "$source_tree"
             echo "kernel_release=$release"
             echo 'kbuild_arch=x86_64'
             echo 'fki_btf_modules=disabled'
@@ -99,6 +100,7 @@ jobs:
             sha256sum fki.ko xnu.ko > SHA256SUMS
           ) > "$stage/build-manifest.txt"
       - uses: actions/upload-artifact@v4
+        # Keep the build outputs for diagnosis if a later VM check fails.
         with:
           name: debian13-x86_64-module-build
           path: ${{ runner.temp }}/debian13-x86_64-module-build/

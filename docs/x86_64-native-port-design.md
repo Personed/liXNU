@@ -65,6 +65,8 @@ not enable XNU execution or change the FKI ABI.
 
 ## Implementation order and acceptance gates
 
+The x86 memory stage includes a [Linux bootstrap reservation plan](x86_64-bootstrap-reservation.md) for the pinned entry layout.
+
 1. **Pin the x86 build input.** Select the exact Tahoe-compatible XNU source/configuration, toolchain, and symbol-bearing x86_64 kernel collection. Record the architecture and source revision in CI artifacts. A successful ARM64 build or generic Mach-O parse is not sufficient.
 2. **Keep architecture selection explicit.** Build separate ARM64 and x86_64 module object lists and machine-layer patches.
    Make FKI capabilities describe generic context execution separately from PAC and other optional features. Default and

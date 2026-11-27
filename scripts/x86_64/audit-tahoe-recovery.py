@@ -133,6 +133,7 @@ def host_metadata() -> dict[str, Any]:
 
 
 def inspect_mounted_image(mount: Path, image: Path) -> dict[str, Any]:
+    image_root = mount.resolve()
     result: dict[str, Any] = {
         "image_filename": image.name,
         "image_bytes": image.stat().st_size,
@@ -200,7 +201,7 @@ def inspect_mounted_image(mount: Path, image: Path) -> dict[str, Any]:
         try:
             item: dict[str, Any] = {
                 "path": str(relative_path),
-                "resolved_path": str(actual_path.relative_to(mount)),
+                "resolved_path": str(actual_path.relative_to(image_root)),
                 "entry_type": "symlink" if logical_path.is_symlink() else "file",
                 "bytes": actual_path.stat().st_size,
                 "sha256": sha256(actual_path),

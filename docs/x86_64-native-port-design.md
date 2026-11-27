@@ -80,6 +80,8 @@ not enable XNU execution or change the FKI ABI.
    PureDarwin boot.
 6. **Validate the Tahoe desktop on hardware.** Boot a user-provided x86_64 Tahoe disk through the native module path on physical Intel and AMD Linux PCs separately. The first desktop milestone may use software rendering; verify disk I/O, keyboard/pointer input, network, visible display, and clean shutdown. Record CPU model/features, Linux kernel/config, RAM, source and disk hashes, and Linux host-integrity checks. Keep the ARM64 macOS 27 build and runtime smoke as a regression requirement.
 
+Use the [physical acceptance record](x86_64-physical-acceptance.md) to collect evidence for each tested Intel or AMD profile.
+
 A gate passes only with its named evidence. Keep default/distributed x86_64 builds at `fki_caps() == 0` until native XNU
 boot, desktop, and host-integrity gates pass. Test artifacts must be explicitly named, built only through the test target,
 and must expose only capabilities whose prerequisites have been verified. x86_64 remains in development until all

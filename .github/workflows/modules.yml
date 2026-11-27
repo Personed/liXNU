@@ -7,8 +7,8 @@ on:
     branches: [main]
   pull_request:
 concurrency:
-  group: modules-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 jobs:
   cli-installer:
     runs-on: ubuntu-24.04

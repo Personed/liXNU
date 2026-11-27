@@ -10,7 +10,7 @@ hosted-XNU port.
 
 The x86-64 native port remains experimental and fail-closed: x86_64 `fki_caps() == 0`, and `xnu.ko` returns
 `-EOPNOTSUPP`. This document describes required architecture and validation work; it does not authorize XNU entry. The
-current public XNU source pin is 26.5 ([PR #56](https://github.com/Personed/xnulinux/pull/56)); building it does
+PR #56 pins the latest publicly published XNU source, 26.5 (`xnu-12377.121.6`); building that source does
 not establish compatibility with the Tahoe 26.7.3 runtime target.
 
 The pinned XNU source includes `osfmk/i386` and `mach-o/x86_64`, but this repository's current machine patches and

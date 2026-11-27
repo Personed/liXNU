@@ -505,6 +505,11 @@ def main() -> int:
         segments = fileset.get("kernel", {}).get("segments")
         if fileset["status"] == "accepted" and isinstance(segments, list):
             print(f"Fileset kernel segments reported: {len(segments)}")
+        if fileset["status"] == "accepted":
+            for scope, header in (("outer", fileset), ("kernel", fileset.get("kernel", {}))):
+                if "chained_fixups" in header:
+                    status = "bounded" if header["chained_fixups"] else "absent"
+                    print(f"Fileset {scope} chained-fixups extent: {status}")
     print(f"Recovery detached: {report.get('recovery_detached')}")
     print(f"Temporary Recovery files removed: {report['temporary_recovery_files_removed']}")
     if not report["temporary_recovery_files_removed"]:

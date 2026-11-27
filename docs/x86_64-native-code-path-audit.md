@@ -100,8 +100,9 @@ from that same volume.
 )
 ```
 
-Record the liXNU commit, the hashes, and the fileset JSON with `status` and
-`parser_result`. The plist establishes the version reported by the supplied
+Record the liXNU commit, the hashes, and the fileset JSON. For a passing
+structural check, require `status=accepted`, `parser_result=0`, and the nested
+kernel segment list. The plist establishes the version reported by the supplied
 volume. Keep the paired files on the operator's machine and share only the
 reviewed metadata and hashes. Use this evidence to compare the 25G342 layout
 against the loader and handoff contract. The normal x86 module retains its

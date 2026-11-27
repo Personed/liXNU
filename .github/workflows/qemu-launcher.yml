@@ -2,7 +2,12 @@
 name: qemu-launcher
 on:
   push:
+    branches: [main]
   pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
 jobs:
   launcher:
     runs-on: ${{ matrix.host }}
@@ -26,6 +31,7 @@ jobs:
       - name: Install QEMU on Linux
         if: runner.os == 'Linux'
         run: |
+          scripts/ci/disable-microsoft-apt-feed.sh
           sudo apt-get update
           sudo apt-get install --yes qemu-system-arm qemu-efi-aarch64 qemu-utils
       - name: Install QEMU on Windows
@@ -55,6 +61,7 @@ jobs:
           python-version: "3.12"
       - name: Install QEMU and ARM64 UEFI firmware
         run: |
+          scripts/ci/disable-microsoft-apt-feed.sh
           sudo apt-get update
           sudo apt-get install --yes qemu-system-arm qemu-efi-aarch64 qemu-utils qemu-system-gui xvfb x11-utils
       - name: Start the graphical ARM64 guest through ${{ matrix.display_backend }}
@@ -64,7 +71,7 @@ jobs:
           QEMU_TEST_DISPLAY_BACKEND: ${{ matrix.display_backend }}
         run: xvfb-run -a python tests/qemu/test_uefi_launch.py UefiLaunchTest.test_launcher_starts_graphical_uefi_guest
   uefi-launch:
-    if: always()
+    if: ${{ !cancelled() }}
     needs: uefi-graphical
     runs-on: ubuntu-24.04
     steps:

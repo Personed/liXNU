@@ -28,17 +28,17 @@ Other CPUs keep Linux's original IDT. This is still not a production mechanism: 
 
 ## Handler and recovery contract
 
-The exception frame contains the faulting RIP, CS, RFLAGS, saved RSP, SS, and, for `#PF`/`#GP`, the hardware error code. Each handler must:
+In 64-bit mode the architectural exception frame includes SS, RSP, RFLAGS, CS and RIP, with the `#PF`/`#GP` error code pushed after RIP; this is also true for a same-CPL0 exception. The replacement gates use no IST, so hardware builds that frame on the current test-owned alternate stack. The raw handler entry RSP points at the error-code slot; the error code is not part of the frame consumed by `iretq`. Each handler must:
 
 - save the general-purpose registers it needs in per-vCPU test storage before touching them;
 - record the vector selected by the independent handler entry point;
 - record the error code and hardware frame fields exactly as delivered;
 - read CR2 for `#PF` before any instruction that can take another fault;
-- restore the registers it used;
-- rewrite the exception return frame exactly once so `iretq` resumes at the test recovery stub on the test-owned recovery stack; and
+- restore every general-purpose register it used before `iretq`, so the recovery path starts with the fault-time register state;
+- rewrite the frame exactly once: set frame RIP to the test recovery stub, set frame RSP to the test-owned recovery-stack top, keep CS/RFLAGS/SS unchanged, and account for the error-code slot before executing `iretq`; and
 - increment no counter and perform no C call in the raw handler beyond the capture writes.
 
-The recovery stub runs in the controlled shim context, verifies the armed mode, copies the captured record into the ordinary result buffer, disarms the injection, restores the original IDTR, and then returns through the existing normal/software-abort envelope. The exact recovery point must execute once; a second caught exception for the same armed case is a nested-fault failure.
+The stack switch is therefore explicit: `iretq` first consumes the five-slot frame left by the exception on the faulting alternate stack, then loads the rewritten frame-RSP value. Recovery begins on the test-owned recovery stack with fault-time GPRs restored. The recovery stub verifies the armed mode, copies the captured record into the ordinary result buffer, disarms the injection, restores the original IDTR, and then returns through the existing normal/software-abort envelope. The exact recovery point must execute once; a second caught exception for the same armed case is a nested-fault failure.
 
 A fault while the shadow IDT is installed but outside the exact expected instruction is unclassified. Its correct outcome is test failure and, if recovery integrity cannot be proven, termination of the disposable VM. That failure must not be converted into a pass or retried transparently.
 

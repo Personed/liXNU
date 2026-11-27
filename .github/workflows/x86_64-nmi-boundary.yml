@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: x86_64 NMI boundary
+on:
+  pull_request:
+  push:
+    branches: [main]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+permissions:
+  contents: read
+jobs:
+  disposable-vm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install x86_64 kernel build and VM tools
+        run: |
+          scripts/ci/disable-microsoft-apt-feed.sh
+          sudo apt-get update -qq
+          pkg=$(apt-cache search --names-only '^linux-headers-[0-9.]+-[0-9]+-generic$' | awk '{print $1}' | sort -V | tail -1)
+          test -n "$pkg" || { echo "no x86_64 generic kernel headers found" >&2; exit 1; }
+          sudo apt-get install -y -qq build-essential busybox-static cpio python3 qemu-system-x86 "$pkg" >/dev/null
+          echo "KDIR=/usr/src/$pkg" >> "$GITHUB_ENV"
+      - name: Build and run NMI boundary probe in a disposable TCG VM
+        run: tests/x86_64/test-nmi-boundary-vm.sh "$KDIR"

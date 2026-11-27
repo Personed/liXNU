@@ -509,8 +509,9 @@ Report the profile alongside the stage:
   Module jobs are stage smoke tests, not a full PureDarwin route. Run #158 is one full
   hosted pass per Ubuntu, Windows Server 2025, and Intel macOS profile with `cortex-a710`.
   This is the recorded complete result for those hosted configurations. The separate
-  `-cpu max`/PIE profile and representative physical-PC validation remain open; they do
-  not gate the A710 pass. No host RAM floor is established.
+  `-cpu max`/PIE boot passed in PR #99 run #186 over overlap-guard base `17d4852`; validation
+  of that profile on exact current `main` and representative physical PCs remains open.
+  Neither pending profile gates the A710 pass. No host RAM floor is established.
 
   The reduced 6 GiB guest profile passed on #52 head `8d41fa9` in run #138 and on the
   #52-equivalent tree `3421056` in #72 run #140; earlier #69 head `3eb5e0e` also passed.
@@ -519,9 +520,10 @@ Report the profile alongside the stage:
   RAM. The CI machines are virtualized; the available executor is a Debian 13 x86-64
   container under KVM with 5 vCPUs and an AMD EPYC 9V74 virtual CPU. Hosted Windows Server
   2025 and Intel macOS 15 runners have one complete `cortex-a710` pass each in run #158,
-  but no physical Intel or AMD PC is attached. Bare-metal hardware acceptance remains open, while PIE-enabled `-cpu max` is a separate
-  compatibility profile. Neither changes the recorded A710 hosted-runner result; do not
-  infer universal “any PC” support from virtual-runner evidence.
+  but no physical Intel or AMD PC is attached. Bare-metal hardware acceptance remains open.
+  The PIE-enabled `-cpu max` boot passed on the #99 branch in run #186, but is not yet
+  validated on exact current `main` or physical hosts. Neither changes the recorded A710
+  hosted-runner result; do not infer universal “any PC” support from virtual-runner evidence.
 
   Merged PR #62 records separate local evidence using the exact #52 kernel package
   `7.0.0-44.44~24.04.1`: the prepared guest reached the Darwin console, accepted guest

@@ -5,7 +5,7 @@ Record the **host, runtime, and furthest verified stage** for each result. Booti
 ARM64 Linux VM does not mean that XNU ran. Building or probing a module does not mean
 Darwin userspace ran. A PureDarwin shell does not establish macOS compatibility.
 
-The active portability target is an x86-64 PC using QEMU TCG to boot Linux ARM64, load FKI/XNU, and reach the PureDarwin console. The native x86_64/Tahoe port is separate work. Preserve the direct ARM64 hosted-XNU runtime and macOS 27 target.
+The project target is native hosted-XNU on x86_64 Linux PCs, targeting macOS Tahoe 26.7.3 while preserving the direct ARM64 hosted-XNU runtime and macOS 27 target. QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin and QEMU/KVM guest results are complementary profiles; neither establishes native x86_64 hosting.
 
 | Stage | What counts as evidence |
 | --- | --- |
@@ -18,12 +18,12 @@ The active portability target is an x86-64 PC using QEMU TCG to boot Linux ARM64
 | PureDarwin userspace | The real, paired PureDarwin disk and free kernel collection boot; execute a command on the Darwin console and observe the result. Record a clean halt separately. |
 | TCG guest shutdown | The ARM64 guest issues `halt`; XNU and FKI unload; Linux powers off; and QEMU exits with status 0. A host-issued stop is cleanup, not a guest shutdown pass. |
 | ARM64 hosted macOS desktop | A user-provided compatible system disk and matching XNU collection reach an interactive desktop through the ARM64 FKI/XNU path; record input, rendering backend, and networking separately. |
-| Separate native x86_64 hosted macOS desktop experiment | Architecture-matched x86_64 `fki.ko` and `xnu.ko` host Tahoe 26 directly on Linux and reach the desktop on a physical Intel or AMD PC. Record host-integrity checks and guest-initiated clean shutdown; report Intel and AMD separately. |
+| Native x86_64 hosted macOS desktop | Architecture-matched x86_64 `fki.ko` and `xnu.ko` host Tahoe 26 directly on Linux and reach the desktop on a physical Intel or AMD PC. Record host-integrity checks and guest-initiated clean shutdown; report Intel and AMD separately. |
 | Supplemental QEMU/KVM guest desktop | A user-prepared Tahoe 26 x86_64 disk reaches the desktop in a QEMU/KVM guest. This optional launcher does not use the project's x86_64 hosted-XNU modules and is not evidence of the native port. |
 
-## Separate native x86_64 hosted-XNU work status
+## Native x86_64 hosted-XNU work status
 
-Native x86_64 hosting of Tahoe 26 remains a separate workstream; direct ARM64 hosting of macOS 27 remains preserved. PR #48 builds the x86_64 FKI host backend, #47 keeps the x86_64 XNU target fail-closed, and #78 adds bounded, read-only Mach-O metadata parsing. These milestones do not execute XNU. Native runtime, physical Intel/AMD boots, host-integrity checks, and guest shutdown remain pending and are not acceptance criteria for the active TCG route.
+Native x86_64 hosting of Tahoe 26.7.3 is the project target; direct ARM64 hosting of macOS 27 remains preserved. PR #48 builds the x86_64 FKI host backend, #47 keeps the x86_64 XNU target fail-closed, and #78 adds bounded, read-only Mach-O metadata parsing. These milestones do not execute XNU. Native runtime, physical Intel/AMD boots, host-integrity checks, and guest shutdown remain pending.
 
 ## Direct ARM64 hosted-XNU profiles
 
@@ -41,7 +41,7 @@ different host. These are tested configurations, not minimum host requirements. 
 | Apple Silicon Mac in an ARM64 Linux VM (`krunkit`) | macOS 27.2.1 reached the desktop with 1–6 hosted CPUs in 31–48 seconds. A 30-minute application and disk stress run completed without panic or crash report. The documented GPU bridge exposes the M5 Max through Virtio-GPU/Venus when a render node is available; CPU rendering remains the fallback. | No total host/VM RAM measurement or RAM floor is recorded. This result covers the tested Apple Silicon `krunkit` VM profile. [README evidence](../README.md#status). |
 | NVIDIA DGX Spark, bare-metal ARM64 Linux | Ubuntu 24.04.5 LTS, Linux `7.0.0-1025-nvidia`; 4 hosted CPUs with `cpu_list=5,6,7,8,9` (four XNU CPUs, each assigned a dedicated NVMe queue, plus CPU 9 for the monitor); Linux `mem=112G`; FKI carve-out `carve_base=0x1E00000000`, `carve_mb=8156` (8,156 MiB). macOS 27 reached the desktop with Screen Sharing and SSH; About This Mac reports 7.80 GB memory. | Keep this affinity: the host has 15 NVMe I/O queues for 20 CPUs, and sharing a queue interrupt can deadlock XNU. The recorded desktop used CPU rendering. A separate DGX-specific setup exposes the GB10 via virglrenderer 1.2.0 and Venus; that optional path is documented in [`tools/dgx-spark/README.md`](../tools/dgx-spark/README.md) and was not exercised by this CPU-rendered evidence. Other bare-metal GPU models and a universal RAM floor remain unvalidated. [README evidence](../README.md#status). |
 
-## Active QEMU TCG host matrix and resource evidence
+## Complementary QEMU TCG host matrix and resource evidence
 
 At the time of this update, the attached executor is a Debian 13 x86-64 VM under KVM with a virtual AMD EPYC 9V74, 5 vCPUs, and 18,440,100 kB of visible RAM. It does not have `qemu-system-aarch64` installed, so it cannot provide a local TCG boot or bare-metal Intel/AMD evidence. See the [executor access note on PR #107](https://github.com/Personed/xnulinux/pull/107#issuecomment-7207300173).
 
@@ -80,8 +80,10 @@ PR #89 run #162 remains queued on old SHA `3020e23` with no jobs started; curren
 The historical full-route TCG reference assigns 16 GiB to the ARM64 guest, with Linux
 `mem=7G`, an 8,156 MiB FKI carve-out at `0x200000000`, and 7,900 MiB XNU RAM. The
 20 GiB total / 4 GiB available before artifact preparation screen is planning guidance,
-not a measured physical minimum or an acceptance threshold. Current required CI uses a
-separate reduced 6 GiB profile. The full route passed in
+not a measured physical minimum or an acceptance threshold. The complementary QEMU TCG
+workflow introduced in PR #52 uses 6 GiB as its default guest profile. This profile is
+specific to that workflow and is not a merge gate for the native x86_64 port. The full
+route passed in
 three recent virtualized Ubuntu jobs: PR #67 run [#106](https://github.com/Personed/xnulinux/actions/runs/45874167659)
 reported AMD EPYC 9V74, 4 vCPUs, and `MemTotal: 16367528 kB`; PR #36 run [#118](https://github.com/Personed/xnulinux/actions/runs/45881289094)
 reported `MemTotal: 16078392 kB`; and PR #69 run [#115](https://github.com/Personed/xnulinux/actions/runs/45880581266)
@@ -176,7 +178,7 @@ two virtualized 2 GiB observations remain experimental and do not establish a su
 guest minimum. Repeat the profiles on representative bare-metal Intel and AMD PCs before
 publishing guest or host resource floors; the 6 GiB profile remains the repeated baseline.
 
-## Reproducing the active QEMU TCG boot
+## Reproducing the complementary QEMU TCG boot profile
 
 On an x86-64 Linux PC, install QEMU ARM system emulation and Python 3. On Ubuntu, use
 `sudo apt-get install qemu-system-arm python3 coreutils util-linux`. On Alpine, install
@@ -294,7 +296,7 @@ Report the profile alongside the stage:
   from the Linux guest. The ARM64 QEMU path in [#3] uses TCG, including on Intel/AMD hosts;
   distinguish it from the Apple Silicon krunkit path. The module smoke test in [#1]
   is a separate check. Neither substitutes for the PureDarwin test below.
-- **Separate native x86-64 hosted XNU work on Intel/AMD Linux:** directly build and execute architecture-matched `fki.ko` and `xnu.ko` on Linux while hosting Tahoe 26. The ARM64/macOS 27 path remains preserved. #48 builds the FKI backend, #47 is fail-closed, and #78 adds read-only Mach-O metadata parsing only; none executes XNU. Native runtime and physical Intel/AMD acceptance remain pending. Keep host results separate and record host-integrity checks and guest-initiated shutdown.
+- **Native x86-64 hosted XNU on Intel/AMD Linux:** directly build and execute architecture-matched `fki.ko` and `xnu.ko` on Linux while hosting Tahoe 26.7.3. The ARM64/macOS 27 path remains preserved. #48 builds the FKI backend, #47 is fail-closed, and #78 adds read-only Mach-O metadata parsing only; none executes XNU. Native runtime and physical Intel/AMD acceptance remain pending. Keep host results separate and record host-integrity checks and guest-initiated shutdown.
 - **x86-64 PC → QEMU TCG → ARM64 Linux:** keep the PC's CPU/OS/QEMU details separate from
   the ARM64 guest. The reference FKI carve-out profile is tracked in [#23]: x86-64 Linux,
   QEMU 10.0.13 TCG, an ARM64 `virt` guest with 1 GiB of RAM and `mem=768M`, and FKI
@@ -303,7 +305,7 @@ Report the profile alongside the stage:
   a minimal test initramfs, not a full installed Linux distribution. This validates FKI's
   mapping and reuse in that profile; it is not a physical-PC compatibility claim, an XNU
   carve-out use test, or a PureDarwin boot.
-- **Active x86-64 PC → QEMU TCG → ARM64 Linux → PureDarwin console:** this full
+- **Complementary x86-64 PC → QEMU TCG → ARM64 Linux → PureDarwin console:** this full
   route is tracked in [#36](https://github.com/Personed/xnulinux/pull/36). Its acceptance
   workflow builds a paired PureDarwin image and collection, requires a Darwin console
   command and guest-issued halt, then verifies XNU/FKI unload, Linux guest power-off, and

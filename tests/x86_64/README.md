@@ -88,16 +88,21 @@ capabilities, change CR3 or GS, inspect supervisor XSS state, install or replace
 under foreign host state. Passing it does not establish native XNU runtime support or prove the proposed early
 exception/syscall bridge.
 
-The separate exception-recovery probe runs only in a disposable x86_64 VM and temporarily loads a test-owned shadow
-IDT on the selected vCPU to test controlled `#PF`/`#GP` recovery. It needs the same kind of matching x86_64 kernel
-headers passed as `KDIR`, QEMU 8.2 or newer, `busybox-static`, `cpio` and the normal module-build tools. When not
-running as root, `sudo` must be installed and usable because the script uses it to create and set permissions on
-`/dev/console` and `/dev/null` in the temporary initramfs; running as root skips that `sudo` path. CI selects a generic
-Ubuntu header package with `apt-cache search`; the VM script reads
-`include/config/kernel.release` under `KDIR` and uses `apt-get download` plus `dpkg-deb` to extract the matching
-`linux-image-unsigned-$KERNEL_RELEASE` package and `busybox-static` into its temporary initramfs. On Debian/Ubuntu,
-therefore, the configured APT indexes must contain both the unsigned kernel image for the exact `KDIR` release and
-`busybox-static`; missing or mismatched packages are a not-run environment failure, not a recovery pass.
+The separate exception-recovery probe runs in a disposable x86_64 VM and temporarily loads a test-owned shadow IDT on
+the selected vCPU to test controlled `#PF`/`#GP` recovery. It needs matching x86_64 kernel headers as `KDIR`, QEMU 8.2
+or newer, `cpio`, static C libraries and the normal module build tools. Run it as root or with usable `sudo` so it can
+create `/dev/console` and `/dev/null` in the temporary initramfs.
+
+The one-argument command reads the release from `KDIR/include/config/kernel.release` and downloads the matching
+unsigned kernel image (`linux-image-unsigned-$KERNEL_RELEASE` on Ubuntu or `linux-image-$KERNEL_RELEASE-unsigned` on
+Debian) and `busybox-static` through APT. To use local boot inputs, pass both files:
+
+```sh
+tests/x86_64/exception-recovery/test-vm.sh /path/to/kernel-headers /path/to/vmlinuz /path/to/busybox-static
+```
+
+Supply a static x86_64 BusyBox with `--install -s`, `sh`, `cat`, `cut`, `grep`, `uname`, `mount`, `insmod`, `rmmod`,
+`dmesg`, `sync` and `poweroff`. The guest verifies that its kernel release matches the headers before loading a module.
 
 The separate [test-only entry/return contract](../../docs/x86_64-entry-return-contract.md) defines the remaining gates
 and lists the Tahoe artifact and ABI evidence still required before any XNU handoff can be considered.

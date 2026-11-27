@@ -31,6 +31,10 @@ LC_UNIXTHREAD = 0x5
 LC_OPTIONAL_UNKNOWN = 0x77
 X86_THREAD_STATE64 = 4
 X86_THREAD_STATE64_COUNT = 42
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+XNU_SOURCE_PATCH = "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch"
+XNU_COMPAT_PATCH = "scripts/x86_64/tahoe-xnu-pointer-casts.patch"
+NON_INTEL_VENDOR_POLICY = "refuse-before-cpuid_do_precpuid_was-and-cpuid_set_generic_info"
 
 
 def put_u32(data, offset, value):
@@ -96,6 +100,8 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL):
 
 
 def build_manifest(image):
+    source_patch_hash = hashlib.sha256((REPO_ROOT / XNU_SOURCE_PATCH).read_bytes()).hexdigest()
+    compat_patch_hash = hashlib.sha256((REPO_ROOT / XNU_COMPAT_PATCH).read_bytes()).hexdigest()
     return {
         "build_result_schema_version": 1,
         "artifact": "/stale/runner/path/kernel.development",
@@ -112,6 +118,15 @@ def build_manifest(image):
         "xcode_version": "26.6",
         "platform": "MacOSX",
         "machine_config": "NONE",
+        "xnu_source_modified": True,
+        "xnu_source_patch": XNU_SOURCE_PATCH,
+        "xnu_source_patch_sha256": source_patch_hash,
+        "xnu_source_compat_patch_sha256": compat_patch_hash,
+        "xnu_non_intel_vendor_policy": NON_INTEL_VENDOR_POLICY,
+        "build_host_arch": "x86_64",
+        "build_host_mode": "native",
+        "build_process_arch": "x86_64",
+        "build_process_translated": False,
         "runtime_target_os_version": "26.7.3",
         "runtime_target_os_build": "25G342",
         "kernel_collection_built": False,
@@ -122,7 +137,8 @@ def build_manifest(image):
 
 
 def run_case(verifier, name, image, expected_success, mutate_manifest=None,
-             output_alias=False, expected_subtype="X86_64_ALL", policy_subtype=None):
+             output_alias=False, expected_subtype="X86_64_ALL", policy_subtype=None,
+             expected_diagnostic=None):
     with tempfile.TemporaryDirectory(prefix="xnu-artifact-verifier-") as temp:
         root = pathlib.Path(temp)
         artifact = root / "kernel.development"
@@ -165,6 +181,10 @@ def run_case(verifier, name, image, expected_success, mutate_manifest=None,
         if not expected_success:
             if not result.stderr:
                 raise AssertionError(f"{name}: rejection had no diagnostic")
+            if expected_diagnostic and expected_diagnostic not in result.stderr:
+                raise AssertionError(
+                    f"{name}: expected diagnostic {expected_diagnostic!r}, got {result.stderr!r}"
+                )
             if output_alias:
                 if output_path.read_bytes() != image:
                     raise AssertionError(f"{name}: output alias changed kernel.development")
@@ -187,6 +207,21 @@ def run_case(verifier, name, image, expected_success, mutate_manifest=None,
             raise AssertionError(f"{name}: stale manifest artifact path was trusted")
         if report["build_result"]["metadata"]["runtime_target_os_version"] != "26.7.3":
             raise AssertionError(f"{name}: runtime target metadata was not preserved")
+        metadata = report["build_result"]["metadata"]
+        expected_provenance = {
+            "xnu_source_modified": True,
+            "xnu_source_patch": XNU_SOURCE_PATCH,
+            "xnu_source_patch_sha256": hashlib.sha256((REPO_ROOT / XNU_SOURCE_PATCH).read_bytes()).hexdigest(),
+            "xnu_source_compat_patch_sha256": hashlib.sha256((REPO_ROOT / XNU_COMPAT_PATCH).read_bytes()).hexdigest(),
+            "xnu_non_intel_vendor_policy": NON_INTEL_VENDOR_POLICY,
+            "build_host_arch": "x86_64",
+            "build_host_mode": "native",
+            "build_process_arch": "x86_64",
+            "build_process_translated": False,
+        }
+        for key, value in expected_provenance.items():
+            if metadata.get(key) != value:
+                raise AssertionError(f"{name}: provenance field {key!r} was not preserved")
         if report["validation_scope"]["runtime_compatibility_verified"] is not False:
             raise AssertionError(f"{name}: report overstated runtime evidence")
         if report["validation_scope"]["load_attempted"] is not False:
@@ -240,6 +275,16 @@ def main():
     put_u32(non_executable_text, TEXT_OFF + 60, 3)  # r/w, no execute
     run_case(verifier, "RIP in non-executable text", non_executable_text, False)
 
+    unexpected_text_maxprot = make_valid_image()
+    put_u32(unexpected_text_maxprot, TEXT_OFF + 56, 7)  # writable maxprot; parser accepts, policy rejects
+    run_case(
+        verifier,
+        "provisional __TEXT policy diagnostics",
+        unexpected_text_maxprot,
+        False,
+        expected_diagnostic="observed {'vmaddr':",
+    )
+
     renamed_text = make_valid_image()
     put_name(renamed_text, TEXT_OFF + 8, "__KERNEL")
     put_name(renamed_text, TEXT_OFF + 88, "__KERNEL")
@@ -274,6 +319,25 @@ def main():
         False,
         mutate_manifest=lambda manifest: manifest.update({"runtime_compatibility_verified": True}),
     )
+    bad_provenance = (
+        ("XNU patch not applied", "xnu_source_modified", False),
+        ("XNU patch path mismatch", "xnu_source_patch", "xnu-patches/unexpected.patch"),
+        ("XNU patch digest mismatch", "xnu_source_patch_sha256", "0" * 64),
+        ("compatibility patch digest mismatch", "xnu_source_compat_patch_sha256", "0" * 64),
+        ("vendor policy mismatch", "xnu_non_intel_vendor_policy", "allow-generic-cpuid"),
+        ("host architecture mismatch", "build_host_arch", "arm64"),
+        ("host mode mismatch", "build_host_mode", "translated"),
+        ("process architecture mismatch", "build_process_arch", "arm64"),
+        ("translated process rejected", "build_process_translated", True),
+    )
+    for name, key, value in bad_provenance:
+        run_case(
+            verifier,
+            name,
+            valid,
+            False,
+            mutate_manifest=lambda manifest, key=key, value=value: manifest.update({key: value}),
+        )
     run_case(verifier, "output cannot overwrite input", valid, False,
              output_alias=True)
     run_case(

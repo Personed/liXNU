@@ -56,7 +56,9 @@ explicitly; it is not inferred from the parser's support list. The structural
 profile requires a unique `__TEXT` segment at file offset zero, read/execute
 protections, at least one section, one leading optional `__PAGEZERO`, unique
 segment names, a file-backed RIP in `__TEXT`, and no unclassified optional
-load commands.
+load commands. It also verifies that the manifest reports the pinned XNU
+source patch and compatibility patch hashes, the expected non-Intel vendor
+policy, and a native x86_64 build host/process.
 
 ```sh
 python3 tools/dev/x86_64/verify-xnu-artifact.py \
@@ -85,5 +87,9 @@ the cases with:
 ```sh
 tests/x86_64/test-xnu-artifact-verifier.sh
 ```
+
+The CI integration runs this preflight in the Intel-native build job and
+uploads its structural report with that job's artifact. It does not inspect or
+include the separate Apple Silicon cross-build artifact.
 
 No Apple image or firmware is included in this repository.

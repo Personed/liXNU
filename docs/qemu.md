@@ -10,9 +10,10 @@ The launcher needs Python 3, `qemu-system-aarch64`, and a matching pair of AArch
 variable-store images. Use one writable copy of the variables image per VM. The defaults are 4
 guest CPUs and 16 GiB of guest RAM. Allow additional RAM for the physical host.
 
-The current complete PureDarwin reference profile assigns 16 GiB to the ARM64 guest. Before
-preparing its artifacts, record the total and available RAM visible to the operating system that
-will run QEMU. The CI planning screen is at least 20 GiB total and 4 GiB available. On a
+The 16 GiB default above is for the persistent UEFI VM. For the tested 6 GiB PureDarwin
+profile, see [Boot the PureDarwin ARM64 guest with TCG](#boot-the-puredarwin-arm64-guest-with-tcg).
+The historical 16 GiB PureDarwin profile used a CI planning screen of 20 GiB total host RAM
+and 4 GiB available before artifact preparation. On a
 virtualized host, these values describe the runner OS and do not establish the outer machine's
 physical RAM. This is a planning screen, not a measured minimum; the physical RAM floor is unknown.
 See the [validation matrix](portability-validation.md) for the evidence and limits.
@@ -105,7 +106,8 @@ git checkout --detach 589c40ead54a63946fb44e8bdb35eb6add9adffe
 Download and extract the paired
 [`puredarwin-e2e-guest` artifact](https://github.com/Personed/xnulinux/actions/runs/45911026412/artifacts/15161900498) and
 [`puredarwin-e2e-disk` artifact](https://github.com/Personed/xnulinux/actions/runs/45911026412/artifacts/15161666268) from [run #158](https://github.com/Personed/xnulinux/actions/runs/45911026412).
-Both artifacts expire on 2026-12-27. You can download them in the browser or with GitHub CLI:
+Both artifacts expire on 2026-12-27. Sign in to GitHub with an account that can access the run.
+To download from the terminal, authenticate GitHub CLI with `gh auth login`, then run:
 
 ```sh
 gh run download 45911026412 --repo Personed/xnulinux --name puredarwin-e2e-guest --dir artifacts/guest
@@ -122,7 +124,7 @@ the disk archive contains `pd.img`. The three boot inputs have these SHA-256 val
 | `initramfs.cpio.gz` | `fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667` |
 | `pd.img` | `7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f` |
 
-Install Python 3 and QEMU system AArch64 emulation 8.2 or later. QEMU 8.2 is the
+Install Python 3.9 or later and QEMU system AArch64 emulation 8.2 or later. QEMU 8.2 is the
 minimum version with the tested `cortex-a710` CPU model.
 
 - Ubuntu 24.04: `sudo apt-get install qemu-system-arm python3 coreutils util-linux`.

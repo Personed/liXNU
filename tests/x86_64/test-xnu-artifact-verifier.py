@@ -11,15 +11,16 @@ import sys
 import tempfile
 
 
-FILE_SIZE = 1024
+FILE_SIZE = 0x600
 HEADER_SIZE = 32
 PAGEZERO_SIZE = 72
 TEXT_SIZE = 72 + 80
 THREAD_SIZE = 8 + 8 + 42 * 4
-COMMAND_BYTES = PAGEZERO_SIZE + TEXT_SIZE + THREAD_SIZE
+COMMAND_BYTES = PAGEZERO_SIZE + 2 * TEXT_SIZE + THREAD_SIZE
 PAGEZERO_OFF = HEADER_SIZE
 TEXT_OFF = PAGEZERO_OFF + PAGEZERO_SIZE
-THREAD_OFF = TEXT_OFF + TEXT_SIZE
+HIB_OFF = TEXT_OFF + TEXT_SIZE
+THREAD_OFF = HIB_OFF + TEXT_SIZE
 RIP_OFF = THREAD_OFF + 8 + 8 + 16 * 8
 
 MH_EXECUTE = 2
@@ -58,7 +59,7 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL):
             CPU_TYPE_X86_64,
             subtype,
             MH_EXECUTE,
-            3,
+            4,
             COMMAND_BYTES,
             0,
             0,
@@ -75,10 +76,10 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL):
     put_u32(data, TEXT_OFF, LC_SEGMENT_64)
     put_u32(data, TEXT_OFF + 4, TEXT_SIZE)
     put_name(data, TEXT_OFF + 8, "__TEXT")
-    put_u64(data, TEXT_OFF + 24, 0x1000)
+    put_u64(data, TEXT_OFF + 24, 0x4000)
     put_u64(data, TEXT_OFF + 32, 0x2000)
     put_u64(data, TEXT_OFF + 40, 0)
-    put_u64(data, TEXT_OFF + 48, 0x200)
+    put_u64(data, TEXT_OFF + 48, 0x400)
     put_u32(data, TEXT_OFF + 56, 5)
     put_u32(data, TEXT_OFF + 60, 5)
     put_u32(data, TEXT_OFF + 64, 1)
@@ -86,10 +87,28 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL):
 
     put_name(data, TEXT_OFF + 72, "__text")
     put_name(data, TEXT_OFF + 88, "__TEXT")
-    put_u64(data, TEXT_OFF + 104, 0x1100)
+    put_u64(data, TEXT_OFF + 104, 0x4300)
     put_u64(data, TEXT_OFF + 112, 0x20)
-    put_u32(data, TEXT_OFF + 120, 0x100)
+    put_u32(data, TEXT_OFF + 120, 0x300)
     put_u32(data, TEXT_OFF + 124, 4)
+
+    # XNU places the startup code and bootstrap data in __HIB below __TEXT.
+    put_u32(data, HIB_OFF, LC_SEGMENT_64)
+    put_u32(data, HIB_OFF + 4, TEXT_SIZE)
+    put_name(data, HIB_OFF + 8, "__HIB")
+    put_u64(data, HIB_OFF + 24, 0x1000)
+    put_u64(data, HIB_OFF + 32, 0x2000)
+    put_u64(data, HIB_OFF + 40, 0x400)
+    put_u64(data, HIB_OFF + 48, 0x200)
+    put_u32(data, HIB_OFF + 56, 7)
+    put_u32(data, HIB_OFF + 60, 7)
+    put_u32(data, HIB_OFF + 64, 1)
+    put_name(data, HIB_OFF + 72, "__text")
+    put_name(data, HIB_OFF + 88, "__HIB")
+    put_u64(data, HIB_OFF + 104, 0x1100)
+    put_u64(data, HIB_OFF + 112, 0x20)
+    put_u32(data, HIB_OFF + 120, 0x500)
+    put_u32(data, HIB_OFF + 124, 4)
 
     put_u32(data, THREAD_OFF, LC_UNIXTHREAD)
     put_u32(data, THREAD_OFF + 4, THREAD_SIZE)
@@ -232,6 +251,8 @@ def run_case(verifier, name, image, expected_success, mutate_manifest=None,
             raise AssertionError(f"{name}: wrong accepted CPU subtype")
         if report["validation_scope"]["layout_profile"] != "xnu-development-kernel-v1":
             raise AssertionError(f"{name}: structural layout policy was not recorded")
+        if report["validation_scope"]["entry_segment"] != "__HIB":
+            raise AssertionError(f"{name}: startup segment was not recorded")
 
 
 def main():
@@ -269,11 +290,16 @@ def main():
 
     rip_outside_file = make_valid_image()
     put_u64(rip_outside_file, RIP_OFF, 0x2500)
-    run_case(verifier, "RIP outside file-backed text", rip_outside_file, False)
+    run_case(verifier, "RIP outside file-backed bootstrap segment", rip_outside_file, False)
 
-    non_executable_text = make_valid_image()
-    put_u32(non_executable_text, TEXT_OFF + 60, 3)  # r/w, no execute
-    run_case(verifier, "RIP in non-executable text", non_executable_text, False)
+    non_executable_hib = make_valid_image()
+    put_u32(non_executable_hib, HIB_OFF + 60, 3)  # r/w, no execute
+    run_case(verifier, "RIP in non-executable bootstrap segment", non_executable_hib, False)
+
+    rip_in_text = make_valid_image()
+    put_u64(rip_in_text, RIP_OFF, 0x4300)
+    run_case(verifier, "RIP in __TEXT instead of __HIB", rip_in_text, False,
+             expected_diagnostic="thread RIP is not inside the file-backed executable __HIB")
 
     unexpected_text_maxprot = make_valid_image()
     put_u32(unexpected_text_maxprot, TEXT_OFF + 56, 7)  # writable maxprot; parser accepts, policy rejects
@@ -291,7 +317,7 @@ def main():
     run_case(verifier, "unexpected segment layout", renamed_text, False)
 
     unknown_command = make_valid_image()
-    put_u32(unknown_command, 16, 4)
+    put_u32(unknown_command, 16, 5)
     put_u32(unknown_command, 20, COMMAND_BYTES + 8)
     put_u32(unknown_command, THREAD_OFF + THREAD_SIZE, LC_OPTIONAL_UNKNOWN)
     put_u32(unknown_command, THREAD_OFF + THREAD_SIZE + 4, 8)

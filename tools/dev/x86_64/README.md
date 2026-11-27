@@ -55,10 +55,11 @@ old absolute `artifact` path is not used. The CPU subtype must be selected
 explicitly; it is not inferred from the parser's support list. The structural
 profile requires a unique `__TEXT` segment at file offset zero, read/execute
 protections, at least one section, one leading optional `__PAGEZERO`, unique
-segment names, a file-backed RIP in `__TEXT`, and no unclassified optional
-load commands. It also verifies that the manifest reports the pinned XNU
-source patch and compatibility patch hashes, the expected non-Intel vendor
-policy, and a native x86_64 build host/process.
+segment names, and no unclassified optional load commands. The thread RIP must
+be file-backed in an executable `__HIB` segment. The pinned XNU linker selects
+`__start`, which `osfmk/x86_64/start.s` places in `__HIB,__text`. The manifest
+must report the pinned XNU source patch and compatibility patch hashes, the
+expected non-Intel vendor policy, and a native x86_64 build host and process.
 
 ```sh
 python3 tools/dev/x86_64/verify-xnu-artifact.py \
@@ -79,10 +80,8 @@ manifest about runtime targets is recorded as build metadata and is not runtime
 evidence. Unknown optional load commands are rejected because the inspector
 cannot classify their semantics.
 
-The `__TEXT` layout profile is a provisional policy pending a run against the
-actual #130 artifact. Synthetic accepted and rejected cases exercise the
-policy, but do not establish that the real kernel artifact satisfies it. Run
-the cases with:
+The layout profile remains provisional until the Intel job inspects a real
+build artifact. Run the synthetic cases with the command below.
 
 ```sh
 tests/x86_64/test-xnu-artifact-verifier.sh

@@ -24,6 +24,8 @@ jobs:
           test -n "$pkg" || { echo "no x86_64 generic kernel headers found" >&2; exit 1; }
           sudo apt-get install -y -qq build-essential busybox-static cpio qemu-system-x86 "$pkg" >/dev/null
           echo "KDIR=/usr/src/$pkg" >> "$GITHUB_ENV"
+      - name: Check CR3 decoding and root placement fixtures
+        run: bash tests/x86_64/test-fki-cr3.sh
       - name: Run boundary probe and check kernel release rejection in QEMU TCG
         run: |
           release=$(cat "$KDIR/include/config/kernel.release")

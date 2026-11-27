@@ -3,6 +3,7 @@
 #include <linux/cpu.h>
 #include <linux/atomic.h>
 #include <linux/build_bug.h>
+#include <linux/cc_platform.h>
 #include <linux/completion.h>
 #include <linux/errno.h>
 #include <linux/fs.h>
@@ -27,6 +28,7 @@
 #include <asm/special_insns.h>
 
 #include "fki.h"
+#include "fki_x86_64_cr3.h"
 #include "boundary_probe_asm.h"
 #include "boundary_probe_uapi.h"
 
@@ -72,8 +74,8 @@ struct bp_host_snapshot {
 	unsigned long rsp;
 	unsigned long rflags;
 	unsigned long cr0;
-	unsigned long cr3;
 	unsigned long cr4;
+	struct fki_x86_cr3 cr3;
 	u64 efer;
 	u64 fs_base;
 	u64 gs_base;
@@ -171,8 +173,15 @@ static noinline int bp_snapshot(struct bp_host_snapshot *snapshot)
 	snapshot->preempt_count = preempt_count();
 	snapshot->irq_disabled = irqs_disabled();
 	snapshot->cr0 = read_cr0();
-	snapshot->cr3 = __read_cr3();
 	snapshot->cr4 = __read_cr4();
+	err = fki_x86_decode_cr3(__read_cr3(), boot_cpu_data.x86_phys_bits,
+				 snapshot->cr4 & X86_CR4_PCIDE,
+				 boot_cpu_has(X86_FEATURE_PCID), &snapshot->cr3);
+	if (err) {
+		pr_err("x86-boundary-probe: CR3 rejected by the plain-address snapshot profile: %d\n",
+		       err);
+		return err;
+	}
 	native_store_gdt(&gdt);
 	store_idt(&idt);
 	snapshot->ldt = 0;
@@ -204,9 +213,6 @@ static bool bp_snapshots_match_internal(const struct bp_host_snapshot *before,
 					const struct bp_host_snapshot *after,
 					bool compare_rsp)
 {
-	const unsigned long page_table_address_mask = ~((1UL << 12) - 1);
-	const unsigned long pcid_mask = (1UL << 12) - 1;
-
 	return before->cpu == after->cpu && before->task == after->task &&
 	       before->stack_page == after->stack_page &&
 	       before->stack_end == after->stack_end &&
@@ -222,10 +228,9 @@ static bool bp_snapshots_match_internal(const struct bp_host_snapshot *before,
 	       before->idt_limit == after->idt_limit &&
 	       before->ldt == after->ldt && before->tr == after->tr &&
 	       ((before->rflags ^ after->rflags) & BP_RFLAGS_CONTROL) == 0 &&
-	       before->cr3 == after->cr3 &&
-	       (before->cr3 & page_table_address_mask) ==
-		(after->cr3 & page_table_address_mask) &&
-	       (before->cr3 & pcid_mask) == (after->cr3 & pcid_mask) &&
+	       before->cr3.root_pa == after->cr3.root_pa &&
+	       before->cr3.pcid == after->cr3.pcid &&
+	       before->cr3.cache_flags == after->cr3.cache_flags &&
 	       before->fs_base == after->fs_base && before->gs_base == after->gs_base &&
 	       before->kernel_gs_base == after->kernel_gs_base;
 }
@@ -827,6 +832,10 @@ static int __init bp_init(void)
 
 	if (fki_caps() != 0) {
 		pr_err("x86-boundary-probe: refusing nonzero FKI capabilities\n");
+		return -EOPNOTSUPP;
+	}
+	if (cc_platform_has(CC_ATTR_MEM_ENCRYPT)) {
+		pr_err("x86-boundary-probe: CR3 comparison requires plain physical addresses\n");
 		return -EOPNOTSUPP;
 	}
 	err = bp_read_xcr0(&xcr0);

@@ -8,6 +8,10 @@ on:
       - 'docs/free-kc.md'
       - '.github/workflows/puredarwin-root-export.yml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
 jobs:
   root-export:
     runs-on: ubuntu-24.04

@@ -11,6 +11,10 @@ on:
       - gpu/xnu-cpu-metal/**
       - gpu/venus/**
       - gpu/xnu-drm/**
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
 jobs:
   bundle:
     runs-on: macos-latest

@@ -3,6 +3,10 @@ name: xnu-x86_64
 on:
   push:
   pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
 jobs:
   build-xnu-x86_64:
     runs-on: ubuntu-24.04

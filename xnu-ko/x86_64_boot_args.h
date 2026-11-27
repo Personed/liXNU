@@ -151,7 +151,8 @@ int xnu_x86_boot_args_validate(const struct xnu_x86_boot_args *args);
  * Inspect a supplied EFI map byte buffer, without dereferencing MemoryMap.
  * The buffer must match MemoryMapSize. Reject empty or unaligned descriptor
  * ranges and physical page indices that would truncate in the pinned XNU.
- * This does not classify memory types or establish physical ownership.
+ * The pinned XNU skips page 0 and page UINT32_MAX even though their
+ * indices fit. This check does not determine usable memory or ownership.
  */
 int xnu_x86_boot_memory_map_validate(const struct xnu_x86_boot_args *args,
 				     const void *map, unsigned long map_size);

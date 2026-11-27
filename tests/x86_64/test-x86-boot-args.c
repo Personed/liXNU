@@ -206,6 +206,7 @@ static void test_efi_memory_map_page_indices(void)
 		.PhysicalStart = 0x100000000ULL,
 		.NumberOfPages = 2,
 	};
+	/* XNU ignores this page; the preflight only checks representability. */
 	struct xnu_x86_efi_memory_range second = {
 		.PhysicalStart = (uint64_t)UINT32_MAX << 12,
 		.NumberOfPages = 1,

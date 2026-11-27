@@ -238,3 +238,21 @@ physical host-memory minimum.
 Run #158 passed once on each hosted Ubuntu, Windows Server 2025, and Intel macOS profile
 with `cortex-a710`. This supports the tested hosted profiles only; representative
 physical Intel/AMD PCs and PIE-enabled QEMU `-cpu max` remain separate validation items.
+
+### Measured host resources in run #158
+
+Each full-route job assigned 6 GiB to QEMU and recorded host memory immediately before
+starting QEMU. These readings are from hosted CI runners, not bare-metal PCs:
+
+| Hosted OS and CPU | QEMU | Host RAM total / available at launch | QEMU peak RSS |
+| --- | --- | --- | --- |
+| Ubuntu 24.04.5, Intel Xeon 6975P-C (4 logical CPUs) | 8.2.2 | 15.33 / 14.13 GiB | 3.67 GiB |
+| Windows Server 2025, AMD Family 25 Model 1 (4 logical CPUs) | 11.1.0 | 15.99 / 12.72 GiB | Not measured |
+| macOS 15, Intel Core i7-8700B (4 logical CPUs) | 11.1.0 | 14.00 / 9.78 GiB | 3.47 GiB |
+
+The lowest successful hosted-runner reading in this set was 14.00 GiB total and 9.78 GiB
+available at QEMU launch on Intel macOS. This is an observed CI profile, not a physical-PC
+minimum. QEMU RSS was not measured on Windows. The host RAM floor for physical Intel/AMD
+PCs remains unknown; these results do not establish that every PC can run the 6 GiB guest.
+
+

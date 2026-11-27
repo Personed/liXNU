@@ -10,6 +10,7 @@ static struct xnu_x86_cpu_profile valid_intel(void)
 		.family = 6,
 		.model = 0x3c, /* Haswell, explicitly recognized in cpuid_set_cpufamily(). */
 		.x86_64h_features = XNU_X86_CPU_X86_64H_MASK,
+		.linux_enabled_x86_64h_features = XNU_X86_CPU_X86_64H_MASK,
 	};
 
 	memcpy(profile.vendor, "GenuineIntel", XNU_X86_CPU_VENDOR_SIZE);
@@ -58,6 +59,13 @@ static void test_every_x86_64h_feature_is_required(void)
 
 	for (i = 0; i < sizeof(feature_bits) / sizeof(feature_bits[0]); i++) {
 		profile.x86_64h_features = XNU_X86_CPU_X86_64H_MASK & ~feature_bits[i];
+		assert(xnu_x86_cpu_preflight(&profile) ==
+		       XNU_X86_CPU_MISSING_X86_64H_FEATURES);
+	}
+	profile.x86_64h_features = XNU_X86_CPU_X86_64H_MASK;
+	for (i = 0; i < sizeof(feature_bits) / sizeof(feature_bits[0]); i++) {
+		profile.linux_enabled_x86_64h_features =
+			XNU_X86_CPU_X86_64H_MASK & ~feature_bits[i];
 		assert(xnu_x86_cpu_preflight(&profile) ==
 		       XNU_X86_CPU_MISSING_X86_64H_FEATURES);
 	}

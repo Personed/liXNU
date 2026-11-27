@@ -33,7 +33,9 @@ struct xnu_x86_cpu_profile {
 	unsigned char vendor[XNU_X86_CPU_VENDOR_SIZE];
 	xnu_x86_cpu_u32 family;
 	xnu_x86_cpu_u32 model;
+	/* Raw CPUID capability and the host Linux-enabled subset are both required. */
 	xnu_x86_cpu_u32 x86_64h_features;
+	xnu_x86_cpu_u32 linux_enabled_x86_64h_features;
 };
 
 enum xnu_x86_cpu_preflight_result {

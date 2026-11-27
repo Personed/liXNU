@@ -138,3 +138,14 @@ if grep -F 'xnu: native x86_64 world switch is not implemented; refusing to load
   echo "feature-limited disposable VM reached the world-switch refusal before CPU validation" >&2
   exit 1
 fi
+
+AVX2_LOG="$STAGE/qemu-serial-avx2-disabled.log"
+run_stub_vm tcg 'Haswell,-avx2' "$AVX2_LOG"
+grep -F 'xnu: CPU is missing required x86_64 features: AVX2' "$AVX2_LOG" >/dev/null || {
+  echo "Intel Haswell-profile VM did not identify the disabled AVX2 feature" >&2
+  exit 1
+}
+if grep -F 'xnu: native x86_64 world switch is not implemented; refusing to load' "$AVX2_LOG" >/dev/null; then
+  echo "Haswell profile reached the world-switch refusal with AVX2 disabled" >&2
+  exit 1
+fi

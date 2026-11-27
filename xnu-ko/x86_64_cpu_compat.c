@@ -65,6 +65,8 @@ xnu_x86_cpu_preflight(const struct xnu_x86_cpu_profile *profile)
 	if (!xnu_x86_intel_model_supported(profile->family, profile->model))
 		return XNU_X86_CPU_UNSUPPORTED_FAMILY_MODEL;
 	if ((profile->x86_64h_features & XNU_X86_CPU_X86_64H_MASK) !=
+	    XNU_X86_CPU_X86_64H_MASK ||
+	    (profile->linux_enabled_x86_64h_features & XNU_X86_CPU_X86_64H_MASK) !=
 	    XNU_X86_CPU_X86_64H_MASK)
 		return XNU_X86_CPU_MISSING_X86_64H_FEATURES;
 	return XNU_X86_CPU_COMPATIBLE;

@@ -11,25 +11,27 @@
 #include <linux/module.h>
 #include <linux/printk.h>
 #include <linux/types.h>
+#include <asm/cpufeature.h>
 #include <asm/cpuid.h>
 #include <linux/string.h>
 #include "x86_64_cpu_compat.h"
 
 struct xnu_cpu_feature {
+	int bit;
 	xnu_x86_cpu_u32 profile_mask;
 	const char *name;
 };
 
 static const struct xnu_cpu_feature xnu_required_cpu_features[] = {
-	{ XNU_X86_CPU_FEAT_FMA, "FMA" },
-	{ XNU_X86_CPU_FEAT_SSE4_2, "SSE4.2" },
-	{ XNU_X86_CPU_FEAT_MOVBE, "MOVBE" },
-	{ XNU_X86_CPU_FEAT_POPCNT, "POPCNT" },
-	{ XNU_X86_CPU_FEAT_AVX, "AVX" },
-	{ XNU_X86_CPU_FEAT_LZCNT, "LZCNT" },
-	{ XNU_X86_CPU_FEAT_BMI1, "BMI1" },
-	{ XNU_X86_CPU_FEAT_AVX2, "AVX2" },
-	{ XNU_X86_CPU_FEAT_BMI2, "BMI2" },
+	{ X86_FEATURE_FMA, XNU_X86_CPU_FEAT_FMA, "FMA" },
+	{ X86_FEATURE_XMM4_2, XNU_X86_CPU_FEAT_SSE4_2, "SSE4.2" },
+	{ X86_FEATURE_MOVBE, XNU_X86_CPU_FEAT_MOVBE, "MOVBE" },
+	{ X86_FEATURE_POPCNT, XNU_X86_CPU_FEAT_POPCNT, "POPCNT" },
+	{ X86_FEATURE_AVX, XNU_X86_CPU_FEAT_AVX, "AVX" },
+	{ X86_FEATURE_ABM, XNU_X86_CPU_FEAT_LZCNT, "LZCNT" },
+	{ X86_FEATURE_BMI1, XNU_X86_CPU_FEAT_BMI1, "BMI1" },
+	{ X86_FEATURE_AVX2, XNU_X86_CPU_FEAT_AVX2, "AVX2" },
+	{ X86_FEATURE_BMI2, XNU_X86_CPU_FEAT_BMI2, "BMI2" },
 };
 
 static void xnu_read_cpu_profile(struct xnu_x86_cpu_profile *profile)
@@ -87,6 +89,11 @@ static void xnu_read_cpu_profile(struct xnu_x86_cpu_profile *profile)
 		if (ebx & (1U << 8))
 			profile->x86_64h_features |= XNU_X86_CPU_FEAT_BMI2;
 	}
+	/* Respect Linux's disabled/cleared feature view as well as raw CPUID. */
+	for (i = 0; i < ARRAY_SIZE(xnu_required_cpu_features); i++)
+		if (boot_cpu_has(xnu_required_cpu_features[i].bit))
+			profile->linux_enabled_x86_64h_features |=
+				xnu_required_cpu_features[i].profile_mask;
 }
 
 static int xnu_cpu_preflight(char *missing, size_t missing_size)
@@ -102,7 +109,9 @@ static int xnu_cpu_preflight(char *missing, size_t missing_size)
 		for (i = 0; i < ARRAY_SIZE(xnu_required_cpu_features); i++) {
 			const struct xnu_cpu_feature *feature = &xnu_required_cpu_features[i];
 
-			if (profile.x86_64h_features & feature->profile_mask)
+			if ((profile.x86_64h_features &
+			     profile.linux_enabled_x86_64h_features &
+			     feature->profile_mask) == feature->profile_mask)
 				continue;
 			used += scnprintf(missing + used, missing_size - used, "%s%s",
 					  used ? " " : "", feature->name);

@@ -55,7 +55,7 @@ PR #46's older cross-host branch used the historical 16 GiB profile and its earl
 
 Current #52 run #148 and PR #83 run #149 independently passed the 6 GiB Linux profile. PR #96 run [#157](https://github.com/Personed/xnulinux/actions/runs/45907949989) passed the standard 6 GiB route and all five experimental profiles from 5 GiB to 2 GiB. A supplemental local QEMU 6.2.0/KVM run using the paired #157 artifacts passed all six profiles; see the [experimental guest-memory results](#experimental-guest-memory-profiles) below for RSS, hashes, and per-profile logs, also linked in PR #99 comment 7206879507. Both 2 GiB observations remain experimental, not a supported minimum. PR #99 run [#159](https://github.com/Personed/xnulinux/actions/runs/45911321313) remains queued after the initial disk/collection build hit the remote AppleClang SDK timeout and a retry was canceled; no current-head workflow memory results are available.
 
-PR #102 head `0fcffab` adds a dedicated QEMU 11.1.0 `--require-pie` boot job, but no Actions run is associated with this head and no real PIE boot has completed. A clean source XNU/DVM rebuild on the integrated head also remains unvalidated. Run [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121) tested old head `9e15d68`, passed image build, and was canceled during disk/collection build. Earlier patch-application and missing-strict-boot findings were addressed on the new head; one current automated-review finding asks that the workflow summary match the stated x86_64 path. A local pre-integration simulation with #89 reported one workflow conflict and missing manifest fixtures; the integration needs to pass `--qemu-cpu max` explicitly and provide those fixtures before real PIE boot. This simulation is not a QEMU boot result.
+PR #102 current head `b6cfc51` includes a dedicated QEMU 11.1.0 `--require-pie` boot job that explicitly selects `-cpu max`; no Actions run is associated with this head and no real PIE boot has completed. Local tests, cross-builds, patch checks, shell syntax checks, and `actionlint` passed, but a clean source XNU/DVM rebuild on the integrated head remains unvalidated. Run [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121) tested old head `9e15d68`, passed image build, and was canceled during disk/collection build. The current head's source build, PIE=1 table-update probes, console, and guest shutdown still require a real strict QEMU run.
 
 PR #89 run #162 was canceled during image setup on old head `3020e23`; current head `ac74d61` changes documentation only and has no new workflow run. Earlier run #147 belongs to a superseded #89 head. Module jobs are stage smoke tests, not a full route. Do not claim physical-PC support until representative Intel and AMD hardware is tested; neither a host RAM floor nor repeatable 2 GiB support is established.
 
@@ -340,7 +340,7 @@ Report the profile alongside the stage:
   `-cpu max` exposes S1PIE, but PR [#98](https://github.com/Personed/xnulinux/pull/98) run
   [#158](https://github.com/Personed/xnulinux/actions/runs/45911026412) passed all three
   hosted OS jobs once with `cortex-a710`. This CPU model changes other features too, so the
-  pass validates that tested profile rather than proving S1PIE caused the fault. PR #102 head `0fcffab` now adds a dedicated QEMU 11.1.0 `--require-pie` boot job. Its real
+  pass validates that tested profile rather than proving S1PIE caused the fault. PR #102 current head `b6cfc51` includes a dedicated QEMU 11.1.0 `--require-pie` boot job that explicitly selects `-cpu max`. Its real
   `TCR2_EL1.PIE=1` result through XNU table update, console, and shutdown remains pending; no
   Actions run is associated with this head. This is a separate PIE-compatibility result and
   does not gate the already passing hosted `cortex-a710` profile.
@@ -358,13 +358,12 @@ Report the profile alongside the stage:
   remains queued after the initial disk build hit a remote SDK-fetch timeout and a retry was canceled. The
   supplemental local six-profile QEMU 6.2.0/KVM results using paired #157 artifacts are recorded above, with raw
   per-profile logs linked in PR #99 comment 7206879507. No current-head workflow memory results are available.
-  PR #102 head `0fcffab` adds a dedicated QEMU 11.1.0 `--require-pie` boot job, but no Actions run
+  PR #102 current head `b6cfc51` includes a dedicated QEMU 11.1.0 `--require-pie` boot job, but no Actions run
   is associated with this head. Run [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121)
   tested old head `9e15d68`, passed image build, and was canceled during disk/collection build. The earlier
-  patch-application and missing-strict-boot findings were addressed on the new head; one current automated-review
-  finding asks that the workflow summary match the stated x86_64 path. A local pre-integration simulation with #89
-  reported one workflow conflict and missing manifest fixtures; the strict job must pass `--qemu-cpu max` explicitly
-  and the fixtures must be supplied before real PIE boot. This simulation is not a QEMU boot result. PR #89 run #162 was
+  patch-application and strict-job review findings were addressed on the new head. Local unit tests, cross-builds,
+  patch checks, shell syntax checks, and `actionlint` passed, but there is no clean integrated XNU/DVM build or real PIE boot.
+  PR #89 run #162 was
   canceled during image setup on old head `3020e23`; current head `ac74d61` changes documentation only and has no new
   workflow run. This is the current PR-head CI record only; the completed #158 A710 pass
   remains valid evidence for its tested hosted profiles and does not require a new

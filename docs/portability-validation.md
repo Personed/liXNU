@@ -33,8 +33,18 @@ Linux kernel with PAC support and 4 KiB pages, running at EL1. FKI's contiguous 
 is host-specific: it can map a pre-reserved carve-out or request CMA allocations where
 available. The DGX Spark profile reserves memory with Linux `mem=` and FKI `carve_base`/
 `carve_mb`; that range is not allocated from CMA. Do not reuse its addresses or sizes on a
-different host. These are tested configurations, not minimum host requirements. See the
-[ARM64 host setup](hosted-service.md) and [README evidence](../README.md#status).
+different host. These are tested configurations, not minimum host requirements.
+
+In the #89 FKI code, `fki_window_l1()` also rejects unsupported `TCR_EL1` geometry:
+`T1SZ=16` (48-bit virtual addresses), `TG1=2` (4 KiB granule),
+`IPS<=5` (at most 48-bit physical addresses), and `DS=0` (LPA2 descriptor format
+disabled). Other values return `-EOPNOTSUPP`. The same guard is present in the #172
+test merge, whose TCG ARM64 guest passed the PureDarwin route; this confirms that guest
+geometry only. The #172 result does not revalidate the direct-host Krunkit or DGX
+profiles above against the guard. Check each host's actual `TCR_EL1` before treating an
+older direct-host result as evidence for this #89 revision.
+
+See the [ARM64 host setup](hosted-service.md) and [README evidence](../README.md#status).
 
 | ARM64 host profile | Verified configuration and result | Hardware and evidence limits |
 | --- | --- | --- |

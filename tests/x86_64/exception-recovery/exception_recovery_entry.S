@@ -42,6 +42,12 @@
 
 #define ER_TERMINAL_CODE_BASE 0x45520000
 
+.macro ER_CHECK_SCRATCH expected, offset
+	movabsq $\expected, %rax
+	cmpq %rax, er_recovery_scratch+\offset(%rip)
+	jne .Lterminal_recovery_state
+.endm
+
 SYM_FUNC_START(x86_er_inject)
 	/* Preserve the Linux task-stack envelope before selecting any scratch GPRs. */
 	pushq %rbp
@@ -103,27 +109,28 @@ SYM_FUNC_START(x86_er_inject)
 	lidt ER_OFF_SHADOW_IDTR(%r12)
 
 	/* Seed distinct GPR values; RSP stays fixed through the faulting label. */
-	movabsq $0x4a01f00d4a01f00d, %rax
-	movabsq $0x4a02f00d4a02f00d, %rbx
-	movabsq $0x4a03f00d4a03f00d, %rcx
-	movabsq $0x4a04f00d4a04f00d, %rdx
-	movabsq $0x4a05f00d4a05f00d, %rsi
-	movabsq $0x4a06f00d4a06f00d, %rdi
-	movabsq $0x4a07f00d4a07f00d, %rbp
-	movabsq $0x4a08f00d4a08f00d, %r8
-	movabsq $0x4a09f00d4a09f00d, %r9
-	movabsq $0x4a10f00d4a10f00d, %r10
+	movabsq $ER_SENTINEL_RAX, %rax
+	movabsq $ER_SENTINEL_RBX, %rbx
+	movabsq $ER_SENTINEL_RCX, %rcx
+	movabsq $ER_SENTINEL_RDX, %rdx
+	movabsq $ER_SENTINEL_RSI, %rsi
+	movabsq $ER_SENTINEL_RDI, %rdi
+	movabsq $ER_SENTINEL_RBP, %rbp
+	movabsq $ER_SENTINEL_R8, %r8
+	movabsq $ER_SENTINEL_R9, %r9
+	movabsq $ER_SENTINEL_R10, %r10
 	movabsq $ER_SENTINEL_R11, %r11
 	movabsq $ER_SENTINEL_R12, %r12
-	movabsq $0x4a13f00d4a13f00d, %r13
-	movabsq $0x4a14f00d4a14f00d, %r14
-	movabsq $0x4a15f00d4a15f00d, %r15
+	movabsq $ER_SENTINEL_R13, %r13
+	movabsq $ER_SENTINEL_R14, %r14
+	movabsq $ER_SENTINEL_R15, %r15
 
 	/* The state pointer is reacquired to record the final, unmodified RSP. */
 	movq er_active_state(%rip), %r12
 	cmpq $14, ER_OFF_EXPECTED_VECTOR(%r12)
 	jne .Lsetup_gp
 	movq ER_OFF_FAULT_ADDRESS(%r12), %rax
+	movq %rax, ER_OFF_EXPECTED_RAX(%r12)
 	movq %rsp, ER_OFF_FAULT_WINDOW_RSP(%r12)
 	movabsq $ER_SENTINEL_R12, %r12
 .Lpf_fault:
@@ -131,11 +138,13 @@ SYM_FUNC_START(x86_er_inject)
 	jmp .Lnot_faulted
 
 .Lsetup_gp:
-	movl $ER_GP_MSR_INDEX, %ecx
+	movabsq $ER_SENTINEL_RAX, %rax
+	movw $ER_GP_SELECTOR, %ax
+	movq %rax, ER_OFF_EXPECTED_RAX(%r12)
 	movq %rsp, ER_OFF_FAULT_WINDOW_RSP(%r12)
 	movabsq $ER_SENTINEL_R12, %r12
 .Lgp_fault:
-	rdmsr
+	movw %ax, %ds
 	jmp .Lnot_faulted
 
 .Lnot_faulted:
@@ -152,6 +161,8 @@ SYM_FUNC_START(x86_er_inject)
 	cmpq ER_OFF_VERIFY_IDTR+ER_IDTR_BASE_OFF(%r12), %rax
 	jne .Lterminal_idtr
 	movq $3, ER_OFF_IDTR_PROOF(%r12)
+	movw ER_OFF_SAVED_DS(%r12), %ax
+	movw %ax, %ds
 	jmp .Lreturn_not_run
 
 .Lstack_not_ready:
@@ -219,10 +230,10 @@ SYM_FUNC_START(x86_er_inject)
 	jmp .Lterminal_common
 SYM_FUNC_END(x86_er_inject)
 
-/* #PF CR2 is captured before the first stack/data access. */
+/* The prevalidated fault stack saves GPRs before CR2 is read. */
 SYM_CODE_START(x86_er_pf_entry)
-	movq %cr2, %r11
 	ER_PUSH_GPRS
+	movq %cr2, %r11
 	movq er_active_state(%rip), %r15
 	testq %r15, %r15
 	jz .Lterminal_pf_unarmed
@@ -258,7 +269,6 @@ SYM_CODE_START(x86_er_pf_entry)
 	movq %rax, 32(%r14)
 	ER_POP_GPRS
 	addq $8, %rsp /* Skip the error-code slot before IRETQ. */
-	movabsq $ER_SENTINEL_R11, %r11
 	iretq
 
 .Lterminal_pf_unarmed:
@@ -272,7 +282,7 @@ SYM_CODE_START(x86_er_pf_entry)
 	jmp .Lterminal_common
 SYM_CODE_END(x86_er_pf_entry)
 
-/* #GP: prevalidated read-only x2APIC reserved-MSR access. */
+/* #GP: out-of-limit GDT selector load; SGDT preflight is in the C wrapper. */
 SYM_CODE_START(x86_er_gp_entry)
 	ER_PUSH_GPRS
 	movq er_active_state(%rip), %r15
@@ -359,6 +369,23 @@ SYM_CODE_START(x86_er_recovery_stub)
 	jne .Lterminal_recovery_state
 	cmpq $1, ER_OFF_RECOVERY_COUNT(%r15)
 	jne .Lterminal_recovery_state
+	movq ER_OFF_EXPECTED_RAX(%r15), %rax
+	cmpq %rax, er_recovery_scratch+ER_SCRATCH_RAX(%rip)
+	jne .Lterminal_recovery_state
+	ER_CHECK_SCRATCH ER_SENTINEL_RBX, ER_SCRATCH_RBX
+	ER_CHECK_SCRATCH ER_SENTINEL_RCX, ER_SCRATCH_RCX
+	ER_CHECK_SCRATCH ER_SENTINEL_RDX, ER_SCRATCH_RDX
+	ER_CHECK_SCRATCH ER_SENTINEL_RSI, ER_SCRATCH_RSI
+	ER_CHECK_SCRATCH ER_SENTINEL_RDI, ER_SCRATCH_RDI
+	ER_CHECK_SCRATCH ER_SENTINEL_RBP, ER_SCRATCH_RBP
+	ER_CHECK_SCRATCH ER_SENTINEL_R8, ER_SCRATCH_R8
+	ER_CHECK_SCRATCH ER_SENTINEL_R9, ER_SCRATCH_R9
+	ER_CHECK_SCRATCH ER_SENTINEL_R10, ER_SCRATCH_R10
+	ER_CHECK_SCRATCH ER_SENTINEL_R11, ER_SCRATCH_R11
+	ER_CHECK_SCRATCH ER_SENTINEL_R12, ER_SCRATCH_R12
+	ER_CHECK_SCRATCH ER_SENTINEL_R13, ER_SCRATCH_R13
+	ER_CHECK_SCRATCH ER_SENTINEL_R14, ER_SCRATCH_R14
+	ER_CHECK_SCRATCH ER_SENTINEL_R15, ER_SCRATCH_R15
 	cmpq $14, ER_OFF_EXPECTED_VECTOR(%r15)
 	jne .Lrecovery_not_pf
 	movq ER_OFF_FAULT_ADDRESS(%r15), %rax
@@ -423,7 +450,7 @@ SYM_CODE_START(x86_er_recovery_stub)
 	cmpq ER_OFF_VERIFY_IDTR+ER_IDTR_BASE_OFF(%r15), %rax
 	jne .Lterminal_recovery_idtr
 	movq $3, ER_OFF_IDTR_PROOF(%r15)
-	movq $0x3d, ER_OFF_RESULT_FLAGS(%r15)
+	movq $0x7d, ER_OFF_RESULT_FLAGS(%r15)
 	cmpq $14, ER_OFF_EXPECTED_VECTOR(%r15)
 	jne .Lresult_flags_ready
 	orq $0x2, ER_OFF_RESULT_FLAGS(%r15)

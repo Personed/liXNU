@@ -14,6 +14,9 @@
 #define X86_EXCEPTION_RECOVERY_ONCE              (1U << 3)
 #define X86_EXCEPTION_RECOVERY_STACKS_INTACT     (1U << 4)
 #define X86_EXCEPTION_RECOVERY_CPU_MATCHED       (1U << 5)
+#define X86_EXCEPTION_RECOVERY_GPRS_MATCHED      (1U << 6)
+#define X86_EXCEPTION_RECOVERY_DS_PRESERVED      (1U << 7)
+#define X86_EXCEPTION_RECOVERY_GP_ERROR          0xfff8U
 
 struct x86_exception_recovery_result {
 	__u32 cpu;

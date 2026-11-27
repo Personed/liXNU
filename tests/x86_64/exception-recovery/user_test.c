@@ -20,16 +20,63 @@ _Static_assert(X86_EXCEPTION_RECOVERY_RUN ==
 	       _IOWR(0xb8, 1, struct x86_exception_recovery_request),
 	       "userspace ioctl number disagrees with kernel UAPI");
 
-static int check_linux_syscalls(pid_t expected_pid)
+static int check_current_cpu(unsigned int expected_cpu)
+{
+	unsigned int current_cpu = UINT32_MAX;
+
+	if (syscall(SYS_getcpu, &current_cpu, NULL, NULL) < 0) {
+		perror("SYS_getcpu failed");
+		return -1;
+	}
+	if (current_cpu != expected_cpu) {
+		fprintf(stderr, "CPU affinity mismatch: current=%u expected=%u\n",
+			current_cpu, expected_cpu);
+		return -1;
+	}
+	return 0;
+}
+
+static int pin_to_cpu(unsigned int cpu)
+{
+	cpu_set_t mask;
+
+	if (cpu >= CPU_SETSIZE) {
+		fprintf(stderr, "CPU id %u exceeds CPU_SETSIZE=%d\n", cpu, CPU_SETSIZE);
+		return -1;
+	}
+	CPU_ZERO(&mask);
+	CPU_SET((int)cpu, &mask);
+	if (sched_setaffinity(0, sizeof(mask), &mask)) {
+		perror("sched_setaffinity failed");
+		return -1;
+	}
+	return check_current_cpu(cpu);
+}
+
+static int check_linux_syscalls(pid_t expected_pid, unsigned int cpu)
 {
 	struct timespec now;
 
-	if (syscall(SYS_getpid) != expected_pid ||
-	    syscall(SYS_getuid) < 0 ||
-	    syscall(SYS_clock_gettime, CLOCK_MONOTONIC, &now)) {
-		perror("Linux syscall health check failed");
+	if (check_current_cpu(cpu))
+		return -1;
+	if (syscall(SYS_getpid) != expected_pid) {
+		fprintf(stderr, "SYS_getpid health check failed\n");
 		return -1;
 	}
+	if (check_current_cpu(cpu))
+		return -1;
+	if (syscall(SYS_getuid) < 0) {
+		fprintf(stderr, "SYS_getuid health check failed\n");
+		return -1;
+	}
+	if (check_current_cpu(cpu))
+		return -1;
+	if (syscall(SYS_clock_gettime, CLOCK_MONOTONIC, &now)) {
+		perror("SYS_clock_gettime failed");
+		return -1;
+	}
+	if (check_current_cpu(cpu))
+		return -1;
 	return 0;
 }
 
@@ -40,6 +87,8 @@ static int run_case(int fd, unsigned int cpu, unsigned int vector)
 		.vector = vector,
 	};
 	uint32_t expected_flags = X86_EXCEPTION_RECOVERY_RIP_MATCHED |
+		X86_EXCEPTION_RECOVERY_GPRS_MATCHED |
+		X86_EXCEPTION_RECOVERY_DS_PRESERVED |
 		X86_EXCEPTION_RECOVERY_IDTR_RESTORED |
 		X86_EXCEPTION_RECOVERY_ONCE |
 		X86_EXCEPTION_RECOVERY_STACKS_INTACT |
@@ -48,14 +97,19 @@ static int run_case(int fd, unsigned int cpu, unsigned int vector)
 
 	if (vector == X86_EXCEPTION_RECOVERY_PF)
 		expected_flags |= X86_EXCEPTION_RECOVERY_CR2_MATCHED;
+	if (check_current_cpu(cpu))
+		return -1;
 	if (ioctl(fd, X86_EXCEPTION_RECOVERY_RUN, &request)) {
 		fprintf(stderr, "ioctl for vector %u failed: %s\n", vector,
 			strerror(errno));
 		return -1;
 	}
+	if (check_current_cpu(cpu))
+		return -1;
 	if (result->cpu != cpu || result->vector != vector ||
 	    result->flags != expected_flags || result->recovery_count != 1 ||
-	    result->error_code != 0 || !result->fault_rip ||
+	    result->error_code != (vector == X86_EXCEPTION_RECOVERY_GP ?
+		X86_EXCEPTION_RECOVERY_GP_ERROR : 0) || !result->fault_rip ||
 	    (vector == X86_EXCEPTION_RECOVERY_PF && !result->cr2) ||
 	    (vector == X86_EXCEPTION_RECOVERY_GP && result->cr2 != 0)) {
 		fprintf(stderr,
@@ -91,12 +145,14 @@ int main(int argc, char **argv)
 	if (argc == 2) {
 		errno = 0;
 		cpu = strtoul(argv[1], &end, 10);
-		if (errno || !argv[1][0] || *end || cpu > UINT32_MAX) {
+		if (errno || !argv[1][0] || *end || cpu > UINT32_MAX ||
+		    cpu >= CPU_SETSIZE) {
 			fprintf(stderr, "invalid CPU id: %s\n", argv[1]);
 			return 2;
 		}
 	}
-	if (check_linux_syscalls(pid))
+	if (pin_to_cpu((unsigned int)cpu) ||
+	    check_linux_syscalls(pid, (unsigned int)cpu))
 		return 1;
 	fd = open("/dev/x86-exception-recovery", O_RDWR | O_CLOEXEC);
 	if (fd < 0) {
@@ -104,9 +160,9 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	if (run_case(fd, (unsigned int)cpu, X86_EXCEPTION_RECOVERY_PF) ||
-	    check_linux_syscalls(pid) ||
+	    check_linux_syscalls(pid, (unsigned int)cpu) ||
 	    run_case(fd, (unsigned int)cpu, X86_EXCEPTION_RECOVERY_GP) ||
-	    check_linux_syscalls(pid)) {
+	    check_linux_syscalls(pid, (unsigned int)cpu)) {
 		close(fd);
 		return 1;
 	}
@@ -114,7 +170,11 @@ int main(int argc, char **argv)
 		perror("close exception recovery device");
 		return 1;
 	}
+	if (check_current_cpu((unsigned int)cpu))
+		return 1;
 	printf("X86_EXCEPTION_RECOVERY_PASS cpu=%lu pf=passed gp=passed syscalls=passed\n",
 	       cpu);
+	if (fflush(stdout) || check_current_cpu((unsigned int)cpu))
+		return 1;
 	return 0;
 }

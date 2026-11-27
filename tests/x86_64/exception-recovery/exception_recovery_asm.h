@@ -3,9 +3,22 @@
 #define X86_EXCEPTION_RECOVERY_ASM_H
 
 #define ER_ARM_TOKEN                 0x45584350524f4245
-#define ER_GP_MSR_INDEX              0x80e
+#define ER_GP_SELECTOR               0xfff8
+#define ER_SENTINEL_RAX              0x4a01f00d4a01f00d
+#define ER_SENTINEL_RBX              0x4a02f00d4a02f00d
+#define ER_SENTINEL_RCX              0x4a03f00d4a03f00d
+#define ER_SENTINEL_RDX              0x4a04f00d4a04f00d
+#define ER_SENTINEL_RSI              0x4a05f00d4a05f00d
+#define ER_SENTINEL_RDI              0x4a06f00d4a06f00d
+#define ER_SENTINEL_RBP              0x4a07f00d4a07f00d
+#define ER_SENTINEL_R8               0x4a08f00d4a08f00d
+#define ER_SENTINEL_R9               0x4a09f00d4a09f00d
+#define ER_SENTINEL_R10              0x4a10f00d4a10f00d
 #define ER_SENTINEL_R11              0x4a11f00d4a11f00d
 #define ER_SENTINEL_R12              0x4a12f00d4a12f00d
+#define ER_SENTINEL_R13              0x4a13f00d4a13f00d
+#define ER_SENTINEL_R14              0x4a14f00d4a14f00d
+#define ER_SENTINEL_R15              0x4a15f00d4a15f00d
 #define ER_TEST_STACK_TOP_OFFSET      16368
 #define ER_TEST_STACK_HIGH_CANARY     16376
 
@@ -50,6 +63,9 @@
 #define ER_OFF_RESULT_RFLAGS         328
 #define ER_OFF_RESULT_RSP            336
 #define ER_OFF_RESULT_SS             344
+#define ER_OFF_EXPECTED_RAX          352
+#define ER_OFF_SAVED_DS              360
+#define ER_RESULT_GPRS_MATCHED       0x40
 
 #define ER_IDTR_LIMIT_OFF             0
 #define ER_IDTR_BASE_OFF              2

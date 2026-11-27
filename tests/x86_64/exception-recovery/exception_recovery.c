@@ -40,6 +40,7 @@
 #define ER_IDT_BYTES (ER_IDT_ENTRIES * 16)
 #define ER_IDTR_PROOF_RESTORED (1ULL << 0)
 #define ER_IDTR_PROOF_READBACK (1ULL << 1)
+#define ER_GP_SELECTOR_LIMIT_VALID(limit) ((limit) < ER_GP_SELECTOR)
 #define ER_RFLAGS_CONTROL (X86_EFLAGS_IF | X86_EFLAGS_DF | X86_EFLAGS_IOPL | \
 			   X86_EFLAGS_NT | X86_EFLAGS_RF | X86_EFLAGS_VM | \
 			   X86_EFLAGS_AC | X86_EFLAGS_VIF | X86_EFLAGS_VIP)
@@ -94,6 +95,8 @@ struct er_asm_control {
 	unsigned long result_rflags;
 	unsigned long result_rsp;
 	unsigned long result_ss;
+	unsigned long expected_rax;
+	unsigned long saved_ds;
 };
 
 struct er_host_snapshot {
@@ -112,6 +115,7 @@ struct er_host_snapshot {
 	unsigned int idt_limit;
 	unsigned short ldt;
 	unsigned short tr;
+	unsigned short ds;
 	unsigned int preempt_count;
 	bool irq_disabled;
 	u64 efer;
@@ -258,10 +262,18 @@ static_assert(offsetof(struct er_asm_control, result_cs) == ER_OFF_RESULT_CS);
 static_assert(offsetof(struct er_asm_control, result_rflags) == ER_OFF_RESULT_RFLAGS);
 static_assert(offsetof(struct er_asm_control, result_rsp) == ER_OFF_RESULT_RSP);
 static_assert(offsetof(struct er_asm_control, result_ss) == ER_OFF_RESULT_SS);
+static_assert(offsetof(struct er_asm_control, expected_rax) == ER_OFF_EXPECTED_RAX);
+static_assert(offsetof(struct er_asm_control, saved_ds) == ER_OFF_SAVED_DS);
+static_assert(sizeof(struct er_asm_control) == 368);
 static_assert(offsetof(struct er_gpr_scratch, rax) == ER_SCRATCH_RAX);
 static_assert(offsetof(struct er_gpr_scratch, r15) == ER_SCRATCH_R15);
 static_assert(offsetof(struct er_gpr_scratch, rflags) == ER_SCRATCH_FLAGS);
 static_assert(offsetof(struct er_gpr_scratch, envelope_rsp) == ER_SCRATCH_ENVELOPE_RSP);
+static_assert(ER_GP_SELECTOR == X86_EXCEPTION_RECOVERY_GP_ERROR);
+static_assert(ER_GP_SELECTOR_LIMIT_VALID(ER_GP_SELECTOR - 1));
+static_assert(!ER_GP_SELECTOR_LIMIT_VALID(ER_GP_SELECTOR));
+static_assert(!ER_GP_SELECTOR_LIMIT_VALID(0xffff));
+static_assert(ER_RESULT_GPRS_MATCHED == X86_EXCEPTION_RECOVERY_GPRS_MATCHED);
 static_assert(X86_EXCEPTION_RECOVERY_RUN ==
 	      _IOWR(0xb8, 1, struct x86_exception_recovery_request));
 
@@ -303,6 +315,7 @@ static noinline int er_snapshot(struct er_host_snapshot *snapshot)
 	store_idt(&idt);
 	asm volatile("sldt %0" : "=m"(snapshot->ldt));
 	asm volatile("str %0" : "=m"(snapshot->tr));
+	asm volatile("mov %%ds, %0" : "=r"(snapshot->ds));
 	snapshot->gdt_base = gdt.address;
 	snapshot->gdt_limit = gdt.size;
 	snapshot->idt_base = idt.address;
@@ -341,6 +354,7 @@ static bool er_snapshots_match(const struct er_host_snapshot *before,
 	       before->idt_base == after->idt_base &&
 	       before->idt_limit == after->idt_limit &&
 	       before->ldt == after->ldt && before->tr == after->tr &&
+	       before->ds == after->ds &&
 	       ((before->rflags ^ after->rflags) & ER_RFLAGS_CONTROL) == 0 &&
 	       before->fs_base == after->fs_base && before->gs_base == after->gs_base &&
 	       before->kernel_gs_base == after->kernel_gs_base;
@@ -431,7 +445,8 @@ static long er_run_on_cpu(void *argument)
 	unsigned long irq_flags;
 	long ret;
 	u32 required_flags;
-	u32 gp_msr_low, gp_msr_high;
+	struct desc_ptr current_gdt;
+	unsigned long required_error_code;
 	unsigned long required_asm_flags;
 	bool after_valid = false;
 
@@ -469,6 +484,7 @@ static long er_run_on_cpu(void *argument)
 	control->recovery_stack_top = control->recovery_stack_base + ER_STACK_SIZE -
 				     2 * ER_STACK_GUARD_BYTES;
 	control->fault_address = READ_ONCE(er_fault_address);
+	control->saved_ds = state->before.ds;
 	control->expected_vector = work->request.vector;
 	store_idt(&current_idtr);
 	ret = er_build_shadow_idt(state, &current_idtr);
@@ -485,11 +501,15 @@ static long er_run_on_cpu(void *argument)
 	ret = er_check_fault_address(control->fault_address);
 	if (ret)
 		goto out_restore;
-	if (work->request.vector == X86_EXCEPTION_RECOVERY_GP &&
-	    !rdmsr_safe(ER_GP_MSR_INDEX, &gp_msr_low, &gp_msr_high)) {
-		/* The selected read-only APIC MSR must fault before shadow IDT setup. */
-		ret = -EOPNOTSUPP;
-		goto out_restore;
+	if (work->request.vector == X86_EXCEPTION_RECOVERY_GP) {
+		/* SGDT must prove selector 0xfff8 is beyond this CPU's GDT limit. */
+		native_store_gdt(&current_gdt);
+		if (!ER_GP_SELECTOR_LIMIT_VALID(current_gdt.size) ||
+		    current_gdt.address != state->before.gdt_base ||
+		    current_gdt.size != state->before.gdt_limit) {
+			ret = -EOPNOTSUPP;
+			goto out_restore;
+		}
 	}
 	er_active_state = control;
 	smp_wmb();
@@ -497,9 +517,11 @@ static long er_run_on_cpu(void *argument)
 	smp_rmb();
 	if (ret)
 		goto out_snapshot;
+	required_error_code = work->request.vector == X86_EXCEPTION_RECOVERY_GP ?
+		X86_EXCEPTION_RECOVERY_GP_ERROR : 0;
 	if (control->captured_vector != work->request.vector ||
 	    control->result_vector != control->captured_vector ||
-	    control->error_code != 0 ||
+	    control->error_code != required_error_code ||
 	    control->result_error_code != control->error_code ||
 	    control->fault_rip != control->expected_rip ||
 	    control->result_rip != control->fault_rip ||
@@ -527,6 +549,7 @@ static long er_run_on_cpu(void *argument)
 		goto out_snapshot;
 	}
 	required_asm_flags = X86_EXCEPTION_RECOVERY_RIP_MATCHED |
+		X86_EXCEPTION_RECOVERY_GPRS_MATCHED |
 		X86_EXCEPTION_RECOVERY_IDTR_RESTORED |
 		X86_EXCEPTION_RECOVERY_ONCE |
 		X86_EXCEPTION_RECOVERY_STACKS_INTACT |
@@ -565,6 +588,8 @@ out_snapshot:
 		work->request.result.cr2 = control->cr2;
 		work->request.result.flags =
 			X86_EXCEPTION_RECOVERY_RIP_MATCHED |
+			X86_EXCEPTION_RECOVERY_GPRS_MATCHED |
+			X86_EXCEPTION_RECOVERY_DS_PRESERVED |
 			X86_EXCEPTION_RECOVERY_IDTR_RESTORED |
 			X86_EXCEPTION_RECOVERY_ONCE |
 			X86_EXCEPTION_RECOVERY_STACKS_INTACT |
@@ -583,6 +608,8 @@ out_restore:
 		       work->request.cpu, work->request.vector, ret);
 	else {
 		required_flags = X86_EXCEPTION_RECOVERY_RIP_MATCHED |
+			X86_EXCEPTION_RECOVERY_GPRS_MATCHED |
+			X86_EXCEPTION_RECOVERY_DS_PRESERVED |
 			X86_EXCEPTION_RECOVERY_IDTR_RESTORED |
 			X86_EXCEPTION_RECOVERY_ONCE |
 			X86_EXCEPTION_RECOVERY_STACKS_INTACT |
@@ -592,12 +619,13 @@ out_restore:
 		if ((work->request.result.flags & required_flags) != required_flags)
 			return -EUCLEAN;
 		pr_info("x86-exception-recovery: cpu=%u vector=%u rip=%#lx error=%#llx "
-			"cr2=%#lx recovery_count=%u idtr_restored=1 stacks=ok\n",
+			"cr2=%#lx recovery_count=%u idtr_restored=1 gprs=ok ds=%#x stacks=ok\n",
 			work->request.result.cpu, work->request.result.vector,
 			(unsigned long)work->request.result.fault_rip,
 			(unsigned long long)work->request.result.error_code,
 			(unsigned long)work->request.result.cr2,
-			work->request.result.recovery_count);
+			work->request.result.recovery_count,
+			(unsigned int)state->after.ds);
 	}
 	return ret;
 }

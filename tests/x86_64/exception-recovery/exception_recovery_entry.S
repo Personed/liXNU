@@ -262,7 +262,9 @@ SYM_CODE_START(x86_er_pf_entry)
 	jne .Lterminal_pf_unclassified
 	cmpq $0, ER_OFF_RECOVERY_COUNT(%r15)
 	jne .Lterminal_pf_nested
-	incq ER_OFF_RECOVERY_COUNT(%r15)
+	/* Consume the arm token before rewriting the frame; reentry is terminal. */
+	movabsq $ER_HANDOFF_TOKEN, %rax
+	movq %rax, ER_OFF_ARMED(%r15)
 	leaq x86_er_recovery_stub(%rip), %rax
 	movq %rax, 8(%r14)
 	movq ER_OFF_RECOVERY_STACK_TOP(%r15), %rax
@@ -313,7 +315,9 @@ SYM_CODE_START(x86_er_gp_entry)
 	jne .Lterminal_gp_unclassified
 	cmpq $0, ER_OFF_RECOVERY_COUNT(%r15)
 	jne .Lterminal_gp_nested
-	incq ER_OFF_RECOVERY_COUNT(%r15)
+	/* Consume the arm token before rewriting the frame; reentry is terminal. */
+	movabsq $ER_HANDOFF_TOKEN, %rax
+	movq %rax, ER_OFF_ARMED(%r15)
 	leaq x86_er_recovery_stub(%rip), %rax
 	movq %rax, 8(%r14)
 	movq ER_OFF_RECOVERY_STACK_TOP(%r15), %rax
@@ -358,7 +362,7 @@ SYM_CODE_START(x86_er_recovery_stub)
 	jz .Lterminal_recovery_state
 	cmpq ER_OFF_RECOVERY_STACK_TOP(%r15), %rsp
 	jne .Lterminal_recovery_state
-	movabsq $ER_ARM_TOKEN, %rax
+	movabsq $ER_HANDOFF_TOKEN, %rax
 	cmpq %rax, ER_OFF_ARMED(%r15)
 	jne .Lterminal_recovery_state
 	movq ER_OFF_EXPECTED_VECTOR(%r15), %rax
@@ -367,8 +371,9 @@ SYM_CODE_START(x86_er_recovery_stub)
 	movq ER_OFF_EXPECTED_RIP(%r15), %rax
 	cmpq ER_OFF_FAULT_RIP(%r15), %rax
 	jne .Lterminal_recovery_state
-	cmpq $1, ER_OFF_RECOVERY_COUNT(%r15)
+	cmpq $0, ER_OFF_RECOVERY_COUNT(%r15)
 	jne .Lterminal_recovery_state
+	incq ER_OFF_RECOVERY_COUNT(%r15)
 	movq ER_OFF_EXPECTED_RAX(%r15), %rax
 	cmpq %rax, er_recovery_scratch+ER_SCRATCH_RAX(%rip)
 	jne .Lterminal_recovery_state
@@ -433,7 +438,7 @@ SYM_CODE_START(x86_er_recovery_stub)
 	movq %rax, ER_OFF_RESULT_RIP(%r15)
 	movq ER_OFF_FAULT_CS(%r15), %rax
 	movq %rax, ER_OFF_RESULT_CS(%r15)
-	movq ER_OFF_FAULT_RFLAGS(%r15), %rax
+	movq er_recovery_scratch+ER_SCRATCH_FLAGS(%rip), %rax
 	movq %rax, ER_OFF_RESULT_RFLAGS(%r15)
 	movq ER_OFF_FAULT_RSP(%r15), %rax
 	movq %rax, ER_OFF_RESULT_RSP(%r15)

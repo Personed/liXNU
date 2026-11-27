@@ -41,9 +41,16 @@
 #define ER_IDTR_PROOF_RESTORED (1ULL << 0)
 #define ER_IDTR_PROOF_READBACK (1ULL << 1)
 #define ER_GP_SELECTOR_LIMIT_VALID(limit) ((limit) < ER_GP_SELECTOR)
-#define ER_RFLAGS_CONTROL (X86_EFLAGS_IF | X86_EFLAGS_DF | X86_EFLAGS_IOPL | \
-			   X86_EFLAGS_NT | X86_EFLAGS_RF | X86_EFLAGS_VM | \
-			   X86_EFLAGS_AC | X86_EFLAGS_VIF | X86_EFLAGS_VIP)
+/* C snapshots may change arithmetic flags while evaluating the comparison. */
+#define ER_RFLAGS_HOST_CONTROL (X86_EFLAGS_IF | X86_EFLAGS_DF | X86_EFLAGS_IOPL | \
+			    X86_EFLAGS_NT | X86_EFLAGS_AC | X86_EFLAGS_VIF | \
+			    X86_EFLAGS_VIP)
+/* PUSHFQ clears RF and VM; compare the other defined, restorable RFLAGS bits. */
+#define ER_RFLAGS_RETURNED (X86_EFLAGS_CF | X86_EFLAGS_PF | X86_EFLAGS_AF | \
+			    X86_EFLAGS_ZF | X86_EFLAGS_SF | X86_EFLAGS_TF | \
+			    X86_EFLAGS_IF | X86_EFLAGS_DF | X86_EFLAGS_OF | \
+			    X86_EFLAGS_IOPL | X86_EFLAGS_NT | X86_EFLAGS_AC | \
+			    X86_EFLAGS_VIF | X86_EFLAGS_VIP | X86_EFLAGS_ID)
 
 struct er_idtr_operand {
 	unsigned short limit;
@@ -356,7 +363,7 @@ static bool er_snapshots_match(const struct er_host_snapshot *before,
 	       before->idt_limit == after->idt_limit &&
 	       before->ldt == after->ldt && before->tr == after->tr &&
 	       before->ds == after->ds &&
-	       ((before->rflags ^ after->rflags) & ER_RFLAGS_CONTROL) == 0 &&
+	       ((before->rflags ^ after->rflags) & ER_RFLAGS_HOST_CONTROL) == 0 &&
 	       before->fs_base == after->fs_base && before->gs_base == after->gs_base &&
 	       before->kernel_gs_base == after->kernel_gs_base;
 }
@@ -537,7 +544,7 @@ static long er_run_on_cpu(void *argument)
 	    control->fault_cs != __KERNEL_CS || !control->fault_ss ||
 	    control->result_cs != control->fault_cs ||
 	    control->result_ss != control->fault_ss ||
-	    control->result_rflags != control->fault_rflags ||
+	    ((control->result_rflags ^ control->fault_rflags) & ER_RFLAGS_RETURNED) ||
 	    (control->fault_rflags & X86_EFLAGS_IF) ||
 	    control->recovery_count != 1 ||
 	    control->idtr_proof != (ER_IDTR_PROOF_RESTORED | ER_IDTR_PROOF_READBACK)) {

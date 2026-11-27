@@ -76,35 +76,22 @@ handoff ABI.
 
 For a prepared Intel Tahoe installation, mount its System volume read-only.
 Record the installer source and snapshot or volume identity locally. From the
-liXNU checkout on macOS with Command Line Tools installed, substitute the
-mounted path and verify the build identifiers before inspecting the collection
-from that same volume.
+liXNU checkout with Python 3.9 or later and a C compiler, pass the mounted
+path to the audit. It reads the version plist and the collection from the same
+System volume, requires `26.7.3/25G342`, and inspects a private snapshot of the
+collection. The temporary directory needs space for that snapshot.
 
 ```sh
-(
-  set -eu
-  volume='/Volumes/Tahoe System'
-  version='System/Library/CoreServices/SystemVersion.plist'
-  collection='System/Library/KernelCollections/BootKernelExtensions.kc'
-  test "$(plutil -extract ProductVersion raw -o - "$volume/$version")" = 26.7.3
-  test "$(plutil -extract ProductBuildVersion raw -o - "$volume/$version")" = 25G342
-
-  scratch=$(mktemp -d "${TMPDIR:-/tmp}/lixnu-kc.XXXXXX")
-  trap 'rm -rf "$scratch"' EXIT
-  cc -std=c11 -Wall -Wextra -Werror \
-    tools/dev/x86_64/xnu-fileset-metadata.c xnu-ko/macho_parse_x86_64.c \
-    -o "$scratch/xnu-fileset-metadata"
-  cd "$volume"
-  shasum -a 256 "$version" "$collection"
-  "$scratch/xnu-fileset-metadata" "$collection"
-)
+python3 scripts/x86_64/audit-tahoe-system-volume.py \
+  --system-root '/Volumes/Tahoe System' > /tmp/lixnu-tahoe-collection.json
 ```
 
-Record the liXNU commit, the hashes, and the fileset JSON. For a passing
-structural check, require `status=accepted`, `parser_result=0`, and the nested
-kernel segment list. The plist establishes the version reported by the supplied
-volume. Keep the paired files on the operator's machine and share only the
-reviewed metadata and hashes. Use this evidence to compare the 25G342 layout
-against the loader and handoff contract. The normal x86 module retains its
+Record the liXNU commit and the JSON report with both hashes. The audit exits
+zero only if the inspector reports `status=accepted`, `parser_result=0`, and a
+nonempty nested kernel segment list. The plist establishes the version reported
+by the supplied volume. Record Apple installer or sealed volume provenance in
+the acceptance record. Keep the paired files on the operator's machine and
+share only the reviewed metadata and hashes. Use this evidence to compare the
+25G342 layout against the loader and handoff contract. The normal x86 module retains its
 refusal until the loader, context transaction, exception and syscall ownership,
 and return paths have their own reviewed evidence.

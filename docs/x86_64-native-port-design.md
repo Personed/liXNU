@@ -1,19 +1,21 @@
-# Separate native x86_64 hosted-XNU experiment
+# Native x86_64 hosted-XNU port design
 
 ## Project goal and current boundary
 
-The active PC goal uses x86-64 hosts to run QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin. Linux x86-64 is
-the currently required host profile; Windows and Intel macOS remain candidates until the full route passes there (see the
-[validation matrix](portability-validation.md)). Preserve the direct hosted-XNU path on compatible ARM64 Linux hosts
-and its macOS 27 target. This document describes a separate native x86_64/Tahoe 26 experiment; it is not the active
-PC route and has no native XNU execution support yet. The QEMU/KVM macOS guest launcher is another separate experiment
-and provides no evidence for either hosted-XNU route.
+The active project goal is to port hosted-XNU to native Linux x86-64 PCs with Intel and AMD CPUs, targeting macOS Tahoe
+26.7.3, while preserving the existing ARM64 hosted-XNU path and its macOS 27 target. Acceptance is separate for physical
+Intel and AMD hosts; no universal PC support is claimed. QEMU TCG → ARM64 Linux → FKI/XNU → PureDarwin and the
+QEMU/KVM macOS launcher are complementary development and validation paths, not evidence for the native x86-64
+hosted-XNU port.
 
-PR #48 provides the x86_64 Linux-side FKI host backend, with `fki_caps() == 0`. PR #47 adds an x86_64 `xnu.ko` target
-that refuses to load. Neither PR executes XNU. Keep both gates fail-closed until the architecture boundary below is
-implemented and verified.
+The x86-64 native port remains experimental and fail-closed: x86_64 `fki_caps() == 0`, and `xnu.ko` returns
+`-EOPNOTSUPP`. This document describes required architecture and validation work; it does not authorize XNU entry. The
+PR #56 pins the latest publicly published XNU source, 26.5 (`xnu-12377.121.6`); building that source does
+not establish compatibility with the Tahoe 26.7.3 runtime target.
 
-The pinned XNU source tag used by the current build scripts contains `osfmk/i386` and `mach-o/x86_64` sources, but this repository's LINUX64 machine patches and loader target ARM64. An x86_64 Tahoe kernel collection and matching entry ABI must be built and checked; the presence of i386 sources alone does not prove that target.
+The pinned XNU source includes `osfmk/i386` and `mach-o/x86_64`, but this repository's current machine patches and
+loader target ARM64. An x86_64 Tahoe kernel collection and matching entry ABI must be built and checked; the presence
+of Intel source files alone does not prove compatibility with the target artifact.
 
 ### Parse-only x86_64 Mach-O slice
 

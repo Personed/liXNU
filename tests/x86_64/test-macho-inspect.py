@@ -35,6 +35,8 @@ LC_UNIXTHREAD = 0x5
 LC_DYLD_CHAINED_FIXUPS = 0x80000034
 X86_THREAD_STATE64 = 4
 X86_THREAD_STATE64_COUNT = 42
+DYLD_CHAINED_PTR_X86_64_KERNEL_CACHE = 11
+DYLD_CHAINED_PTR_START_NONE = 0xFFFF
 
 
 def put_u32(data, off, value):
@@ -108,6 +110,39 @@ def append_command(data, command, command_size):
     put_u32(data, 20, COMMAND_BYTES + command_size)
 
 
+def make_chained_image(text_page_start=None):
+    data = make_valid_image()
+    append_command(data, LC_DYLD_CHAINED_FIXUPS, 16)
+    payload = 512
+    starts = payload + 28
+    table_size = 12  # count and offsets for __PAGEZERO and __TEXT
+    record_size = 24 if text_page_start is not None else 0
+    payload_size = 28 + table_size + record_size
+    put_u32(data, COMMANDS_END + 8, payload)
+    put_u32(data, COMMANDS_END + 12, payload_size)
+    put_u32(data, payload + 4, 28)  # starts_offset
+    put_u32(data, payload + 8, payload_size)  # empty imports
+    put_u32(data, payload + 12, payload_size)  # empty symbols
+    put_u32(data, payload + 20, 1)  # imports_format
+    put_u32(data, starts, 2)
+    if text_page_start is not None:
+        put_u32(data, starts + 8, table_size)
+        # __TEXT at the preferred VM address, only its first page described.
+        struct.pack_into(
+            "<IHHQIHH",
+            data,
+            starts + table_size,
+            record_size,
+            0x1000,
+            DYLD_CHAINED_PTR_X86_64_KERNEL_CACHE,
+            0,  # segment_offset
+            0,  # max_valid_pointer
+            1,  # page_count
+            text_page_start,
+        )
+    return data
+
+
 def run_case(
     binary, name, data, expected_status, check_report=None, relative_name="kernel.development"
 ):
@@ -166,6 +201,7 @@ def expect_valid_all(report):
     ], report
     assert report["segments"][0]["mapped"] is False, report
     assert report["segments"][0]["name_bytes_hex"] == b"__PAGEZERO\0".ljust(16, b"\0").hex(), report
+    assert report["segments"][0]["chained_starts"] is None, report
     assert report["segments"][1] == {
         "name": "__TEXT",
         "name_bytes_hex": b"__TEXT\0".ljust(16, b"\0").hex(),
@@ -178,15 +214,27 @@ def expect_valid_all(report):
         "nsects": 1,
         "flags": "0x00000000",
         "mapped": True,
+        "chained_starts": None,
     }, report
+    assert report["linkedit_metadata"]["has_chained_fixups"] is False, report
+    assert report["linkedit_metadata"]["chained_starts_segment_count"] == 0, report
+    assert report["linkedit_metadata"]["chained_starts_nonempty_segment_count"] == 0, report
     assert report["load_status"] == "not_loaded", report
     assert report["fixups_interpreted"] is False, report
     assert report["execution_attempted"] is False, report
 
 
-def expect_valid_fixups_are_not_interpreted(report):
+def expect_chained_starts(report, text_starts):
     assert report["inspection_flags"] == 1 << 2, report
     assert report["linkedit_metadata"]["has_chained_fixups"] is True, report
+    assert report["linkedit_metadata"]["chained_starts_segment_count"] == 2, report
+    assert report["linkedit_metadata"]["chained_starts_nonempty_segment_count"] == (
+        0 if text_starts is None else 1
+    ), report
+    assert [segment["name"] for segment in report["segments"]] == ["__PAGEZERO", "__TEXT"], report
+    assert [segment["chained_starts"] for segment in report["segments"]] == [
+        None, text_starts
+    ], report
     assert report["linkedit_data_command_count"] == 1, report
     assert report["load_status"] == "not_loaded", report
     assert report["fixups_interpreted"] is False, report
@@ -341,29 +389,25 @@ def main():
         expect_x86_64_h,
     )
 
-    chained = make_valid_image()
-    append_command(chained, LC_DYLD_CHAINED_FIXUPS, 16)
-    put_u32(chained, COMMANDS_END + 8, 512)
-    put_u32(chained, COMMANDS_END + 12, 40)
-    payload = 512
-    starts = payload + 28
-    put_u32(chained, payload, 0)  # fixups_version
-    put_u32(chained, payload + 4, 28)  # starts_offset
-    put_u32(chained, payload + 8, 40)  # empty imports after starts table
-    put_u32(chained, payload + 12, 40)  # empty symbols after imports
-    put_u32(chained, payload + 16, 0)  # imports_count
-    put_u32(chained, payload + 20, 1)  # imports_format
-    put_u32(chained, payload + 24, 0)  # uncompressed symbol strings
-    put_u32(chained, starts, 2)  # PAGEZERO and TEXT, no starts records
-    put_u32(chained, starts + 4, 0)
-    put_u32(chained, starts + 8, 0)
     run_case(
         binary,
-        "bounded chained-fixup metadata",
-        chained,
+        "chained fixups with empty segment slots",
+        make_chained_image(),
         0,
-        expect_valid_fixups_are_not_interpreted,
+        lambda report: expect_chained_starts(report, None),
     )
+    text_starts = {"pointer_format": 11, "page_size": 4096, "page_count": 1}
+    for name, page_start in (
+        ("chained start in __TEXT", 0x1F0),
+        ("__TEXT starts record with no active chain", DYLD_CHAINED_PTR_START_NONE),
+    ):
+        run_case(
+            binary,
+            name,
+            make_chained_image(page_start),
+            0,
+            lambda report: expect_chained_starts(report, text_starts),
+        )
 
     bad_fixup_extent = make_valid_image()
     append_command(bad_fixup_extent, LC_DYLD_CHAINED_FIXUPS, 16)

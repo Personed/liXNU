@@ -7,6 +7,7 @@
 #include <linux/ioctl.h>
 #include <linux/types.h>
 #include <sched.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +18,12 @@
 #include <unistd.h>
 
 #include "boundary_probe_uapi.h"
+
+#define LEGACY_XSTATE_SIZE 512U
+
+/* Round down with exceptions masked, distinct from the kernel's sentinels. */
+static const uint16_t x87_control = 0x077f;
+static const uint32_t mxcsr_control = 0x3f80;
 
 static const uint32_t vectors[8][8] __attribute__((aligned(32))) = {
 	{0x00000001, 0x11111111, 0x22222222, 0x33333333, 0x44444444, 0x55555555, 0x66666666, 0x77777777},
@@ -47,11 +54,17 @@ static long invoke_with_xstate(int fd, const struct x86_boundary_probe_request *
 	register const struct x86_boundary_probe_request *rdx __asm__("rdx") = request;
 	const uint32_t mask_low = (uint32_t)config->mask;
 	const uint32_t mask_high = (uint32_t)(config->mask >> 32);
+	unsigned char original_legacy[LEGACY_XSTATE_SIZE] __attribute__((aligned(16)));
 	long syscall_result;
 
-	/* The raw syscall preserves RCX/R11 as required by the syscall ABI and lets us
-	 * inspect live SIMD and XSAVE state before userspace C code can use it. */
+	/* Capture the seeded state around the raw syscall before C can use it.
+	 * Restore the original legacy FPU state before returning to C. */
 	__asm__ volatile(
+			"fxsave64 %[original_legacy]\n\t"
+			"fninit\n\t"
+			"fldcw %[x87_control]\n\t"
+			"fld1\n\t"
+			"ldmxcsr %[mxcsr_control]\n\t"
 		"vmovdqu 0(%[vectors]), %%ymm0\n\t"
 		"vmovdqu 32(%[vectors]), %%ymm1\n\t"
 		"vmovdqu 64(%[vectors]), %%ymm2\n\t"
@@ -78,16 +91,40 @@ static long invoke_with_xstate(int fd, const struct x86_boundary_probe_request *
 		"movl %[mask_low], %%eax\n\t"
 		"movl %[mask_high], %%edx\n\t"
 		"xsave64 (%[xstate_after])\n\t"
+			"fxrstor64 %[original_legacy]\n\t"
 		: "+&a"(rax), "+&D"(rdi), "+&S"(rsi), "+&d"(rdx),
-		  [syscall_result] "=m"(syscall_result)
+			  [syscall_result] "=m"(syscall_result),
+			  [original_legacy] "=&m"(original_legacy)
 		: [request_ptr] "r"(request), [syscall_nr] "i"(SYS_ioctl),
 		  [xstate_before] "r"(xstate_before), [xstate_after] "r"(xstate_after),
 		  [after] "r"(after),
 		  [mask_low] "m"(mask_low), [mask_high] "m"(mask_high),
+			  [x87_control] "m"(x87_control), [mxcsr_control] "m"(mxcsr_control),
 		  [vectors] "r"(vectors)
 		: "cc", "rcx", "r10", "r11", "memory", "ymm0", "ymm1", "ymm2", "ymm3",
 		  "ymm4", "ymm5", "ymm6", "ymm7");
 	return syscall_result;
+}
+
+static bool legacy_sentinels_present(const void *image)
+{
+	const unsigned char *bytes = image;
+	uint64_t st0_significand, xstate_bv;
+	uint32_t mxcsr;
+	uint16_t fcw, st0_exponent;
+
+	/* In the standard XSAVE format, the legacy area holds FCW, FTW,
+	 * MXCSR, and 80-bit ST(0). After FNINIT, FLD1 pushes onto physical
+	 * register 7, sets its abridged tag, and stores the encoding of 1.0. */
+	memcpy(&fcw, bytes, sizeof(fcw));
+	memcpy(&mxcsr, bytes + 24, sizeof(mxcsr));
+	memcpy(&st0_significand, bytes + 32, sizeof(st0_significand));
+	memcpy(&st0_exponent, bytes + 40, sizeof(st0_exponent));
+	memcpy(&xstate_bv, bytes + LEGACY_XSTATE_SIZE, sizeof(xstate_bv));
+	return (xstate_bv & 3) == 3 && fcw == x87_control && bytes[4] == 0x80 &&
+	       mxcsr == mxcsr_control &&
+	       st0_significand == UINT64_C(0x8000000000000000) &&
+	       st0_exponent == 0x3fff;
 }
 
 static int get_xsave_config(struct xsave_config *config)
@@ -103,8 +140,8 @@ static int get_xsave_config(struct xsave_config *config)
 		return -1;
 	}
 	__asm__ volatile("xgetbv" : "=a"(xcr0_low), "=d"(xcr0_high) : "c"(0));
-	if ((xcr0_low & 0x6) != 0x6) {
-		fprintf(stderr, "OS has not enabled XMM+YMM state in XCR0 (0x%x:%x)\n",
+	if ((xcr0_low & 0x7) != 0x7) {
+		fprintf(stderr, "OS has not enabled x87+XMM+YMM state in XCR0 (0x%x:%x)\n",
 			xcr0_high, xcr0_low);
 		return -1;
 	}
@@ -167,6 +204,11 @@ static int run_probe_ioctl(int fd, pid_t pid, unsigned int cpu, unsigned int mod
 	if (result != expected) {
 		fprintf(stderr, "cpu %u mode %u returned %ld, expected %ld\n",
 			cpu, mode, result, expected);
+		goto fail;
+	}
+	if (!legacy_sentinels_present(xstate_before)) {
+		fprintf(stderr, "cpu %u mode %u did not capture seeded x87/MXCSR state\n",
+			cpu, mode);
 		goto fail;
 	}
 	if (memcmp(vectors, after, sizeof(vectors))) {
@@ -232,7 +274,7 @@ int main(void)
 		perror("close probe device");
 		return 1;
 	}
-	printf("x86 boundary probe passed: %ld CPUs, return/abort, host state, enabled XSAVE/YMM, Linux syscalls (xcr0=%#llx size=%zu)\n",
+	printf("x86 boundary probe passed: %ld CPUs, return/abort, host state, enabled XSAVE/x87/MXCSR/YMM, Linux syscalls (xcr0=%#llx size=%zu)\n",
 	       cpu_count, (unsigned long long)xsave.mask, xsave.size);
 	return 0;
 }

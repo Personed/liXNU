@@ -4,7 +4,7 @@ This is a disposable-VM design for the next test-only boundary gate. It does not
 
 ## Requirement
 
-Before foreign kernel execution, a selected vCPU must survive one controlled page fault (`#PF`) and one controlled general-protection fault (`#GP`) raised inside the test-owned shim, one at a time. For each case the test must record the vector, faulting RIP, error code, CR2 for `#PF`, CPU identity, and recovery count; resume exactly once at the documented recovery point; then pass the existing host-state, syscall, unload, and shutdown checks. A nested or unclassified exception is a failed test, even if the disposable VM remains alive.
+Before foreign kernel execution, a selected vCPU must survive one controlled page fault (`#PF`) and one controlled general-protection fault (`#GP`) raised inside the test-owned shim, one at a time. For each case the test must record the vector, faulting RIP, error code, CR2 for `#PF`, CPU identity, and recovery count; resume exactly once at the documented recovery point; then pass the existing host-state, syscall, unload, and shutdown checks. A nested or unclassified `#PF`/`#GP`, or any other synchronous exception covered by a terminal gate, is a failed test even if the disposable VM remains alive. NMI is explicitly outside this test's acceptance claim.
 
 NMI is intentionally not claimed by this design. NMI can arrive outside the controlled instruction window, uses different completion semantics, and interacts with Linux's NMI-safe entry code and watchdogs. It remains a separate blocker.
 

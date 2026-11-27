@@ -66,21 +66,51 @@ def sha256(path: Path) -> str:
 
 
 def resolve_image_target(path: Path, mount: Path) -> Path | None:
-    """Resolve a path as it appears inside the mounted image, never on the host."""
+    """Resolve guest paths component-by-component, including chained absolute links."""
+    image_root = mount.resolve()
     try:
-        if path.is_symlink():
-            raw_target = os.readlink(path)
-            target = mount / raw_target.lstrip("/") if raw_target.startswith("/") else path.parent / raw_target
-        else:
-            target = path
-        resolved = target.resolve(strict=True)
-    except (OSError, RuntimeError):
+        try:
+            relative_parts = path.relative_to(mount).parts
+        except ValueError:
+            relative_parts = path.relative_to(image_root).parts
+    except ValueError:
         return None
 
-    image_root = mount.resolve()
-    if resolved != image_root and image_root not in resolved.parents:
+    current = image_root
+    pending = list(relative_parts)
+    symlink_count = 0
+    while pending:
+        component = pending.pop(0)
+        if component in ("", "."):
+            continue
+        if component == "..":
+            if current == image_root:
+                return None
+            current = current.parent
+            continue
+
+        candidate = current / component
+        try:
+            if candidate.is_symlink():
+                symlink_count += 1
+                if symlink_count > 40:
+                    return None
+                raw_target = os.readlink(candidate)
+                if raw_target.startswith("/"):
+                    current = image_root
+                    target_parts = raw_target.lstrip("/").split("/")
+                else:
+                    target_parts = raw_target.split("/")
+                pending = target_parts + pending
+                continue
+            candidate.lstat()
+        except OSError:
+            return None
+        current = candidate
+
+    if current != image_root and image_root not in current.parents:
         return None
-    return resolved
+    return current
 
 
 def walk_image_entries(mount: Path, link_counts: dict[str, int]):

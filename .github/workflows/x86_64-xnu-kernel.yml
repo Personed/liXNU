@@ -44,16 +44,34 @@ jobs:
         shell: bash
         run: |
           catalog="$RUNNER_TEMP/apple-full-installers.txt"
-          set +e
-          softwareupdate --list-full-installers > "$catalog" 2>&1
-          status=$?
-          set -e
-          echo "softwareupdate exit code: $status"
           python3 - "$catalog" <<'PY'
           from pathlib import Path
+          import subprocess
           import sys
 
-          lines = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").splitlines()
+          catalog = Path(sys.argv[1])
+          try:
+              result = subprocess.run(
+                  ["softwareupdate", "--list-full-installers"],
+                  capture_output=True,
+                  text=True,
+                  timeout=60,
+                  check=False,
+              )
+              output = result.stdout + result.stderr
+              status = result.returncode
+          except subprocess.TimeoutExpired as error:
+              stdout = error.stdout or ""
+              stderr = error.stderr or ""
+              if isinstance(stdout, bytes):
+                  stdout = stdout.decode("utf-8", errors="replace")
+              if isinstance(stderr, bytes):
+                  stderr = stderr.decode("utf-8", errors="replace")
+              output = (stdout + stderr) + "\nsoftwareupdate catalog query timed out after 60 seconds\n"
+              status = 124
+          catalog.write_text(output, encoding="utf-8")
+          print(f"softwareupdate exit code: {status}")
+          lines = output.splitlines()
           matches = [line for line in lines if "Title: macOS Tahoe" in line]
           print("\n".join(matches) if matches else "No Tahoe installer rows in catalog output.")
           PY

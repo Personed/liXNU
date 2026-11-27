@@ -80,6 +80,7 @@ if [ "$MODE" = local ]; then
           process_line(line)
           next
         }
+        if (continuation != "" && line ~ /^[[:space:]]*[#;]/) next
         if (continuation != "") {
           line = continuation line
           continuation = ""

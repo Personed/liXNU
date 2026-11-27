@@ -288,7 +288,7 @@ class TestXnuVnc(unittest.TestCase):
 
             # Later valid [Journal] ReadKMsg=yes overrides earlier ReadKMsg=no.
             (dropin_dir / "50-reenable.conf").write_text(
-                "[Journal]\nReadKMsg=\\\n  yes\n", encoding="utf-8"
+                "[Journal]\nReadKMsg=\\\n# ignored comment\n  yes\n", encoding="utf-8"
             )
             self.assertEqual(self._run_console_local(env).strip(), "journal-ok")
 
@@ -303,6 +303,7 @@ class TestXnuVnc(unittest.TestCase):
                 'cat <<\'EOF\'\n'
                 '[Journal]\n'
                 'ReadKMsg=\\\n'
+                '# ignored comment\n'
                 '  yes\n'
                 '\n'
                 '# /etc/systemd/journald.conf.d/10-headerless.conf\n'

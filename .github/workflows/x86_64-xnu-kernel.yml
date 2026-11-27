@@ -133,6 +133,7 @@ jobs:
           python3 - "$XNU_X86_BUILD_DIR/out/build-result.json" <<'PY'
           import json
           from pathlib import Path
+          import subprocess
           import sys
 
           with open(sys.argv[1], encoding="utf-8") as manifest_file:
@@ -169,7 +170,12 @@ jobs:
           assert manifest["trustcache_header_source"] in {"matching-kdk", "pinned-xcode-sdk"}, manifest
           assert len(manifest["trustcache_header_sha256"]) == 64, manifest
           assert Path(manifest["trustcache_header_path"]).is_file(), manifest
-          assert manifest["host_sdkroot"].endswith("/MacOSX.sdk"), manifest
+          recorded_sdk = Path(manifest["host_sdkroot"])
+          selected_sdk = Path(subprocess.check_output(
+              ["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True,
+          ).strip())
+          assert recorded_sdk.is_absolute() and selected_sdk.is_absolute(), manifest
+          assert selected_sdk.is_dir() and recorded_sdk.samefile(selected_sdk), manifest
           assert manifest["host_sys_unistd_headers_match"] is True, manifest
           assert manifest["host_sys_unistd_base_sha256"] == manifest["host_sys_unistd_overlay_sha256"], manifest
           assert manifest["host_tool_base_unistd_probe"] == "passed", manifest
@@ -277,6 +283,7 @@ jobs:
           python3 - "$XNU_X86_BUILD_DIR/out/build-result.json" <<'PY'
           import json
           from pathlib import Path
+          import subprocess
           import sys
 
           with open(sys.argv[1], encoding="utf-8") as manifest_file:
@@ -309,7 +316,12 @@ jobs:
           assert manifest["trustcache_header_source"] == "matching-kdk", manifest
           assert len(manifest["trustcache_header_sha256"]) == 64, manifest
           assert Path(manifest["trustcache_header_path"]).is_file(), manifest
-          assert manifest["host_sdkroot"].endswith("/MacOSX.sdk"), manifest
+          recorded_sdk = Path(manifest["host_sdkroot"])
+          selected_sdk = Path(subprocess.check_output(
+              ["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True,
+          ).strip())
+          assert recorded_sdk.is_absolute() and selected_sdk.is_absolute(), manifest
+          assert selected_sdk.is_dir() and recorded_sdk.samefile(selected_sdk), manifest
           assert manifest["host_sys_unistd_headers_match"] is True, manifest
           assert manifest["host_sys_unistd_base_sha256"] == manifest["host_sys_unistd_overlay_sha256"], manifest
           assert manifest["host_tool_base_unistd_probe"] == "passed", manifest

@@ -125,6 +125,8 @@ static struct fki_region l2page;
 static unsigned long long *window_slot, *window_l1;
 static unsigned char window_owned[512];
 static u64_t diag_va[6];
+static int host_pie_mode;
+static int host_pie_mode_known;
 #define XNU_L1_FIRST 384	/* VM_MIN_KERNEL_ADDRESS 0xffffffe000000000 */
 #define XNU_L1_LAST 495	/* VM_MAX_KERNEL_ADDRESS 0xfffffffbffffffff */
 static void *blob;
@@ -2031,8 +2033,32 @@ static void el0_patch_image(struct xnu_image *im)
 	}
 }
 
+static int read_host_pie_mode(void)
+{
+	if (host_pie_mode_known)
+		return 0;
+	u64_t tcr2 = 0;
+	int err = fki_tcr2_read(&tcr2);
+	if (err && err != -EOPNOTSUPP) {
+		logkv("xnu: TCR2_EL1 read failed, err", (u64_t)err);
+		return err;
+	}
+	host_pie_mode = !err && !!(tcr2 & (1ULL << 1));
+	if (err)
+		logs("xnu: host TCR2_EL1 unavailable; using direct permissions");
+	else {
+		logkv("xnu: host TCR2_EL1", tcr2);
+		logkv("xnu: host TCR2_EL1.PIE", (u64_t)host_pie_mode);
+	}
+	host_pie_mode_known = 1;
+	return 0;
+}
+
 static int enter_arm_init(struct boot_args_v2 *ba)
 {
+	int pie_err = read_host_pie_mode();
+	if (pie_err)
+		return pie_err;
 	if (img.filetype == MH_FILESET) {
 		/* kernel collection at its link address: XNU applies the chained fixups itself; nothing slides */
 		if (img.slide) { logs("xnu: a kernel collection must not slide"); return -22; }
@@ -2053,6 +2079,7 @@ static int enter_arm_init(struct boot_args_v2 *ba)
 	u64_t a_init = macho_sym(&img, "_arm_init"), a_hook = macho_sym(&img, "_linux64_hook"),
 	      a_slide = macho_sym(&img, "_linux64_slide"), a_el0 = macho_sym(&img, "_linux64_el0"),
 	      a_el0_caps = macho_sym(&img, "_linux64_el0_caps"),
+	      a_pie = macho_sym(&img, "_linux64_pie"),
 	      a_abi = macho_sym(&img, "_linux64_abi_version"),
 	      a_host_abi = macho_sym(&img, "_linux64_host_abi_version");
 	logkv("xnu: arm_init at", a_init);
@@ -2076,7 +2103,13 @@ static int enter_arm_init(struct boot_args_v2 *ba)
 		logs("xnu: _linux64_host_abi_version missing or invalid (stale kernel incompatible with host ABI)");
 		return -22;
 	}
+	if (!a_pie || (a_pie & 3) || !va_in_loaded_segs_prot(&img, a_pie, 4, 3)) {
+		logs("xnu: _linux64_pie missing or invalid (stale kernel incompatible with host ABI)");
+		return -22;
+	}
 	*(unsigned int *)a_host_abi = LINUX64_ABI_VERSION;
+	*(unsigned int *)a_pie = (unsigned int)host_pie_mode;
+	logkv("xnu: XNU PIE mapping mode", (u64_t)host_pie_mode);
 	if (el0_mode) {
 		if (!a_el0 || !a_el0_caps ||
 		    (a_el0 & 3) || !va_in_loaded_segs_prot(&img, a_el0, 4, 3) ||
@@ -2296,26 +2329,16 @@ static int run_m2b(void)
 	if (boot_map < image_off + image_size + 0x60000 + BOOT_EXTRA + (64ULL << 20)) {
 		logs("xnu: image and boot data do not fit in the bootstrap window"); return -22;
 	}
-	u64_t tcr2 = 0;
-	int tcr2_err = fki_tcr2_read(&tcr2);
-	if (tcr2_err && tcr2_err != -EOPNOTSUPP) {
-		logkv("xnu: TCR2_EL1 read failed, err", (u64_t)tcr2_err);
-		return tcr2_err;
-	}
-	int pie = !tcr2_err && (tcr2 & (1ULL << 1));
-	if (tcr2_err)
-		logs("xnu: host TCR2_EL1 unavailable; using direct permissions");
-	else {
-		logkv("xnu: host TCR2_EL1", tcr2);
-		logkv("xnu: host TCR2_EL1.PIE", (u64_t)pie);
-	}
+	err = read_host_pie_mode();
+	if (err)
+		return err;
 	logkv("xnu: bootstrap window base", XNU_WINDOW_BASE);
 	logkv("xnu: bootstrap window bytes", boot_map);
 	for (u64_t o = 0; o < boot_map; o += 0x200000) {
 		/* 2 MiB block: normal WB (AttrIdx 0 in Linux's MAIR), inner shareable, AF, EL1 RWX, UXN */
 		u64_t desc = (img.region.pa + o) | (1ULL << 54) | (1ULL << 10) | (3ULL << 8) | 1;
 		/* With PIE the AP/DBM bits index PIR_EL1; Linux's RWX kernel entry is index 0xa (DBM set). */
-		if (pie)
+		if (host_pie_mode)
 			desc |= 1ULL << 51;
 		l2[first + (o >> 21)] = desc;
 	}

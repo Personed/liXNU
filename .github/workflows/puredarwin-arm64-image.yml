@@ -361,6 +361,8 @@ jobs:
           sudo apt-get install -y -qq qemu-system-arm
       - name: Test exact QEMU RSS measurement
         run: python3 tests/puredarwin/test-run-tcg-e2e-rss.py
+      - name: Test strict PIE evidence handling
+        run: python3 tests/puredarwin/test-run-tcg-e2e-pie.py
       - name: Boot reduced-memory PureDarwin and require guest userspace plus clean halt
         id: boot
         run: |

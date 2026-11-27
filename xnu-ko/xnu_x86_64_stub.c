@@ -12,11 +12,7 @@
 #include <linux/printk.h>
 #include <linux/types.h>
 #include <asm/cpufeature.h>
-#if __has_include(<asm/cpuid/api.h>)
-#include <asm/cpuid/api.h>
-#else
-#include <asm/cpuid.h>
-#endif
+#include <asm/processor.h>
 #include <linux/string.h>
 #include "x86_64_cpu_compat.h"
 

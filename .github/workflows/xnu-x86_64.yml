@@ -37,6 +37,8 @@ jobs:
         run: tests/x86_64/test-x86-cpu-compat.sh
       - name: Run read-only Mach-O artifact inspector fixtures
         run: tests/x86_64/test-macho-inspect.sh
+      - name: Run source-pinned x86 EFI map ownership fixtures
+        run: bash tests/x86_64/test-x86-efi-map.sh
       - name: Verify module license
         run: |
           sudo apt-get install -y -qq busybox-static cpio kmod qemu-system-x86 >/dev/null

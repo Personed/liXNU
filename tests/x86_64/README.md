@@ -69,6 +69,19 @@ tests/x86_64/test-boundary-probe-vm.sh /path/to/x86_64/kernel-headers
 The smoke initramfs must print `XNU_LINUX_TCG_BOOTED` on its serial console and shut down before the timeout. TCG boots
 only a disposable Linux guest; it does not demonstrate macOS boot, KVM, Intel/AMD compatibility or useful performance.
 
+The one-argument boundary probe command uses APT on Debian or Ubuntu. It needs an unsigned kernel image package
+matching the kernel headers and a `busybox-static` package in the configured repositories. To use local files on
+another x86_64 Linux distribution, pass a bootable kernel image for those headers and a static x86_64 BusyBox:
+
+```sh
+tests/x86_64/test-boundary-probe-vm.sh /path/to/kernel-headers /path/to/vmlinuz /path/to/busybox-static
+```
+
+The runner builds its own initramfs and checks the booted kernel release against the headers before loading a module.
+The BusyBox binary must support `--install -s` and include `sh`, `cat`, `uname`, `mount`, `insmod`, `rmmod`,
+`dmesg`, `sync`, and `poweroff`. Both modes require compiler and kernel build tools, static C libraries, `cpio`, and
+QEMU. Use the kernel configuration that produced the headers so the disposable guest can load the test modules.
+
 The boundary probe builds a separate test module and boots it only in a disposable x86_64 Linux VM. It runs a synthetic
 assembly call on each requested online CPU via `work_on_cpu`, switches to a temporary stack with low/high canaries,
 deliberately clobbers callee-saved GPRs and RFLAGS, and checks normal and software-abort returns. Kernel snapshots

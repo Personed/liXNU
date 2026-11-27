@@ -502,6 +502,9 @@ def main() -> int:
     fileset = report.get("recovery_image", {}).get("boot_kernel_collection_fileset")
     if fileset:
         print(f"Fileset inspection: {fileset['status']} (parser result: {fileset.get('parser_result')})")
+        segments = fileset.get("kernel", {}).get("segments")
+        if fileset["status"] == "accepted" and isinstance(segments, list):
+            print(f"Fileset kernel segments reported: {len(segments)}")
     print(f"Recovery detached: {report.get('recovery_detached')}")
     print(f"Temporary Recovery files removed: {report['temporary_recovery_files_removed']}")
     if not report["temporary_recovery_files_removed"]:

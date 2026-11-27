@@ -92,6 +92,23 @@ def verify_segment_bounds(binary):
     # This range ends exactly at EOF only with container-relative fileoff.
     verify(binary, image, expected)
 
+    # Insert one section_64 record before the original segment bytes.
+    sectioned = bytearray(image)
+    section_offset = command + 72
+    sectioned[section_offset:section_offset] = bytes(80)
+    struct.pack_into("<I", sectioned, member + 20, 152)
+    struct.pack_into("<I", sectioned, command + 4, 152)
+    struct.pack_into("<Q", sectioned, command + 40, 0x150)
+    struct.pack_into("<I", sectioned, command + 64, 1)
+    struct.pack_into(
+        "<16s16sQQIIIIIIII", sectioned, section_offset,
+        b"__text", name, 0xFFFFFF8000200000, 0x20, 0x150, 0, 0, 0, 0, 0, 0, 0,
+    )
+    kernel = expected["kernel"]
+    kernel["load_command_bytes"] = 152
+    kernel["segments"][0].update(fileoff="0x0000000000000150", section_count=1)
+    verify(binary, sectioned, expected)
+
     rejected = {"status": "parser_rejected", "parser_result": -8}
     verify(binary, image[:-1], rejected)
     invalid = bytearray(image)

@@ -33,8 +33,8 @@ In 64-bit mode the architectural exception frame includes SS, RSP, RFLAGS, CS an
 - save the general-purpose registers it needs in per-vCPU test storage before touching them;
 - record the vector selected by the independent handler entry point;
 - record the error code and hardware frame fields exactly as delivered;
-- for `#PF`, save all 15 non-RSP GPRs on the already validated fault stack, then read CR2 into R11 before any other handler data access; the entry pushes must not produce a passing recovery if they fault, and the handler must restore the saved fault-time R11 before `iretq`;
-- restore every general-purpose register it used before `iretq`, so the recovery path starts with the fault-time register state, and compare the captured 15 non-RSP GPR values against the exact expected per-injection image before reporting success (including registers used to form injection operands); validate RSP separately against the recorded fault-window RSP and the dedicated-stack transition;
+- for `#PF`, save all 15 non-RSP GPRs on the already validated fault stack, then read CR2 into R11 before any other handler data access; any fault in a push or capture store is unclassified/terminal and can never pass, and the handler must restore the saved fault-time R11 before `iretq`;
+- restore every general-purpose register it used before `iretq`, so the recovery path starts with the fault-time register state; on entry after `iretq`, the recovery stub must save the live 15 non-RSP GPR values to scratch and compare each against the exact expected per-injection value before writing any success result (including registers used to form injection operands); validate RSP separately against the recorded fault-window RSP and the dedicated-stack transition;
 - rewrite the frame exactly once: set frame RIP to the test recovery stub, set frame RSP to the test-owned recovery-stack top, keep CS/RFLAGS/SS unchanged, and account for the error-code slot before executing `iretq`; and
 - increment no counter and perform no C call in the raw handler beyond the capture writes.
 

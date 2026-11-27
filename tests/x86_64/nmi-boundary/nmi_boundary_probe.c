@@ -143,7 +143,7 @@ static notrace int nmi_boundary_handler(unsigned int type, struct pt_regs *regs)
 			atomic_inc(&duplicate_count);
 		else
 			atomic_inc(&unexpected_count);
-		return NMI_HANDLED;
+		return NMI_DONE;
 	}
 
 	cpu = raw_smp_processor_id();

@@ -50,7 +50,7 @@ jobs:
             $missing = @($requiredExecutables | Where-Object {
               -not (Test-Path -LiteralPath $_ -PathType Leaf)
             })
-            if ($missing.Count -eq 0) {
+            if ($chocoExitCode -eq 0 -and $missing.Count -eq 0) {
               $installed = $true
               break
             }

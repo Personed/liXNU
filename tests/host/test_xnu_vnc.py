@@ -282,23 +282,29 @@ class TestXnuVnc(unittest.TestCase):
                 "[Journal]\nReadKMsg=no\n", encoding="utf-8"
             )
             (dropin_dir / "40-invalid.conf").write_text(
-                "[Journal]\nReadKMsg=bogus\n", encoding="utf-8"
+                "[Journal]\nReadKMsg=y\\\n  es\n", encoding="utf-8"
             )
             self.assertEqual(self._run_console_local(env).strip(), "fallback-ok")
 
             # Later valid [Journal] ReadKMsg=yes overrides earlier ReadKMsg=no.
             (dropin_dir / "50-reenable.conf").write_text(
-                "[Journal]\nReadKMsg=yes\n", encoding="utf-8"
+                "[Journal]\nReadKMsg=\\\n# ignored comment\n  yes\n", encoding="utf-8"
             )
             self.assertEqual(self._run_console_local(env).strip(), "journal-ok")
 
             # Also verify systemd-analyze cat-config path resets section state on file headers.
             (bin_dir / "systemd-analyze").write_text(
                 '#!/bin/sh\n'
+                'if [ "$SYSTEMD_COLORS" != 0 ]; then\n'
+                '  printf "\\033[35m# /etc/systemd/journald.conf\\033[0m\\n"\n'
+                'else\n'
+                '  printf "# /etc/systemd/journald.conf\\n"\n'
+                'fi\n'
                 'cat <<\'EOF\'\n'
-                '# /etc/systemd/journald.conf\n'
                 '[Journal]\n'
-                'ReadKMsg=yes\n'
+                'ReadKMsg=\\\n'
+                '# ignored comment\n'
+                '  yes\n'
                 '\n'
                 '# /etc/systemd/journald.conf.d/10-headerless.conf\n'
                 'ReadKMsg=no\n'

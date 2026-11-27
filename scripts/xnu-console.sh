@@ -40,32 +40,66 @@ if [ "$MODE" = local ]; then
   JOURNAL_HAS_KMSG=0
   if command -v journalctl >/dev/null 2>&1 && [ -d "$SYSTEMD_RUNTIME_DIR" ]; then
     READ_KMSG_AWK='
-      FNR == 1 { in_journal = 0 }
-      { sub(/\r$/, "") }
-      from_cat_config && /^# \/.*\/systemd\/journald\.conf(\.d\/[^\/]+\.conf)?$/ {
+      function finish_file() {
+        if (continuation != "") {
+          process_line(continuation)
+          continuation = ""
+        }
         in_journal = 0
-        next
       }
-      /^[[:space:]]*[#;]/ || /^[[:space:]]*$/ { next }
-      /^[[:space:]]*\[[^]]*\][[:space:]]*$/ {
-        s = $0
-        gsub(/^[[:space:]]*\[|\][[:space:]]*$/, "", s)
-        in_journal = (s == "Journal")
-        next
+      function process_line(line, s, v) {
+        if (from_cat_config && line ~ /^# \/.*\/systemd\/journald\.conf(\.d\/[^\/]+\.conf)?$/) {
+          in_journal = 0
+          return
+        }
+        if (line ~ /^[[:space:]]*[#;]/ || line ~ /^[[:space:]]*$/) return
+        if (line ~ /^[[:space:]]*\[[^]]*\][[:space:]]*$/) {
+          s = line
+          gsub(/^[[:space:]]*\[|\][[:space:]]*$/, "", s)
+          in_journal = (s == "Journal")
+          return
+        }
+        if (in_journal && line ~ /^[[:space:]]*ReadKMsg[[:space:]]*=/) {
+          v = line
+          sub(/^[[:space:]]*ReadKMsg[[:space:]]*=[[:space:]]*/, "", v)
+          sub(/[[:space:]]*$/, "", v)
+          v = tolower(v)
+          if (v ~ /^(1|yes|y|true|t|on)$/) last = "yes"
+          else if (v ~ /^(0|no|n|false|f|off)$/) last = "no"
+        }
       }
-      in_journal && /^[[:space:]]*ReadKMsg[[:space:]]*=/ {
-        v = $0
-        sub(/^[[:space:]]*ReadKMsg[[:space:]]*=[[:space:]]*/, "", v)
-        sub(/[[:space:]]*$/, "", v)
-        v = tolower(v)
-        if (v ~ /^(1|yes|y|true|t|on)$/) last = "yes"
-        else if (v ~ /^(0|no|n|false|f|off)$/) last = "no"
+      FNR == 1 { finish_file() }
+      {
+        sub(/\r$/, "")
+        line = $0
+        if (from_cat_config && line ~ /^# \/.*\/systemd\/journald\.conf(\.d\/[^\/]+\.conf)?$/) {
+          if (continuation != "") {
+            process_line(continuation)
+            continuation = ""
+          }
+          process_line(line)
+          next
+        }
+        if (continuation != "" && line ~ /^[[:space:]]*[#;]/) next
+        if (continuation != "") {
+          line = continuation line
+          continuation = ""
+        }
+        if (line ~ /\\[[:space:]]*$/) {
+          sub(/\\[[:space:]]*$/, " ", line)
+          continuation = continuation line
+          next
+        }
+        process_line(line)
       }
-      END { print last }
+      END {
+        finish_file()
+        print last
+      }
     '
     READ_KMSG=$(
       if [ "$JOURNALD_CONF_DIR" = /etc/systemd ] && command -v systemd-analyze >/dev/null 2>&1; then
-        (systemd-analyze cat-config systemd/journald.conf 2>/dev/null || true) | awk -v from_cat_config=1 "$READ_KMSG_AWK"
+        (SYSTEMD_COLORS=0 systemd-analyze cat-config systemd/journald.conf 2>/dev/null || true) | awk -v from_cat_config=1 "$READ_KMSG_AWK"
       else
         conf_files=()
         for conf in "$JOURNALD_CONF_DIR/journald.conf" "$JOURNALD_CONF_DIR/journald.conf.d"/*.conf; do

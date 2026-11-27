@@ -132,6 +132,31 @@ static void test_unrepresentable_ranges(void)
 	assert(xnu_x86_boot_args_build_core(&args, &in) == -ERANGE);
 }
 
+static void test_last_u32_page_ranges(void)
+{
+	struct xnu_x86_boot_args args;
+	struct xnu_x86_boot_args_core in = valid_input();
+
+	/* The u32 base plus length describes every byte through UINT32_MAX. */
+	in.memory_map_pa = 0xfffff000ULL;
+	in.memory_map_size = 0x1000;
+	in.memory_map_descriptor_size = 0x1000;
+	in.device_tree_pa = 0xfffff000ULL;
+	in.device_tree_size = 0x1000;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+	assert(args.MemoryMap == 0xfffff000U);
+	assert(args.MemoryMapSize == 0x1000U);
+	assert(args.deviceTreeP == 0xfffff000U);
+	assert(args.deviceTreeLength == 0x1000U);
+	assert(xnu_x86_boot_args_validate(&args) == 0);
+
+	/* XNU computes this sum in uint32_t, so the same kernel interval wraps. */
+	in = valid_input();
+	in.kernel_pa = 0xfffff000ULL;
+	in.kernel_size = 0x1000;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == -ERANGE);
+}
+
 static void test_reject_unsupported_or_malformed_output(void)
 {
 	struct xnu_x86_boot_args args;
@@ -160,6 +185,7 @@ int main(void)
 	test_valid_core_fields();
 	test_malformed_lengths();
 	test_unrepresentable_ranges();
+	test_last_u32_page_ranges();
 	test_reject_unsupported_or_malformed_output();
 	puts("xnu x86 boot_args layout/validation fixtures passed");
 	return 0;

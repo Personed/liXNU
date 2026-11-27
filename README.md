@@ -169,6 +169,13 @@ QEMU's `cortex-a710` profile. This records the completed hosted-runner profiles;
 physical host-memory minimum remain unvalidated. PIE-enabled `-cpu max` is a separate compatibility profile. See the
 [QEMU guide](docs/qemu.md#boot-the-puredarwin-arm64-guest-with-tcg) for exact artifact and command steps.
 
+Run `python3 scripts/xnulinux-doctor.py` on the host before reproducing this complementary route. It reports the
+OS/CPU profile, QEMU `qemu-system-aarch64` version, memory and disk capacity, plus informational native-x86 feature
+facts without changing the host. Its output is diagnostic input only: a passing local report does not certify
+physical-PC support or native x86_64 hosted-XNU compatibility, and warnings about candidate Windows/macOS profiles or
+older QEMU versions are not claims that those profiles cannot work. Use `--json` to save the facts with validation
+evidence and `--strict` to treat warnings as failures.
+
 ## Building and running
 
 1. `scripts/vm-xnu-build.sh` (on the arm64 Linux host, once): sets up the macOS-DroidVM Linux toolchain and builds XNU

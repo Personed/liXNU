@@ -120,20 +120,52 @@ def bgra_to_pixel_bytes(
         raise ValueError(f"unsupported bpp={bpp} (supported: 8, 16, 32)")
 
     n = len(raw_bgra) // 4
+    if n == 0:
+        return b""
+    raw_bgra = raw_bgra[: n * 4]
+
+    b_ch = raw_bgra[0::4]
+    g_ch = raw_bgra[1::4]
+    r_ch = raw_bgra[2::4]
+
+    # Fast path for byte-aligned 32-bit 8-bit-per-channel formats with distinct shifts (RGBX, XRGB, BGRX, etc.)
+    if (
+        bpp == 32
+        and red_max == 255
+        and green_max == 255
+        and blue_max == 255
+        and (red_shift % 8 == 0)
+        and (green_shift % 8 == 0)
+        and (blue_shift % 8 == 0)
+        and len({red_shift, green_shift, blue_shift}) == 3
+    ):
+        out = bytearray(n * 4)
+        for ch, sh in ((r_ch, red_shift), (g_ch, green_shift), (b_ch, blue_shift)):
+            pos = (3 - (sh // 8)) if big_endian else (sh // 8)
+            if 0 <= pos < 4:
+                out[pos::4] = ch
+        return bytes(out)
+
+    # Fast C-speed vectorized path using 256-entry lookup tables + big-int bitwise OR.
     bytes_pp = bpp // 8
-    out = bytearray(n * bytes_pp)
-    fmt = (">" if big_endian else "<") + {1: "B", 2: "H", 4: "I"}[bytes_pp]
     mask = (1 << bpp) - 1
-    for i in range(n):
-        b = raw_bgra[i * 4]
-        g = raw_bgra[i * 4 + 1]
-        r = raw_bgra[i * 4 + 2]
-        rs = (r * red_max + 127) // 255 if red_max != 255 else r
-        gs = (g * green_max + 127) // 255 if green_max != 255 else g
-        bs = (b * blue_max + 127) // 255 if blue_max != 255 else b
-        px = ((rs << red_shift) | (gs << green_shift) | (bs << blue_shift)) & mask
-        struct.pack_into(fmt, out, i * bytes_pp, px)
-    return bytes(out)
+
+    def channel_planes(ch_bytes, ch_max, ch_shift):
+        vals = [(((v * ch_max + 127) // 255 if ch_max != 255 else v) << ch_shift) & mask for v in range(256)]
+        if bytes_pp == 1:
+            return ch_bytes.translate(bytes(vals))
+        buf = bytearray(n * bytes_pp)
+        for byte_idx in range(bytes_pp):
+            bit_off = ((bytes_pp - 1 - byte_idx) if big_endian else byte_idx) * 8
+            tbl = bytes((v >> bit_off) & 0xFF for v in vals)
+            buf[byte_idx::bytes_pp] = ch_bytes.translate(tbl)
+        return bytes(buf)
+
+    pr = channel_planes(r_ch, red_max, red_shift)
+    pg = channel_planes(g_ch, green_max, green_shift)
+    pb = channel_planes(b_ch, blue_max, blue_shift)
+    combined = int.from_bytes(pr, "little") | int.from_bytes(pg, "little") | int.from_bytes(pb, "little")
+    return combined.to_bytes(n * bytes_pp, "little")
 
 
 class InputWriter:

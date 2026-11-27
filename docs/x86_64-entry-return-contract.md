@@ -47,7 +47,7 @@ Until these inputs are available and the test-only gates pass, the supported beh
 
 ## Current evidence references
 
-- `tests/x86_64/test-boundary-probe-vm.sh` runs the call/return probe only in a disposable Linux VM; it never loads XNU. The extension compares the full enabled user XSAVE image around each ioctl, but deliberately seeds/clobbers only YMM0–YMM7 and does not inspect supervisor XSAVE state.
+- `tests/x86_64/test-boundary-probe-vm.sh` runs the call/return probe only in a disposable Linux VM with QEMU 8.2 or newer for the TCG XSAVE/AVX profile; it never loads XNU. The extension compares the full enabled user XSAVE image around each ioctl, but deliberately seeds/clobbers only YMM0–YMM7 and does not inspect supervisor XSAVE state.
 - `tests/x86_64/test-xnu-stub-vm.sh` tests the XNU module's refusal in disposable VMs. Loading this proprietary module taints that guest before its initializer returns.
 - `tools/dev/x86_64/xnu-macho-inspect` inspects a candidate artifact read-only; its accepted result does not prove loadability or execution.
 - `docs/x86_64-native-port-design.md` describes the broader build, memory, exception, and hardware acceptance gates.

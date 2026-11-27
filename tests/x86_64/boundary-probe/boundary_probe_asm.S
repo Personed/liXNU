@@ -136,10 +136,12 @@ SYM_FUNC_START(x86_boundary_probe_inner)
 	movq %rcx, BPX_OFF_EXPECTED_RIP(%rax)
 	movq $13, BPX_OFF_EXPECTED_VECTOR(%rax)
 	movq $BPX_STATE_ARMED, BPX_OFF_STATE(%rax)
+	movq $0, BPX_OFF_FAULT_SCRATCH_RAX(%rax)
+	movabs $0xdeadbeefdeadbeef, %rcx
+	movq %rcx, BPX_OFF_FAULT_SCRATCH_RAX+2(%rax)
 	lidt BPX_OFF_SHADOW_DESC(%rax)
-	movl $0xdeadbeef, %ecx
 .Lgp_fault_instruction:
-	rdmsr
+	lidt BPX_OFF_FAULT_SCRATCH_RAX(%rax)
 
 .Lpost_exception_injection:
 	leaq x86_boundary_probe_exception_control(%rip), %rax

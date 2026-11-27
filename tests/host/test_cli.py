@@ -48,7 +48,7 @@ class TestCliAndInstaller(unittest.TestCase):
             encoding="utf-8",
         )
         fixture_cli.chmod(0o755)
-        return checkout.resolve(), fixture_installer, fixture_cli
+        return checkout.resolve(), fixture_installer
 
     def test_help_doctor_status(self):
         for cmd in ("help", "doctor", "status"):
@@ -143,7 +143,7 @@ class TestCliAndInstaller(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             sudo_log = pathlib.Path(tmp) / "sudo.log"
             env = self.simulated_user_env(tmp, sudo_log=sudo_log)
-            checkout, fixture_installer, _ = self.make_install_fixture(tmp)
+            checkout, fixture_installer = self.make_install_fixture(tmp)
             prefix = pathlib.Path(tmp) / "prefix space 'single' \"double\" $dollar"
             installed = prefix / "bin" / "xnulinux"
 
@@ -167,7 +167,7 @@ class TestCliAndInstaller(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
             public_root = pathlib.Path(tmp)
             public_root.chmod(0o755)
-            checkout, fixture_installer, fixture_cli = self.make_install_fixture(tmp)
+            checkout, fixture_installer = self.make_install_fixture(tmp)
             checkout.chmod(0o755)
             (checkout / "scripts").chmod(0o755)
             fixture_installer.chmod(0o755)
@@ -202,7 +202,6 @@ class TestCliAndInstaller(unittest.TestCase):
             )
             self.assertEqual(launched.returncode, 0, launched.stderr)
             self.assertEqual(launched.stdout, f"root={checkout}\narg=probe\n")
-            self.assertEqual(str(fixture_cli), str(checkout / "scripts" / "xnulinux"))
 
     def test_system_install_rejects_private_checkout_parent(self):
         if not hasattr(os, "geteuid") or os.geteuid() != 0:

@@ -182,10 +182,14 @@ jobs:
           assert manifest["xnu_reserved_identifier_warning_nonfatal"] is True, manifest
           assert manifest["xnu_unused_but_set_variable_warning_nonfatal"] is True, manifest
           assert manifest["xnu_void_pointer_to_enum_cast_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_pointer_to_int_cast_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_void_pointer_to_int_cast_warning_nonfatal"] is True, manifest
           assert manifest["xnu_compiler_warning_exceptions"] == [
               "-Wno-error=reserved-identifier",
               "-Wno-error=unused-but-set-variable",
               "-Wno-error=void-pointer-to-enum-cast",
+              "-Wno-error=pointer-to-int-cast",
+              "-Wno-error=void-pointer-to-int-cast",
           ], manifest
           assert manifest["xnu_other_warnings_remain_errors"] is True, manifest
           assert manifest["xnu_target_sdkroot_resolution_mode"] == "explicit-isysroot-overlay", manifest
@@ -321,10 +325,14 @@ jobs:
           assert manifest["xnu_reserved_identifier_warning_nonfatal"] is True, manifest
           assert manifest["xnu_unused_but_set_variable_warning_nonfatal"] is True, manifest
           assert manifest["xnu_void_pointer_to_enum_cast_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_pointer_to_int_cast_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_void_pointer_to_int_cast_warning_nonfatal"] is True, manifest
           assert manifest["xnu_compiler_warning_exceptions"] == [
               "-Wno-error=reserved-identifier",
               "-Wno-error=unused-but-set-variable",
               "-Wno-error=void-pointer-to-enum-cast",
+              "-Wno-error=pointer-to-int-cast",
+              "-Wno-error=void-pointer-to-int-cast",
           ], manifest
           assert manifest["xnu_other_warnings_remain_errors"] is True, manifest
           assert manifest["xnu_target_sdkroot_resolution_mode"] == "explicit-isysroot-overlay", manifest

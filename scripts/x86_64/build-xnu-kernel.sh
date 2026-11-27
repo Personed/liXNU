@@ -421,6 +421,8 @@ verify_xnu_warning_policy() {
     -Wno-error=reserved-identifier
     -Wno-error=unused-but-set-variable
     -Wno-error=void-pointer-to-enum-cast
+    -Wno-error=pointer-to-int-cast
+    -Wno-error=void-pointer-to-int-cast
   )
   : > "$XNU_WARNING_DIAGNOSTIC_LOG"
   if ! cat <<'PROBES' | "$CLANG" -Weverything -Werror "${warning_exceptions[@]}" -fsyntax-only -x c - \
@@ -431,12 +433,21 @@ enum xnu_void_enum_probe xnu_convert_void_pointer(void *);
 enum xnu_void_enum_probe xnu_convert_void_pointer(void *value) {
   return (enum xnu_void_enum_probe)value;
 }
+struct xnu_object_pointer_probe { int value; };
+unsigned int xnu_convert_object_pointer(struct xnu_object_pointer_probe *value) {
+  return (unsigned int)value;
+}
+unsigned int xnu_convert_void_pointer_to_int(void *value) {
+  return (unsigned int)value;
+}
 int main(void) {
   enum xnu_void_enum_probe converted;
   int xnu_set_but_unused;
   xnu_set_but_unused = 1;
   converted = xnu_convert_void_pointer((void *)0);
-  return (int)converted + __xnu_reserved_warning_probe;
+  return (int)converted + __xnu_reserved_warning_probe +
+      (int)xnu_convert_object_pointer((struct xnu_object_pointer_probe *)0) +
+      (int)xnu_convert_void_pointer_to_int((void *)0);
 }
 PROBES
     fail "selective XNU warning-policy probe failed; see $XNU_WARNING_DIAGNOSTIC_LOG"
@@ -447,6 +458,10 @@ PROBES
     || fail "unused-but-set-variable probe did not exercise the expected warning; see $XNU_WARNING_DIAGNOSTIC_LOG"
   grep -Fq 'void-pointer-to-enum-cast' "$XNU_WARNING_DIAGNOSTIC_LOG" \
     || fail "void-pointer-to-enum-cast probe did not exercise the expected warning; see $XNU_WARNING_DIAGNOSTIC_LOG"
+  grep -Fq '-Wpointer-to-int-cast]' "$XNU_WARNING_DIAGNOSTIC_LOG" \
+    || fail "pointer-to-int-cast probe did not exercise the expected warning; see $XNU_WARNING_DIAGNOSTIC_LOG"
+  grep -Fq '-Wvoid-pointer-to-int-cast]' "$XNU_WARNING_DIAGNOSTIC_LOG" \
+    || fail "void-pointer-to-int-cast probe did not exercise the expected warning; see $XNU_WARNING_DIAGNOSTIC_LOG"
 
   if ! printf 'int main(void) { int unused; return 0; }\n' |
     "$CLANG" -Weverything -Wunused-variable -fsyntax-only -x c - \
@@ -462,7 +477,7 @@ PROBES
   fi
   grep -Fq 'error: unused variable' "$XNU_WARNING_DIAGNOSTIC_LOG" \
     || fail "global -Werror did not promote the unrelated warning; see $XNU_WARNING_DIAGNOSTIC_LOG"
-  printf 'reserved_identifier_warning=nonfatal\nunused_but_set_variable_warning=nonfatal\nvoid_pointer_to_enum_cast_warning=nonfatal\nother_warnings_remain_errors=true\n' \
+  printf 'reserved_identifier_warning=nonfatal\nunused_but_set_variable_warning=nonfatal\nvoid_pointer_to_enum_cast_warning=nonfatal\npointer_to_int_cast_warning=nonfatal\nvoid_pointer_to_int_cast_warning=nonfatal\nother_warnings_remain_errors=true\n' \
     >> "$XNU_WARNING_DIAGNOSTIC_LOG"
   XNU_WARNING_POLICY_VERIFIED='true'
 }
@@ -1091,6 +1106,8 @@ xnu_warning_policy_verified=$XNU_WARNING_POLICY_VERIFIED
 xnu_compiler_reserved_identifier_warning=-Wno-error=reserved-identifier
 xnu_compiler_unused_but_set_variable_warning=-Wno-error=unused-but-set-variable
 xnu_compiler_void_pointer_to_enum_cast_warning=-Wno-error=void-pointer-to-enum-cast
+xnu_compiler_pointer_to_int_cast_warning=-Wno-error=pointer-to-int-cast
+xnu_compiler_void_pointer_to_int_cast_warning=-Wno-error=void-pointer-to-int-cast
 xnu_general_warning_policy=-Werror
 xnu_target_sdkroot_resolution_mode=$XNU_TARGET_SYSROOT_MODE
 xnu_target_sdkroot_overlay_notes=$XNU_TARGET_SDKROOT_OVERLAY_NOTE_COUNT
@@ -1123,17 +1140,18 @@ EOF
 
 printf 'Building XNU %s for X86_64/NONE with %s\n' "$XNU_TAG" "$ACTUAL_XCODE_VERSION"
 rm -rf -- "$OBJROOT" "$SYMROOT" "$DSTROOT"
-# Xcode 26.6 enables three source-level warning classes for the pinned x86
+# Xcode 26.6 enables five source-level warning classes for the pinned x86
 # target that are non-actionable there: reserved internal identifiers, dead
-# stores (including ARM-only trace arguments), and the intentional enum-as-
-# opaque-sysctl-argument round trip. Keep the warnings visible and all other
-# warnings fatal; apply these exceptions only to X86_64/NONE.
+# stores (including ARM-only trace arguments), the intentional enum-as-
+# opaque-sysctl-argument round trip, and legacy pointer-to-integer truncations
+# in pinned x86 networking/machine code. Keep the warnings visible and all
+# other warnings fatal; apply these exceptions only to X86_64/NONE.
 if make -C "$SOURCE_DIR" build \
   SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$BASE_SDK_DIR" \
   SDKVERSION="$SDK_VERSION" KDKROOT="$KDKROOT" PLATFORM=MacOSX \
   OTHER_CFLAGS='$(RC_NONARCH_CFLAGS) -isysroot $(SDKROOT)' \
   ARCH_CONFIGS=X86_64 MACHINE_CONFIGS=NONE KERNEL_CONFIGS=DEVELOPMENT \
-  INCFLAGS_SDK='$(if $(KDKROOT),-I$(KDKROOT)/$(KPINCDIR),-I$(SDKROOT)/$(KPINCDIR)) -I$(SDKROOT)/usr/local/include $(if $(KDKROOT),-I$(KDKROOT)/System/Library/KernelSupport) -Wno-error=reserved-identifier -Wno-error=unused-but-set-variable -Wno-error=void-pointer-to-enum-cast' \
+  INCFLAGS_SDK='$(if $(KDKROOT),-I$(KDKROOT)/$(KPINCDIR),-I$(SDKROOT)/$(KPINCDIR)) -I$(SDKROOT)/usr/local/include $(if $(KDKROOT),-I$(KDKROOT)/System/Library/KernelSupport) -Wno-error=reserved-identifier -Wno-error=unused-but-set-variable -Wno-error=void-pointer-to-enum-cast -Wno-error=pointer-to-int-cast -Wno-error=void-pointer-to-int-cast' \
   INCFLAGS_PLATFORM='$(if $(KDKROOT),-I$(KDKROOT)/$(KINCDIR)/platform -I$(KDKROOT)/$(KPINCDIR)/platform)' \
   RC_DARWIN_KERNEL_VERSION="$KERNEL_VERSION" RC_ProjectSourceVersion="$SOURCE_VERSION" \
   OBJROOT="$OBJROOT" SYMROOT="$SYMROOT" DSTROOT="$DSTROOT" VERBOSE=YES \
@@ -1205,11 +1223,15 @@ result = {
     "xnu_reserved_identifier_warning_nonfatal": True,
     "xnu_unused_but_set_variable_warning_nonfatal": True,
     "xnu_void_pointer_to_enum_cast_warning_nonfatal": True,
+    "xnu_pointer_to_int_cast_warning_nonfatal": True,
+    "xnu_void_pointer_to_int_cast_warning_nonfatal": True,
     "xnu_other_warnings_remain_errors": True,
     "xnu_compiler_warning_exceptions": [
         "-Wno-error=reserved-identifier",
         "-Wno-error=unused-but-set-variable",
         "-Wno-error=void-pointer-to-enum-cast",
+        "-Wno-error=pointer-to-int-cast",
+        "-Wno-error=void-pointer-to-int-cast",
     ],
     "xnu_target_sdkroot_resolution_mode": sys.argv[34],
     "xnu_target_sdkroot_overlay_notes": int(sys.argv[35]),

@@ -25,7 +25,25 @@ The active portability target is an x86-64 PC using QEMU TCG to boot Linux ARM64
 
 Native x86_64 hosting of Tahoe 26 remains a separate workstream; direct ARM64 hosting of macOS 27 remains preserved. PR #48 builds the x86_64 FKI host backend, #47 keeps the x86_64 XNU target fail-closed, and #78 adds bounded, read-only Mach-O metadata parsing. These milestones do not execute XNU. Native runtime, physical Intel/AMD boots, host-integrity checks, and guest shutdown remain pending and are not acceptance criteria for the active TCG route.
 
+## Direct ARM64 hosted-XNU profiles
+
+These profiles use the existing direct ARM64 Linux host path; they are separate from the
+x86-64 host → QEMU TCG → ARM64 Linux guest route. Both tested ARM64 setups require an ARM64
+Linux kernel with PAC support and 4 KiB pages, running at EL1. FKI's contiguous memory source
+is host-specific: it can map a pre-reserved carve-out or request CMA allocations where
+available. The DGX Spark profile reserves memory with Linux `mem=` and FKI `carve_base`/
+`carve_mb`; that range is not allocated from CMA. Do not reuse its addresses or sizes on a
+different host. These are tested configurations, not minimum host requirements. See the
+[ARM64 host setup](hosted-service.md) and [README evidence](../README.md#status).
+
+| ARM64 host profile | Verified configuration and result | Hardware and evidence limits |
+| --- | --- | --- |
+| Apple Silicon Mac in an ARM64 Linux VM (`krunkit`) | macOS 27.2.1 reached the desktop with 1–6 hosted CPUs in 31–48 seconds. A 30-minute application and disk stress run completed without panic or crash report. The documented GPU bridge exposes the M5 Max through Virtio-GPU/Venus when a render node is available; CPU rendering remains the fallback. | No total host/VM RAM measurement or RAM floor is recorded. This result covers the tested Apple Silicon `krunkit` VM profile. [README evidence](../README.md#status). |
+| NVIDIA DGX Spark, bare-metal ARM64 Linux | Ubuntu 24.04.5 LTS, Linux `7.0.0-1025-nvidia`; 4 hosted CPUs with `cpu_list=5,6,7,8,9` (four XNU CPUs, each assigned a dedicated NVMe queue, plus CPU 9 for the monitor); Linux `mem=112G`; FKI carve-out `carve_base=0x1E00000000`, `carve_mb=8156` (8,156 MiB). macOS 27 reached the desktop with Screen Sharing and SSH; About This Mac reports 7.80 GB memory. | Keep this affinity: the host has 15 NVMe I/O queues for 20 CPUs, and sharing a queue interrupt can deadlock XNU. The recorded desktop used CPU rendering. A separate DGX-specific setup exposes the GB10 via virglrenderer 1.2.0 and Venus; that optional path is documented in [`tools/dgx-spark/README.md`](../tools/dgx-spark/README.md) and was not exercised by this CPU-rendered evidence. Other bare-metal GPU models and a universal RAM floor remain unvalidated. [README evidence](../README.md#status). |
+
 ## Active QEMU TCG host matrix and resource evidence
+
+At the time of this update, the attached executor is a Debian 13 x86-64 VM under KVM with a virtual AMD EPYC 9V74, 5 vCPUs, and 18,440,100 kB of visible RAM. It does not have `qemu-system-aarch64` installed, so it cannot provide a local TCG boot or bare-metal Intel/AMD evidence. See the [executor access note on PR #107](https://github.com/Personed/xnulinux/pull/107#issuecomment-7207300173).
 
 | Host profile | Current status |
 | --- | --- |
@@ -55,9 +73,9 @@ PR #46's older cross-host branch used the historical 16 GiB profile and its earl
 
 Current #52 run #148 and PR #83 run #149 independently passed the 6 GiB Linux profile. PR #96 run [#157](https://github.com/Personed/xnulinux/actions/runs/45907949989) passed the standard 6 GiB route and all five experimental profiles from 5 GiB to 2 GiB. A supplemental local QEMU 6.2.0/KVM run using the paired #157 artifacts passed all six profiles; see the [experimental guest-memory results](#experimental-guest-memory-profiles) below for RSS, hashes, and per-profile logs, also linked in PR #99 comment 7206879507. Both 2 GiB observations remain experimental, not a supported minimum. PR #99 run [#159](https://github.com/Personed/xnulinux/actions/runs/45911321313) remains queued after the initial disk/collection build hit the remote AppleClang SDK timeout and a retry was canceled; no current-head workflow memory results are available.
 
-PR #102 current head `b6cfc51` includes a dedicated QEMU 11.1.0 `--require-pie` boot job that explicitly selects `-cpu max`; no Actions run is associated with this head and no real PIE boot has completed. Local tests, cross-builds, patch checks, shell syntax checks, and `actionlint` passed, but a clean source XNU/DVM rebuild on the integrated head remains unvalidated. Run [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121) tested old head `9e15d68`, passed image build, and was canceled during disk/collection build. The current head's source build, PIE=1 table-update probes, console, and guest shutdown still require a real strict QEMU run.
+PR #102 current head `7ee3e4f` includes a dedicated QEMU 11.1.0 `--require-pie` job that explicitly selects `-cpu max`. Local tests and cross-build checks passed, but no Actions run is associated with this head, a clean source XNU/DVM rebuild on the integrated head is unvalidated, and no real PIE boot has completed. Run [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121) tested old head `9e15d68`, passed image build, and was canceled during disk/collection build. The current head still needs the real strict QEMU run through PIE table updates, Darwin console, and guest shutdown.
 
-PR #89 run #162 was canceled during image setup on old head `3020e23`; current head `ac74d61` changes documentation only and has no new workflow run. Earlier run #147 belongs to a superseded #89 head. Module jobs are stage smoke tests, not a full route. Do not claim physical-PC support until representative Intel and AMD hardware is tested; neither a host RAM floor nor repeatable 2 GiB support is established.
+PR #89 run #162 remains queued on old SHA `3020e23` with no jobs started; current head `ac74d61` has no Actions run. A GitHub comparison between that head and the #158-tested revision `589c40e` shows changes to this guide and `tests/puredarwin/run-tcg-e2e.py`, so the current head is not tree-identical to the tested revision and its newer harness changes have not completed a full route. Run #158 remains evidence for revision `589c40e` and its three hosted OS/CPU profiles; it is not a pass on the current #89 head. Earlier run #147 belongs to a superseded #89 head. Module jobs are stage smoke tests, not a full route. Do not claim physical-PC support until representative Intel and AMD hardware is tested; neither a host RAM floor nor repeatable 2 GiB support is established.
 
 The historical full-route TCG reference assigns 16 GiB to the ARM64 guest, with Linux
 `mem=7G`, an 8,156 MiB FKI carve-out at `0x200000000`, and 7,900 MiB XNU RAM. The
@@ -340,7 +358,7 @@ Report the profile alongside the stage:
   `-cpu max` exposes S1PIE, but PR [#98](https://github.com/Personed/xnulinux/pull/98) run
   [#158](https://github.com/Personed/xnulinux/actions/runs/45911026412) passed all three
   hosted OS jobs once with `cortex-a710`. This CPU model changes other features too, so the
-  pass validates that tested profile rather than proving S1PIE caused the fault. PR #102 current head `b6cfc51` includes a dedicated QEMU 11.1.0 `--require-pie` boot job that explicitly selects `-cpu max`. Its real
+  pass validates that tested profile rather than proving S1PIE caused the fault. PR #102 current head `7ee3e4f` includes the dedicated QEMU 11.1.0 `--require-pie` job with `-cpu max`. Its real
   `TCR2_EL1.PIE=1` result through XNU table update, console, and shutdown remains pending; no
   Actions run is associated with this head. This is a separate PIE-compatibility result and
   does not gate the already passing hosted `cortex-a710` profile.
@@ -358,16 +376,7 @@ Report the profile alongside the stage:
   remains queued after the initial disk build hit a remote SDK-fetch timeout and a retry was canceled. The
   supplemental local six-profile QEMU 6.2.0/KVM results using paired #157 artifacts are recorded above, with raw
   per-profile logs linked in PR #99 comment 7206879507. No current-head workflow memory results are available.
-  PR #102 current head `b6cfc51` includes a dedicated QEMU 11.1.0 `--require-pie` boot job, but no Actions run
-  is associated with this head. Run [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121)
-  tested old head `9e15d68`, passed image build, and was canceled during disk/collection build. The earlier
-  patch-application and strict-job review findings were addressed on the new head. Local unit tests, cross-builds,
-  patch checks, shell syntax checks, and `actionlint` passed, but there is no clean integrated XNU/DVM build or real PIE boot.
-  PR #89 run #162 was
-  canceled during image setup on old head `3020e23`; current head `ac74d61` changes documentation only and has no new
-  workflow run. This is the current PR-head CI record only; the completed #158 A710 pass
-  remains valid evidence for its tested hosted profiles and does not require a new
-  current-chain rerun. Earlier run #147 belongs to a
+  PR #102 current head `7ee3e4f` includes the strict QEMU 11.1.0 `--require-pie` job with `-cpu max`, but no Actions run is associated with this head. Run [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121) tested old head `9e15d68`, passed image build, and was canceled during disk/collection build. Local tests, cross-build checks, patch validation, shell syntax checks, and `actionlint` passed; the clean integrated XNU/DVM build and real PIE boot remain unvalidated. PR #89 run #162 uses old SHA `3020e23049f2752aafc970463850e38d76ce8fe0`, not current head `ac74d61`, which has no Actions run. A GitHub comparison with the #158-tested revision `589c40e` shows changes in this guide and the TCG harness, so the current #89 head has not passed the full route. The #158 A710 pass remains evidence for its tested revision and hosted profiles. Earlier run #147 belongs to a
   superseded #89 head. PR #36 run #118 passed on tested head `c55a700`, not current head
   `93e3cf4`; PR #46 run #79 failed in `kclink` before host preparation or boot.
   Earlier Windows matrix job [#71](https://github.com/Personed/xnulinux/actions/runs/45845436111)

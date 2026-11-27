@@ -7,14 +7,16 @@ from __future__ import annotations
 import pathlib
 import re
 import sys
+from collections import deque
 from collections.abc import Iterable
 
 
 MAX_DIAGNOSTICS = 20
 MAX_UNDEFINED_SYMBOL_CONTEXT = 5
-ERROR_LINE = re.compile(
-    r": (?:fatal )?error:|^Undefined symbols|^ld: (?!warning:|note:)"
-)
+MAX_LINKER_CANDIDATE_GAP = 40
+ERROR_LINE = re.compile(r": (?:fatal )?error:|^Undefined symbols")
+LINKER_CANDIDATE = re.compile(r"^ld: (?!warning:|note:)")
+LINKER_FAILURE = re.compile(r": (?:fatal )?error: linker command failed")
 
 
 def clean(line: str) -> str:
@@ -26,6 +28,8 @@ def summarize(lines: Iterable[str]) -> list[str]:
     diagnostics = 0
     iterator = iter(lines)
     pending: str | None = None
+    linker_candidates: deque[str] = deque()
+    linker_candidate_gap = 0
 
     while diagnostics < MAX_DIAGNOSTICS:
         if pending is None:
@@ -36,6 +40,26 @@ def summarize(lines: Iterable[str]) -> list[str]:
         else:
             raw_line, pending = pending, None
         line = raw_line.rstrip("\r\n")
+
+        if LINKER_CANDIDATE.search(line):
+            linker_candidates.append(line)
+            linker_candidate_gap = 0
+            continue
+
+        linker_candidate_gap += 1
+        if linker_candidate_gap > MAX_LINKER_CANDIDATE_GAP:
+            linker_candidates.clear()
+
+        if LINKER_FAILURE.search(line):
+            # Parallel xcodebuild output can interleave arbitrary fragments at
+            # the start of a physical line. Treat ld-prefixed lines as
+            # candidates only, and emit the recent candidates once the clang
+            # driver confirms that the linker actually failed.
+            while linker_candidates and diagnostics < MAX_DIAGNOSTICS - 1:
+                output.append(f"  {clean(linker_candidates.popleft())}")
+                diagnostics += 1
+            linker_candidates.clear()
+
         if not ERROR_LINE.search(line):
             continue
 

@@ -81,6 +81,41 @@ def test_linker_warnings_do_not_hide_compiler_errors() -> None:
     assert output == ["  clang: error: linker command failed with exit code 1"], output
 
 
+def test_interleaved_parallel_log_fragments_are_not_linker_errors() -> None:
+    expected = ["No compiler or linker errors recorded yet."]
+    lines = [
+        "ld:  odr_union_to_sockaddr",
+        "ld: lock 194enIn file included from /src/bsd/netinet/in_var.h:595:",
+        "ld:41:",
+    ]
+    assert MODULE.summarize(lines) == expected
+
+
+def test_linker_candidates_are_emitted_after_confirmed_linker_failure() -> None:
+    lines = [
+        "ld: file too small (length=8) for architecture x86_64",
+        "ld: unknown option: -bad",
+        "clang: error: linker command failed with exit code 1",
+    ]
+    assert MODULE.summarize(lines) == [
+        "  ld: file too small (length=8) for architecture x86_64",
+        "  ld: unknown option: -bad",
+        "  clang: error: linker command failed with exit code 1",
+    ]
+
+
+def test_stale_interleaved_fragments_are_not_linker_failure_details() -> None:
+    lines = [
+        "ld:  odr_union_to_sockaddr",
+        *(f"ordinary parallel output {index}" for index in range(MODULE.MAX_LINKER_CANDIDATE_GAP + 1)),
+        "ld: file too small (length=8) for architecture x86_64",
+        "clang: error: linker command failed with exit code 1",
+    ]
+    rendered = "\n".join(MODULE.summarize(lines))
+    assert "odr_union_to_sockaddr" not in rendered, rendered
+    assert "file too small" in rendered, rendered
+
+
 def test_empty_and_non_error_logs_are_explained() -> None:
     expected = ["No compiler or linker errors recorded yet."]
     assert MODULE.summarize([]) == expected
@@ -94,5 +129,8 @@ if __name__ == "__main__":
     test_summary_stops_reading_after_the_primary_diagnostic_limit()
     test_last_symbol_block_stops_after_its_context_limit()
     test_linker_warnings_do_not_hide_compiler_errors()
+    test_interleaved_parallel_log_fragments_are_not_linker_errors()
+    test_linker_candidates_are_emitted_after_confirmed_linker_failure()
+    test_stale_interleaved_fragments_are_not_linker_failure_details()
     test_empty_and_non_error_logs_are_explained()
     print("XNU diagnostic summary tests passed.")

@@ -259,3 +259,29 @@ index 75d172f13d69239a60e80f13bd01efa1a6de304e..a07d49be31a80df66f05c4bb823540a3
 -	return (int)m->m_pkthdr.pkt_hdr;
 +	return (int)(uintptr_t)m->m_pkthdr.pkt_hdr;
  }
+--- a/bsd/kern/kern_descrip.c
++++ b/bsd/kern/kern_descrip.c
+@@ -4991,9 +4991,9 @@
+ 
+ 		if (uap->arg) {
+ 			/* extract 32 bits of flags from userland */
+ 			param_ptr = (caddr_t) uap->arg;
+-			param = (uint32_t) param_ptr;
++			param = (uint32_t)(uintptr_t) param_ptr;
+ 		} else {
+ 			/* If no argument is specified, error out */
+ 			error = EINVAL;
+ 			goto out;
+--- a/bsd/kern/kern_mib.c
++++ b/bsd/kern/kern_mib.c
+@@ -319,9 +319,9 @@
+ 	/*
+ 	 * If we are using one of the perflevel sysctls, return early if the perflevel
+ 	 * does not exist in this system.
+ 	 */
+-	int perflevel = (int)arg1;
++	int perflevel = (int)(uintptr_t)arg1;
+ 	int n_perflevels = __builtin_popcount(ml_get_cpu_types());
+ 
+ 	if (arg2 & CTLHW_PERFLEVEL) {
+ 		if ((perflevel < 0) || (perflevel >= n_perflevels)) {

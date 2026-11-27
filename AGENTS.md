@@ -5,7 +5,7 @@
 Make xnulinux run on x86_64 PCs using QEMU TCG to boot Linux ARM64, load FKI/XNU, and reach the PureDarwin shell, while preserving the direct ARM64 hosted-XNU path. This is the active portability goal; do not claim universal compatibility.
 
 - **ARM64 Linux:** preserve the existing direct XNU-in-Linux runtime using `fki.ko` and `xnu.ko`, including its build and runtime behavior and macOS 27 target.
-- **x86_64 Intel and AMD PCs:** use QEMU TCG to boot the ARM64 Linux guest, load FKI/XNU, and reach the PureDarwin console. Linux x86_64 is the current required host profile; Windows and Intel macOS remain candidates until the full route passes there. Native x86_64/Tahoe hosting is separate and does not count toward this acceptance.
+- **x86_64 Intel and AMD PCs:** use QEMU TCG to boot the ARM64 Linux guest, load FKI/XNU, and reach the PureDarwin console. Linux x86_64 is the repeated baseline. Hosted Windows Server 2025 and Intel macOS 15 each passed the full route once with `cortex-a710` in PR #98 run #158 on the older #89 branch; they remain candidates until the integrated chain passes the PIE-enabled profile and representative physical hardware is validated. Native x86_64/Tahoe hosting is separate and does not count toward this acceptance.
 - **Separate workstreams:** retain the native x86_64/Tahoe port and QEMU/KVM launcher as separate experiments. Neither replaces the QEMU TCG/PureDarwin acceptance route.
 - Track host OS and CPU profiles separately. Virtualized CI proves only the tested runner profile; it does not establish physical-PC or universal compatibility. Do not claim a physical profile without a full-route test on that hardware.
 

@@ -40,6 +40,14 @@ The pinned table shape is:
 - `BootPTD` contains 2048 large-page entries, each mapping a 2 MiB page, for a 4 GiB identity range;
 - because PML4 slot 0 and slot 511 initially use the same PDPT chain, the low identity mapping and the top kernel-slot mapping initially mirror the same low physical memory.
 
+The hosted bootstrap page directory builder emits that four-page `BootPTD`
+layout with present leaves only within a single caller-owned physical
+reservation. The reservation must be aligned to 2 MiB. The loader must first
+verify the table offset against the selected artifact and place every early
+object and allocation in the reservation. This covers the initial directory.
+`Idle_PTs_init()` later creates new page tables and a physmap that each need
+their own memory-ownership checks before running XNU.
+
 This means the entry is not a normal Linux long-mode kernel call. A host implementation either has to reproduce the expected protected-mode/paging-disabled entry environment, or patch/replace this entry sequence with an explicitly reviewed long-mode handoff. Both choices affect control-register ownership, the GDT/IDT, the kernel image's physical placement, interrupt masking, rollback, and the exact interpretation of `boot_args`. Neither is authorized by this document.
 
 ## Boot arguments consumed early

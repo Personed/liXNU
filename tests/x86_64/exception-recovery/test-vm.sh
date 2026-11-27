@@ -109,6 +109,8 @@ insmod /x86-exception-recovery.ko
 dmesg -n 5
 /exception-recovery-test 0
 /exception-recovery-test 1
+# Preserve suppressed info messages in the serial log for host-side marker failures.
+dmesg
 dmesg -n 7
 rmmod x86_exception_recovery
 test ! -e /sys/module/x86_exception_recovery

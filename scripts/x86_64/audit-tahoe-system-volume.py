@@ -12,6 +12,7 @@ import plistlib
 import stat
 import subprocess
 import tempfile
+from xml.etree import ElementTree
 from xml.parsers.expat import ExpatError
 
 
@@ -81,17 +82,28 @@ def inspect_collection(root, collection_report):
             raise AuditError("unable to run the fileset inspector") from error
 
 
+def decode_version_plist(data):
+    try:
+        # plistlib also rejects entity declarations before we check the XML envelope.
+        product = plistlib.loads(data)
+        if not data.startswith(b"bplist00"):
+            envelope = ElementTree.fromstring(data)
+            if envelope.tag != "plist" or len(envelope) != 1 or envelope[0].tag != "dict":
+                raise ValueError("expected a single plist dictionary")
+    except (ValueError, ExpatError, ElementTree.ParseError, AttributeError,
+            IndexError, TypeError, OverflowError, RecursionError) as error:
+        raise AuditError("invalid SystemVersion.plist") from error
+    if not isinstance(product, dict):
+        raise AuditError("SystemVersion.plist must contain a dictionary")
+    return product
+
+
 def audit(root, report):
     if not root.is_dir():
         raise AuditError("the supplied System volume root is not a directory")
     plist_bytes = io.BytesIO()
     report["system_version_plist"] = snapshot(root, VERSION_PLIST, 1 << 20, plist_bytes)
-    try:
-        product = plistlib.loads(plist_bytes.getvalue())
-    except (plistlib.InvalidFileException, ValueError, ExpatError) as error:
-        raise AuditError("invalid SystemVersion.plist") from error
-    if not isinstance(product, dict):
-        raise AuditError("SystemVersion.plist must contain a dictionary")
+    product = decode_version_plist(plist_bytes.getvalue())
     for key in ("ProductVersion", "ProductBuildVersion"):
         if isinstance(product.get(key), str):
             report[key] = product[key]

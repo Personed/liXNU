@@ -277,10 +277,19 @@ def verify_system_volume_audit():
         assert mismatch["ProductBuildVersion"] == "25G83", mismatch
         assert "boot_kernel_collection" not in mismatch, mismatch
 
-        version.write_bytes(b"<?xml version='1.0'?><plist><dict></plist>")
-        assert run_audit(1)["error"] == "invalid SystemVersion.plist"
+        product = {"ProductVersion": "26.7.3", "ProductBuildVersion": "25G342"}
+        plist = plistlib.dumps(product)
+        for invalid in (
+            b"<?xml version='1.0'?><plist><dict></plist>",
+            b"<?xml version='1.0'?><plist><key>ProductVersion</key></plist>",
+            b"<?xml version='1.0'?><plist><dict><key>date</key><date>invalid</date></dict></plist>",
+            plist.replace(b'<plist version="1.0">', b'<plist version="1.0"><string>extra</string>'),
+        ):
+            version.write_bytes(invalid)
+            rejected = run_audit(1)
+            assert rejected["error"] == "invalid SystemVersion.plist", rejected
+            assert "boot_kernel_collection" not in rejected, rejected
 
-        plist = plistlib.dumps({"ProductVersion": "26.7.3", "ProductBuildVersion": "25G342"})
         version.write_bytes(plist)
         collection.write_bytes(b"not a fileset")
         assert run_audit(1)["fileset"]["status"] == "not_fileset"
@@ -300,6 +309,11 @@ def verify_system_volume_audit():
         assert report["fileset"]["kernel"]["segments"], report
         assert report["apple_provenance_verified"] is False and report["boot_verified"] is False, report
         assert collection.read_bytes() == image and version.read_bytes() == plist
+
+        plist = plistlib.dumps(product, fmt=plistlib.FMT_BINARY)
+        version.write_bytes(plist)
+        report = run_audit(0)
+        assert report["system_version_plist"]["sha256"] == hashlib.sha256(plist).hexdigest(), report
 
         outside = pathlib.Path(temporary) / "external"
         collection.parent.rename(outside)

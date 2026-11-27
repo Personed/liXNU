@@ -2,6 +2,7 @@
 name: qemu-launcher
 on:
   push:
+    branches: [main]
   pull_request:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.ref || github.ref_name }}

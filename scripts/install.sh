@@ -8,6 +8,13 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
+# The generated /bin/sh wrapper must preserve ROOT as a literal path.
+shell_quote() {
+  local escaped
+  escaped=$(printf '%s' "$1" | sed "s/'/'\\\\''/g")
+  printf "'%s'" "$escaped"
+}
+ROOT_QUOTED=$(shell_quote "$ROOT")
 if [ -z "${PREFIX:-}" ]; then
   if [ "$(id -u)" -eq 0 ]; then
     PREFIX=/usr/local
@@ -117,8 +124,8 @@ if [ "$(id -u)" -eq 0 ] || need_sudo; then
   $SUDO tee "$TARGET" >/dev/null <<EOF
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-only
-export XNULINUX_HOME="$ROOT"
-exec "$ROOT/scripts/xnulinux" "\$@"
+export XNULINUX_HOME=$ROOT_QUOTED
+exec $ROOT_QUOTED/scripts/xnulinux "\$@"
 EOF
   $SUDO chmod 0755 "$TARGET"
   $SUDO chown 0:0 "$TARGET"
@@ -127,8 +134,8 @@ else
   cat > "$TARGET" <<EOF
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-only
-export XNULINUX_HOME="$ROOT"
-exec "$ROOT/scripts/xnulinux" "\$@"
+export XNULINUX_HOME=$ROOT_QUOTED
+exec $ROOT_QUOTED/scripts/xnulinux "\$@"
 EOF
   chmod 0755 "$TARGET"
 fi

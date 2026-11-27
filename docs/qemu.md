@@ -85,3 +85,64 @@ macOS hosts listed above. Ubuntu x86-64 also exercises the graphical path. Its a
 construction is checked on all host systems.
 A test module allocated 2 MiB at the documented address in a 16 GiB guest booted directly
 into Linux. A complete hosted PureDarwin or macOS boot using the UEFI profile remains unverified.
+
+
+## Boot the PureDarwin ARM64 guest with TCG
+
+This direct-boot profile uses the x86-64 host to run the ARM64 Linux guest under QEMU TCG,
+then loads FKI/XNU and reaches the PureDarwin console. It is separate from the UEFI
+installer-based Linux VM above. It does not require VT-x or AMD-V.
+
+For the exact tested input set, check out PR #98 head
+[`589c40e`](https://github.com/Personed/xnulinux/commit/589c40ead54a63946fb44e8bdb35eb6add9adffe), then download and extract the paired
+[`puredarwin-e2e-guest` artifact](https://github.com/Personed/xnulinux/actions/runs/45911026412/artifacts/15161900498) and
+[`puredarwin-e2e-disk` artifact](https://github.com/Personed/xnulinux/actions/runs/45911026412/artifacts/15161666268) from [run #158](https://github.com/Personed/xnulinux/actions/runs/45911026412).
+Both artifacts expire on 2026-12-27. Keep the artifacts from that run paired.
+The guest archive contains `Image`, `initramfs.cpio.gz`,
+`guest-manifest.txt`, and `build-manifest.txt`; the disk archive contains
+`pd.img`. The three boot inputs have these SHA-256 values:
+
+| Input | SHA-256 |
+| --- | --- |
+| `Image` | `02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6` |
+| `initramfs.cpio.gz` | `fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667` |
+| `pd.img` | `7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f` |
+
+Install QEMU system ARM emulation 8.2 or later and Python 3. On Ubuntu or Debian:
+
+```sh
+sudo apt-get install qemu-system-arm python3 coreutils util-linux
+```
+
+Extract the artifacts so that you can refer to their `Image`, `initramfs.cpio.gz`,
+and `pd.img` paths. Verify their hashes against the table above, then copy the disk
+so the source artifact remains unchanged. Replace the paths with the extracted files:
+
+```sh
+sha256sum /path/to/Image /path/to/initramfs.cpio.gz /path/to/pd.img
+cp /path/to/pd.img /path/to/pd-tcg-test.img
+python3 tests/puredarwin/run-tcg-e2e.py \
+  --timeout-seconds 5400 \
+  --qemu-memory 6G \
+  --qemu-cpu cortex-a710 \
+  --linux-memory 2G \
+  --fki-carve-base 0xc0000000 \
+  --fki-carve-mb 3072 \
+  --xnu-ram-mb 2816 \
+  --max-rss-mib 6144 \
+  /path/to/Image \
+  /path/to/initramfs.cpio.gz \
+  /path/to/pd-tcg-test.img \
+  /path/to/puredarwin-tcg-serial.log
+```
+
+The manifest-aware validation script and optional exact-hash guard are in
+[`docs/portability-validation.md`](portability-validation.md#reproducing-the-active-qemu-tcg-boot).
+The command runs TCG with a 6 GiB guest, Linux `mem=2G`, a 3,072 MiB FKI carve-out,
+and 2,816 MiB XNU RAM. The harness requires the Darwin console and userland marker,
+guest-requested halt, successful XNU/FKI unload, and QEMU exit 0; it also enforces the
+configured RSS limit. This guest allocation is not a physical host-memory minimum.
+
+Run #158 passed once on each hosted Ubuntu, Windows Server 2025, and Intel macOS profile
+with `cortex-a710`. This supports the tested hosted profiles only; representative
+physical Intel/AMD PCs and PIE-enabled QEMU `-cpu max` remain separate validation items.

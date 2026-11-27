@@ -13,6 +13,11 @@ The x86-64 native port remains experimental and fail-closed: x86_64 `fki_caps() 
 PR #56 pins the latest publicly published XNU source, 26.5 (`xnu-12377.121.6`); building that source does
 not establish compatibility with the Tahoe 26.7.3 runtime target.
 
+AMD is a project target, not a currently supported host profile. The existing x86_64 stub's CPU-profile check rejects
+vendors other than `GenuineIntel`; that refusal is only a guard and does not establish Intel runtime support either.
+AMD support requires a vendor-aware CPU path and separate physical acceptance after the native entry, host-integrity,
+boot, and shutdown gates pass. Until then, AMD hosts remain unsupported by the native x86_64 runtime.
+
 The pinned XNU source includes `osfmk/i386` and `mach-o/x86_64`, but this repository's current machine patches and
 loader target ARM64. An x86_64 Tahoe kernel collection and matching entry ABI must be built and checked; the presence
 of Intel source files alone does not prove compatibility with the target artifact.

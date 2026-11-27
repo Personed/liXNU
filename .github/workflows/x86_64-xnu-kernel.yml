@@ -1,0 +1,385 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# The x86 runtime goal is Tahoe 26.7.3. The newest public XNU source is 26.5;
+# artifacts from this workflow are source-build evidence only, not 26.7.3 runtime proof.
+name: x86_64 XNU source build
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/x86_64-xnu-kernel.yml"
+      - "scripts/x86_64/build-xnu-kernel.sh"
+      - "scripts/x86_64/tahoe-xnu-pointer-casts.patch"
+      - "scripts/x86_64/xnu-trustcache-scan-workspace.sh"
+      - "scripts/x86_64/verify-xnu-kdk.py"
+      - "scripts/x86_64/verify-xnu-target-build.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/x86_64-xnu-kernel.yml"
+      - "scripts/x86_64/build-xnu-kernel.sh"
+      - "scripts/x86_64/tahoe-xnu-pointer-casts.patch"
+      - "scripts/x86_64/xnu-trustcache-scan-workspace.sh"
+      - "scripts/x86_64/verify-xnu-kdk.py"
+      - "scripts/x86_64/verify-xnu-target-build.py"
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-kernel:
+    runs-on: macos-26-intel
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select pinned Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app
+      - name: Record host toolchain
+        run: |
+          test "$(uname -m)" = x86_64
+          test "$(sysctl -in sysctl.proc_translated 2>/dev/null || echo 0)" != 1
+          uname -m
+          sw_vers
+          xcodebuild -version
+          xcrun --find clang
+          xcrun --find ld
+      - name: Record Apple's current full-installer catalog
+        shell: bash
+        run: |
+          catalog="$RUNNER_TEMP/apple-full-installers.txt"
+          python3 - "$catalog" <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          catalog = Path(sys.argv[1])
+          try:
+              result = subprocess.run(
+                  ["softwareupdate", "--list-full-installers"],
+                  capture_output=True,
+                  text=True,
+                  timeout=60,
+                  check=False,
+              )
+              output = result.stdout + result.stderr
+              status = result.returncode
+          except subprocess.TimeoutExpired as error:
+              stdout = error.stdout or ""
+              stderr = error.stderr or ""
+              if isinstance(stdout, bytes):
+                  stdout = stdout.decode("utf-8", errors="replace")
+              if isinstance(stderr, bytes):
+                  stderr = stderr.decode("utf-8", errors="replace")
+              output = (stdout + stderr) + "\nsoftwareupdate catalog query timed out after 60 seconds\n"
+              status = 124
+          catalog.write_text(output, encoding="utf-8")
+          print(f"softwareupdate exit code: {status}")
+          lines = output.splitlines()
+          matches = [line for line in lines if "Title: macOS Tahoe" in line]
+          print("\n".join(matches) if matches else "No Tahoe installer rows in catalog output.")
+          PY
+      - name: Test read-only --check diagnostic workspace
+        run: bash scripts/x86_64/xnu-trustcache-scan-workspace.sh --self-test
+      - name: Provision the pinned Apple KDK on the Intel runner
+        # The checked-in digest pins Dortania's public copy; the package must
+        # also pass macOS trust validation as Apple's Software Update signer.
+        env:
+          XNU_X86_KDKROOT: ${{ vars.XNU_X86_INTEL_KDKROOT }}
+        shell: bash
+        run: |
+          kdk=/Library/Developer/KDKs/KDK_26.5_25F71.kdk
+          if [[ -n "$XNU_X86_KDKROOT" || -e "$kdk" || -L "$kdk" ]]; then
+            exit 0 # The build independently verifies any configured or installed kit.
+          fi
+          export LC_ALL=C
+          work=$(mktemp -d "$RUNNER_TEMP/xnu-kdk.XXXXXX")
+          cleanup() {
+            /usr/bin/hdiutil detach "$work/mount" >/dev/null 2>&1 || true
+            rm -rf -- "$work"
+          }
+          trap cleanup EXIT
+          curl --fail --silent --show-error --location --retry 2 --max-time 600 \
+            --proto '=https' --proto-redir '=https' \
+            'https://github.com/dortania/KdkSupportPkg/releases/download/25F71/Kernel_Debug_Kit_26.5_build_25F71.dmg' \
+            -o "$work/KDK.dmg"
+          printf '%s  %s\n' '90ed319cd1ba6e23d1eefcee89fa1b10743f4cf60b85208ae52aa9f45543c7aa' "$work/KDK.dmg" \
+            | shasum -a 256 -c -
+          mkdir "$work/mount"
+          /usr/bin/hdiutil attach -readonly -nobrowse -mountpoint "$work/mount" "$work/KDK.dmg"
+          pkg="$work/mount/KernelDebugKit.pkg"
+          if [[ ! -f "$pkg" ]]; then
+            pkg="$work/mount/Kernel Debug Kit/KernelDebugKit.pkg"
+          fi
+          test -f "$pkg"
+          signature=$(/usr/sbin/pkgutil --check-signature "$pkg")
+          printf '%s\n' "$signature"
+          # pkgutil reports the platform-trusted Apple signature as signed Apple Software.
+          grep -Eq '^[[:space:]]*Status: signed Apple Software[[:space:]]*$' <<<"$signature"
+          grep -Eq '^[[:space:]]*1\.[[:space:]]+Software Update[[:space:]]*$' <<<"$signature"
+          grep -Eq '^[[:space:]]*2\.[[:space:]]+Apple Software Update Certification Authority[[:space:]]*$' <<<"$signature"
+          grep -Eq '^[[:space:]]*3\.[[:space:]]+Apple Root CA[[:space:]]*$' <<<"$signature"
+          sudo /usr/sbin/installer -pkg "$pkg" -target /
+          test -d "$kdk"
+      - name: Build pinned XNU for x86_64
+        env:
+          XNU_X86_BUILD_DIR: ${{ runner.temp }}/xnulinux-x86_64-xnu
+          # Keep host-specific KDK paths separate; an ARM runner path may not
+          # exist on the Intel runner, whose SDK-only build is independently checked.
+          XNU_X86_KDKROOT: ${{ vars.XNU_X86_INTEL_KDKROOT }}
+        run: scripts/x86_64/build-xnu-kernel.sh
+      - name: Verify Intel-native host and x86_64 target manifest
+        env:
+          XNU_X86_BUILD_DIR: ${{ runner.temp }}/xnulinux-x86_64-xnu
+        run: |
+          python3 - "$XNU_X86_BUILD_DIR/out/build-result.json" <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as manifest_file:
+              manifest = json.load(manifest_file)
+          assert manifest["build_host_arch"] == "x86_64", manifest
+          assert manifest["build_host_mode"] == "native", manifest
+          assert manifest["build_process_arch"] == "x86_64", manifest
+          assert manifest["build_process_translated"] is False, manifest
+          assert manifest["target_architecture"] == "x86_64", manifest
+          assert manifest["architecture"] == "x86_64", manifest
+          assert manifest["runtime_target_os_version"] == "26.7.3", manifest
+          assert manifest["runtime_target_os_build"] == "25G342", manifest
+          assert manifest["runtime_compatibility_verified"] is False, manifest
+          assert manifest["kernel_source_runtime_match"] is False, manifest
+          assert manifest["xnu_source_release"] == "26.5", manifest
+          assert len(manifest["xnu_source_compat_patch_sha256"]) == 64, manifest
+          assert manifest["host_os_version"].startswith("26."), manifest
+          assert manifest["sdk_version"] == "26.5", manifest
+          assert manifest["xcode_version"] == "26.6", manifest
+          assert manifest["kdk_expected_version"] == "26.5", manifest
+          assert manifest["kdk_expected_build"] == "25F71", manifest
+          assert manifest["kdk_required_for_build_host"] is False, manifest
+          if manifest["kdk_present"]:
+              assert manifest["kdk_status"] == "verified", manifest
+              assert manifest["kdk_matches_xnu_source"] is True, manifest
+              assert manifest["kdk_product_version"] == "26.5", manifest
+              assert manifest["kdk_product_build"] == "25F71", manifest
+              assert manifest["kdk_xnu_version"] == manifest["xnu_source_version"], manifest
+              assert len(manifest["kdk_trustcache_api_header_sha256"]) == 64, manifest
+          else:
+              assert manifest["kdk_status"] == "not-present-not-required-for-intel", manifest
+              assert manifest["kdk_root"] is None, manifest
+              assert manifest["kdk_matches_xnu_source"] is False, manifest
+          assert manifest["trustcache_header_source"] in {"matching-kdk", "pinned-xcode-sdk"}, manifest
+          assert len(manifest["trustcache_header_sha256"]) == 64, manifest
+          assert Path(manifest["trustcache_header_path"]).is_file(), manifest
+          recorded_sdk = Path(manifest["host_sdkroot"])
+          selected_sdk = Path(subprocess.check_output(
+              ["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True,
+          ).strip())
+          assert recorded_sdk.is_absolute() and selected_sdk.is_absolute(), manifest
+          assert selected_sdk.is_dir() and recorded_sdk.samefile(selected_sdk), manifest
+          assert manifest["host_sys_unistd_headers_match"] is True, manifest
+          assert manifest["host_sys_unistd_base_sha256"] == manifest["host_sys_unistd_overlay_sha256"], manifest
+          assert manifest["host_tool_base_unistd_probe"] == "passed", manifest
+          assert manifest["xnu_sdk_header_tree_diagnostics_recorded"] is True, manifest
+          assert manifest["xnu_target_include_paths_verified"] is True, manifest
+          assert manifest["xnu_generic_sdk_header_paths_removed_for_x86_64"] is True, manifest
+          assert manifest["xnu_generic_sdk_header_dependencies"] == 0, manifest
+          assert manifest["xnu_target_dependency_files"] > 0, manifest
+          assert manifest["xnu_dependency_file_entries"] > 0, manifest
+          assert manifest["xnu_header_dependencies"] > 0, manifest
+          assert manifest["xnu_missing_dependency_files"] == 0, manifest
+          assert manifest["xnu_warning_policy_verified"] is True, manifest
+          assert manifest["xnu_reserved_identifier_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_unused_but_set_variable_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_void_pointer_to_enum_cast_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_compiler_warning_exceptions"] == [
+              "-Wno-error=reserved-identifier",
+              "-Wno-error=unused-but-set-variable",
+              "-Wno-error=void-pointer-to-enum-cast",
+          ], manifest
+          assert manifest["xnu_other_warnings_remain_errors"] is True, manifest
+          assert manifest["xnu_target_sdkroot_resolution_mode"] == "explicit-isysroot-overlay", manifest
+          assert manifest["xnu_target_sdkroot_overlay_notes"] >= 0, manifest
+          assert manifest["xnu_target_commands_without_explicit_isysroot"] == 0, manifest
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xnu-tahoe26.5-source-x86_64-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/kernel.development
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/build-result.json
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/x86_64-build.env
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/libdispatch/dst/usr/local/lib/kernel/libfirehose_kernel.a
+          if-no-files-found: error
+          retention-days: 5
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xnu-tahoe26.5-source-x86_64-diagnostics-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/xnu-build.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/availability-build.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/xnu-export-headers.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/xnu-header-install.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/libdispatch-build.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/x86_64-build.env
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/sdk-public-availability.sha256
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/host-sdk-diagnostic.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/host-tool-unistd-base-probe.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/host-tool-unistd-overlay-probe.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/xnu-staged-header-trees.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/xnu-target-include-diagnostics.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/xnu-warning-policy-probe.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/out/kdk-preflight.log
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/trustcache-sdk-header-candidates.txt
+            ${{ runner.temp }}/xnulinux-x86_64-xnu/trustcache-sdk-header-scan-errors.log
+            ${{ runner.temp }}/apple-full-installers.txt
+          if-no-files-found: ignore
+          retention-days: 5
+  cross-build-on-arm64-host:
+    # This probes the x86_64 target build from Apple Silicon; it is not Intel runtime validation.
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      XNU_X86_KDKROOT: ${{ vars.XNU_X86_CROSS_KDKROOT }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select pinned Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app
+      - name: Record and verify Apple Silicon host
+        run: |
+          test "$(uname -m)" = arm64
+          test "$(sysctl -in sysctl.proc_translated 2>/dev/null || echo 0)" != 1
+          sw_vers
+          xcodebuild -version
+          xcrun --find clang
+          xcrun --find ld
+      - name: Test read-only --check diagnostic workspace
+        run: bash scripts/x86_64/xnu-trustcache-scan-workspace.sh --self-test
+      - name: Check matching KDK availability
+        id: kdk
+        shell: bash
+        run: |
+          kdk_root="${XNU_X86_KDKROOT:-/Library/Developer/KDKs/KDK_26.5_25F71.kdk}"
+          status_file="$RUNNER_TEMP/xnu-x86-cross-build-status.txt"
+          if [[ -d "$kdk_root" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            printf 'cross_build=enabled\nkdk_root=%s\n' "$kdk_root" > "$status_file"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            printf 'cross_build=skipped_no_matching_kdk\nexpected_kdk=KDK_26.5_25F71.kdk\nchecked_path=%s\n' \
+              "$kdk_root" > "$status_file"
+            echo "SKIP: no matching KDK at $kdk_root; upstream XNU requires a KDK for Apple Silicon builds. This is not cross-build or runtime evidence."
+          fi
+      - name: Cross-build pinned XNU for x86_64
+        if: steps.kdk.outputs.available == 'true'
+        env:
+          XNU_X86_BUILD_DIR: ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe
+        run: scripts/x86_64/build-xnu-kernel.sh
+      - name: Verify cross-build host and target manifest
+        if: steps.kdk.outputs.available == 'true'
+        env:
+          XNU_X86_BUILD_DIR: ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe
+        run: |
+          python3 - "$XNU_X86_BUILD_DIR/out/build-result.json" <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as manifest_file:
+              manifest = json.load(manifest_file)
+          assert manifest["build_host_arch"] == "arm64", manifest
+          assert manifest["build_host_mode"] == "cross", manifest
+          assert manifest["build_process_arch"] == "arm64", manifest
+          assert manifest["build_process_translated"] is False, manifest
+          assert manifest["target_architecture"] == "x86_64", manifest
+          assert manifest["architecture"] == "x86_64", manifest
+          assert manifest["runtime_target_os_version"] == "26.7.3", manifest
+          assert manifest["runtime_target_os_build"] == "25G342", manifest
+          assert manifest["runtime_compatibility_verified"] is False, manifest
+          assert manifest["kernel_source_runtime_match"] is False, manifest
+          assert manifest["xnu_source_release"] == "26.5", manifest
+          assert len(manifest["xnu_source_compat_patch_sha256"]) == 64, manifest
+          assert manifest["host_os_version"].startswith("26."), manifest
+          assert manifest["sdk_version"] == "26.5", manifest
+          assert manifest["xcode_version"] == "26.6", manifest
+          assert manifest["kdk_expected_version"] == "26.5", manifest
+          assert manifest["kdk_expected_build"] == "25F71", manifest
+          assert manifest["kdk_status"] == "verified", manifest
+          assert manifest["kdk_required_for_build_host"] is True, manifest
+          assert manifest["kdk_present"] is True, manifest
+          assert manifest["kdk_matches_xnu_source"] is True, manifest
+          assert manifest["kdk_product_version"] == "26.5", manifest
+          assert manifest["kdk_product_build"] == "25F71", manifest
+          assert manifest["kdk_xnu_version"] == manifest["xnu_source_version"], manifest
+          assert len(manifest["kdk_trustcache_api_header_sha256"]) == 64, manifest
+          assert manifest["trustcache_header_source"] == "matching-kdk", manifest
+          assert len(manifest["trustcache_header_sha256"]) == 64, manifest
+          assert Path(manifest["trustcache_header_path"]).is_file(), manifest
+          recorded_sdk = Path(manifest["host_sdkroot"])
+          selected_sdk = Path(subprocess.check_output(
+              ["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True,
+          ).strip())
+          assert recorded_sdk.is_absolute() and selected_sdk.is_absolute(), manifest
+          assert selected_sdk.is_dir() and recorded_sdk.samefile(selected_sdk), manifest
+          assert manifest["host_sys_unistd_headers_match"] is True, manifest
+          assert manifest["host_sys_unistd_base_sha256"] == manifest["host_sys_unistd_overlay_sha256"], manifest
+          assert manifest["host_tool_base_unistd_probe"] == "passed", manifest
+          assert manifest["xnu_sdk_header_tree_diagnostics_recorded"] is True, manifest
+          assert manifest["xnu_target_include_paths_verified"] is True, manifest
+          assert manifest["xnu_generic_sdk_header_paths_removed_for_x86_64"] is True, manifest
+          assert manifest["xnu_generic_sdk_header_dependencies"] == 0, manifest
+          assert manifest["xnu_target_dependency_files"] > 0, manifest
+          assert manifest["xnu_dependency_file_entries"] > 0, manifest
+          assert manifest["xnu_header_dependencies"] > 0, manifest
+          assert manifest["xnu_missing_dependency_files"] == 0, manifest
+          assert manifest["xnu_warning_policy_verified"] is True, manifest
+          assert manifest["xnu_reserved_identifier_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_unused_but_set_variable_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_void_pointer_to_enum_cast_warning_nonfatal"] is True, manifest
+          assert manifest["xnu_compiler_warning_exceptions"] == [
+              "-Wno-error=reserved-identifier",
+              "-Wno-error=unused-but-set-variable",
+              "-Wno-error=void-pointer-to-enum-cast",
+          ], manifest
+          assert manifest["xnu_other_warnings_remain_errors"] is True, manifest
+          assert manifest["xnu_target_sdkroot_resolution_mode"] == "explicit-isysroot-overlay", manifest
+          assert manifest["xnu_target_sdkroot_overlay_notes"] >= 0, manifest
+          assert manifest["xnu_target_commands_without_explicit_isysroot"] == 0, manifest
+          PY
+      - name: Report KDK-gated cross-build skip
+        if: steps.kdk.outputs.available != 'true'
+        run: cat "$RUNNER_TEMP/xnu-x86-cross-build-status.txt"
+      - uses: actions/upload-artifact@v4
+        if: steps.kdk.outputs.available == 'true'
+        with:
+          name: xnu-tahoe26.5-source-x86_64-host-arm64-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/kernel.development
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/build-result.json
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/x86_64-build.env
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/libdispatch/dst/usr/local/lib/kernel/libfirehose_kernel.a
+          if-no-files-found: error
+          retention-days: 5
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xnu-tahoe26.5-source-x86_64-host-arm64-diagnostics-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/xnu-build.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/availability-build.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/xnu-export-headers.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/xnu-header-install.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/libdispatch-build.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/x86_64-build.env
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/sdk-public-availability.sha256
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/host-sdk-diagnostic.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/host-tool-unistd-base-probe.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/host-tool-unistd-overlay-probe.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/xnu-staged-header-trees.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/xnu-target-include-diagnostics.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/xnu-warning-policy-probe.log
+            ${{ runner.temp }}/xnulinux-x86_64-arm64-host-probe/out/kdk-preflight.log
+            ${{ runner.temp }}/xnu-x86-cross-build-status.txt
+          if-no-files-found: ignore
+          retention-days: 5

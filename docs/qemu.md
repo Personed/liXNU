@@ -258,8 +258,9 @@ PCs remains unknown; these results do not establish that every PC can run the 6 
 ### Current-head acceptance in run #172
 
 PR #115 run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996) completed
-all six workflow jobs on tested PR head `0daaa50` (merge commit `1b3beb5` into #89 head
-`763aef9`). The full source build, ARM64 guest preparation, and all three hosted boot
+all six workflow jobs for PR head `0daaa50`. CI checked out the GitHub-generated test merge
+`1b3beb5` (`refs/pull/115/merge`) against #89 head `763aef9`. The full source build,
+ARM64 guest preparation, and all three hosted boot
 profiles passed with the same 6 GiB guest, QEMU TCG `cortex-a710`, Linux `mem=2G`,
 3,072 MiB FKI carve-out at `0xc0000000`, and 2,816 MiB XNU RAM. Each boot reached the
 PureDarwin console and `XNULINUX_USERLAND_OK`, ran guest-requested `halt`, unloaded XNU/FKI,
@@ -275,5 +276,3 @@ The run #172 logs and retained boot evidence are linked from
 [PR #115's acceptance comment](https://github.com/Personed/xnulinux/pull/115#issuecomment-7218481524).
 These are hosted virtual-machine profiles. The guest's 6 GiB is the validated configuration,
 not a measured guest minimum; the physical Intel/AMD PC RAM floor remains unknown.
-
-

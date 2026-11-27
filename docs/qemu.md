@@ -152,8 +152,15 @@ expected = {
     "artifacts/guest/initramfs.cpio.gz": "fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667",
     "artifacts/disk/pd.img": "7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f",
 }
+def sha256_file(name):
+    digest = hashlib.sha256()
+    with Path(name).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
 for name, digest in expected.items():
-    actual = hashlib.sha256(Path(name).read_bytes()).hexdigest()
+    actual = sha256_file(name)
     if actual != digest:
         raise SystemExit(f"{name}: expected {digest}, got {actual}")
     print(f"{name}: SHA-256 matches")

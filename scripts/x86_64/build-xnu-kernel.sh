@@ -50,6 +50,8 @@ source "$SCRIPT_DIR/xnu-trustcache-scan-workspace.sh"
 readonly XNU_URL='https://github.com/apple-oss-distributions/xnu.git'
 readonly XNU_COMMIT='ac9718fb1af618d5ce8678d0dc6e8a58f252216f'
 readonly XNU_TAG='xnu-12377.121.6'
+readonly XNU_SOURCE_PATCH_NAME='xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch'
+readonly XNU_SOURCE_PATCH_PATH="$SCRIPT_DIR/../../$XNU_SOURCE_PATCH_NAME"
 readonly LIBDISPATCH_URL='https://github.com/apple-oss-distributions/libdispatch.git'
 readonly LIBDISPATCH_COMMIT='701f4d1a24ae9c6863901bbbb22624b7d1b87321'
 readonly LIBDISPATCH_TAG='libdispatch-1542.100.32'
@@ -92,6 +94,9 @@ esac
 for tool in git make xcrun xcodebuild sysctl python3 shasum ditto rsync; do
   command -v "$tool" >/dev/null 2>&1 || fail "required host tool not found: $tool"
 done
+[[ -s "$XNU_SOURCE_PATCH_PATH" ]] || fail "missing pinned XNU source patch at $XNU_SOURCE_PATCH_PATH"
+XNU_SOURCE_PATCH_SHA256="$(shasum -a 256 "$XNU_SOURCE_PATCH_PATH" | awk '{print $1}')"
+[[ "$XNU_SOURCE_PATCH_SHA256" =~ ^[[:xdigit:]]{64}$ ]] || fail 'XNU source patch SHA-256 is malformed'
 
 DEFAULT_TMPDIR="${TMPDIR:-/tmp}"
 BUILD_ROOT_INPUT="${XNU_X86_BUILD_DIR:-${DEFAULT_TMPDIR%/}/xnulinux-x86_64-xnu-build}"
@@ -199,7 +204,6 @@ verify_source() {
   local actual
   actual="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
   [[ "$actual" == "$XNU_COMMIT" ]] || fail "XNU source is $actual; expected $XNU_COMMIT ($XNU_TAG)"
-  [[ -z "$(git -C "$SOURCE_DIR" status --porcelain)" ]] || fail 'refusing to build from a modified XNU source tree'
   grep -q '^SUPPORTED_ARCH_CONFIGS.*X86_64' "$SOURCE_DIR/makedefs/MakeInc.def" \
     || fail 'pinned XNU source does not declare X86_64'
   grep -q '^SUPPORTED_X86_64_MACHINE_CONFIGS[[:space:]]*=[[:space:]]*NONE$' "$SOURCE_DIR/makedefs/MakeInc.def" \
@@ -873,6 +877,8 @@ verify_xcode_and_sdk() {
 
 if (( CHECK_ONLY )); then
   verify_source
+  python3 "$SCRIPT_DIR/verify-xnu-cpuid-vendor-guard.py" \
+    --source-root "$SOURCE_DIR" --patch "$XNU_SOURCE_PATCH_PATH"
   verify_libdispatch_source
   verify_availability_source
   verify_xcode_and_sdk
@@ -917,6 +923,8 @@ if [[ ! -d "$SOURCE_DIR/.git" && ! -f "$SOURCE_DIR/.git" ]]; then
   git -C "$SOURCE_DIR" checkout -q --detach FETCH_HEAD
 fi
 verify_source
+python3 "$SCRIPT_DIR/verify-xnu-cpuid-vendor-guard.py" \
+  --source-root "$SOURCE_DIR" --patch "$XNU_SOURCE_PATCH_PATH" --apply
 
 if [[ ! -d "$LIBDISPATCH_SOURCE_DIR/.git" && ! -f "$LIBDISPATCH_SOURCE_DIR/.git" ]]; then
   [[ ! -d "$LIBDISPATCH_SOURCE_DIR" || -z "$(find "$LIBDISPATCH_SOURCE_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]] \
@@ -1073,6 +1081,9 @@ I386_CPU_NUMBER_SHA256="$(shasum -a 256 "$SDK_DIR/usr/local/include/i386/cpu_num
 cat >"$OUT_DIR/x86_64-build.env" <<EOF
 source=$XNU_URL@$XNU_COMMIT
 source_tag=$XNU_TAG
+xnu_source_modified=true
+xnu_source_patch=$XNU_SOURCE_PATCH_NAME
+xnu_source_patch_sha256=$XNU_SOURCE_PATCH_SHA256
 availability_source=$AVAILABILITY_URL@$AVAILABILITY_COMMIT
 availability_tag=$AVAILABILITY_TAG
 libdispatch_source=$LIBDISPATCH_URL@$LIBDISPATCH_COMMIT
@@ -1208,7 +1219,7 @@ python3 - "$PACKAGE_KERNEL" "$RESULT" "$XNU_COMMIT" "$XNU_TAG" "$SOURCE_VERSION"
   "$KDK_PRIVATE_HEADER_SHA256" "$HOST_OS_VERSION" "$XNU_SOURCE_RELEASE" "$RUNTIME_TARGET_VERSION" \
   "$KDK_PRESENT" "$KDK_REQUIRED" "$KDK_PRODUCT_VERSION" "$KDK_PRODUCT_BUILD" "$KDK_XNU_VERSION" \
   "$TRUSTCACHE_HEADER_SOURCE" "$TRUSTCACHE_HEADER_SHA256" "$TRUSTCACHE_HEADER" \
-  "$RUNTIME_TARGET_BUILD" "$XNU_COMPAT_PATCH_SHA256" <<'PY'
+  "$RUNTIME_TARGET_BUILD" "$XNU_COMPAT_PATCH_SHA256" "$XNU_SOURCE_PATCH_SHA256" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -1273,11 +1284,19 @@ result = {
     "host_os_version": sys.argv[43],
     "xnu_commit": sys.argv[3],
     "xnu_tag": sys.argv[4],
+    "xnu_source_modified": True,
+    "xnu_source_patch": "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch",
+    "xnu_source_patch_sha256": sys.argv[55],
+    "xnu_non_intel_vendor_policy": "refuse-before-cpuid_do_precpuid_was-and-cpuid_set_generic_info",
     "xnu_source_version": sys.argv[5],
     "xnu_source_release": sys.argv[44],
     "runtime_target_os_version": sys.argv[45],
     "runtime_target_os_build": sys.argv[54],
     "xnu_source_compat_patch_sha256": sys.argv[55],
+    "xnu_source_modified": True,
+    "xnu_source_patch": "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch",
+    "xnu_source_patch_sha256": sys.argv[56],
+    "xnu_non_intel_vendor_policy": "refuse-before-cpuid_do_precpuid_was-and-cpuid_set_generic_info",
     "runtime_compatibility_verified": False,
     "kernel_source_runtime_match": False,
     "darwin_kernel_version": sys.argv[6],

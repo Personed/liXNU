@@ -10,7 +10,9 @@ on:
       - "scripts/x86_64/tahoe-xnu-pointer-casts.patch"
       - "scripts/x86_64/xnu-trustcache-scan-workspace.sh"
       - "scripts/x86_64/verify-xnu-kdk.py"
+      - "scripts/x86_64/verify-xnu-cpuid-vendor-guard.py"
       - "scripts/x86_64/verify-xnu-target-build.py"
+      - "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch"
   push:
     branches: [main]
     paths:
@@ -19,13 +21,32 @@ on:
       - "scripts/x86_64/tahoe-xnu-pointer-casts.patch"
       - "scripts/x86_64/xnu-trustcache-scan-workspace.sh"
       - "scripts/x86_64/verify-xnu-kdk.py"
+      - "scripts/x86_64/verify-xnu-cpuid-vendor-guard.py"
       - "scripts/x86_64/verify-xnu-target-build.py"
+      - "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch"
 permissions:
   contents: read
 concurrency:
   group: ${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  cpuid-vendor-guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the pinned public XNU source
+        run: |
+          source_root="$RUNNER_TEMP/xnu-source"
+          mkdir -p "$source_root"
+          git -C "$source_root" init -q
+          git -C "$source_root" remote add origin https://github.com/apple-oss-distributions/xnu.git
+          git -C "$source_root" fetch --depth 1 origin ac9718fb1af618d5ce8678d0dc6e8a58f252216f
+          git -C "$source_root" checkout -q --detach FETCH_HEAD
+          python3 scripts/x86_64/verify-xnu-cpuid-vendor-guard.py \
+            --source-root "$source_root" \
+            --patch xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch \
+            --apply
   build-kernel:
     runs-on: macos-26-intel
     timeout-minutes: 120
@@ -132,6 +153,7 @@ jobs:
         run: |
           python3 - "$XNU_X86_BUILD_DIR/out/build-result.json" <<'PY'
           import json
+          import hashlib
           from pathlib import Path
           import sys
 
@@ -149,6 +171,10 @@ jobs:
           assert manifest["kernel_source_runtime_match"] is False, manifest
           assert manifest["xnu_source_release"] == "26.5", manifest
           assert len(manifest["xnu_source_compat_patch_sha256"]) == 64, manifest
+          assert manifest["xnu_source_modified"] is True, manifest
+          assert manifest["xnu_source_patch"] == "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch", manifest
+          assert manifest["xnu_source_patch_sha256"] == hashlib.sha256(Path(manifest["xnu_source_patch"]).read_bytes()).hexdigest(), manifest
+          assert manifest["xnu_non_intel_vendor_policy"] == "refuse-before-cpuid_do_precpuid_was-and-cpuid_set_generic_info", manifest
           assert manifest["host_os_version"].startswith("26."), manifest
           assert manifest["sdk_version"] == "26.5", manifest
           assert manifest["xcode_version"] == "26.6", manifest
@@ -276,6 +302,7 @@ jobs:
         run: |
           python3 - "$XNU_X86_BUILD_DIR/out/build-result.json" <<'PY'
           import json
+          import hashlib
           from pathlib import Path
           import sys
 
@@ -293,6 +320,10 @@ jobs:
           assert manifest["kernel_source_runtime_match"] is False, manifest
           assert manifest["xnu_source_release"] == "26.5", manifest
           assert len(manifest["xnu_source_compat_patch_sha256"]) == 64, manifest
+          assert manifest["xnu_source_modified"] is True, manifest
+          assert manifest["xnu_source_patch"] == "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch", manifest
+          assert manifest["xnu_source_patch_sha256"] == hashlib.sha256(Path(manifest["xnu_source_patch"]).read_bytes()).hexdigest(), manifest
+          assert manifest["xnu_non_intel_vendor_policy"] == "refuse-before-cpuid_do_precpuid_was-and-cpuid_set_generic_info", manifest
           assert manifest["host_os_version"].startswith("26."), manifest
           assert manifest["sdk_version"] == "26.5", manifest
           assert manifest["xcode_version"] == "26.6", manifest

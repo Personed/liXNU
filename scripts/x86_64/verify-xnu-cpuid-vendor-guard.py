@@ -36,7 +36,11 @@ def git(source_root: pathlib.Path, *args: str) -> bytes:
 
 
 def function_body(source: str, name: str) -> str:
-    match = re.search(rf"\b{re.escape(name)}\s*\(\s*void\s*\)\s*\{{", source)
+    match = re.search(
+        rf"^{re.escape(name)}\s*\([^;{{}}]*\)\s*\{{",
+        source,
+        re.MULTILINE,
+    )
     if match is None:
         raise GuardError(f"pinned source is missing definition of {name}()")
 
@@ -128,6 +132,7 @@ def expected_patch_state(source_root: pathlib.Path, patch_bytes: bytes) -> None:
 
 
 def apply_or_verify(source_root: pathlib.Path, patch_path: pathlib.Path, apply: bool) -> str:
+    patch_path = patch_path.resolve()
     if git(source_root, "rev-parse", "HEAD").decode().strip() != XNU_COMMIT:
         raise GuardError(f"XNU checkout must be exactly {XNU_COMMIT}")
     patch_bytes = patch_path.read_bytes()

@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-only
-# Compile the Mach-O/ADT/x86 parser validation objects for the host architecture
-# without linking them into xnu.ko.
+# Compile the Mach-O/ADT/x86 parser and boot_args validation objects for the
+# host architecture without linking them into xnu.ko.
 set -euo pipefail
 
 if [ "$#" -ne 1 ] || [ ! -f "$1/Makefile" ]; then
@@ -20,8 +20,9 @@ trap 'rm -rf "$BUILD"' EXIT
 
 cp -a "$REPO/xnu-ko" "$BUILD/xnu-ko"
 cp -a "$REPO/fki-ko" "$BUILD/fki-ko"
-make -C "$KDIR" ARCH=x86_64 M="$BUILD/xnu-ko" macho.o macho_parse_x86_64.o adt.o
-for object in macho.o macho_parse_x86_64.o adt.o; do
+make -C "$KDIR" ARCH=x86_64 M="$BUILD/xnu-ko" \
+  macho.o macho_parse_x86_64.o adt.o x86_64_boot_args.o
+for object in macho.o macho_parse_x86_64.o adt.o x86_64_boot_args.o; do
   object_path="$BUILD/xnu-ko/$object"
   test -s "$object_path"
   header=$(LC_ALL=C readelf -h "$object_path")

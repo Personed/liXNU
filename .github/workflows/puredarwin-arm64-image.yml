@@ -404,6 +404,7 @@ jobs:
             else
               echo '  - Not recorded'
             fi
+            echo '- CPU profile: QEMU `-cpu cortex-a710`; `--require-direct` requires TCR2_EL1.PIE=0 (or unsupported TCR2) and XNU PIE mapping mode=0.'
             for manifest in \
               "$RUNNER_TEMP/puredarwin-e2e-guest/guest-manifest.txt" \
               "$RUNNER_TEMP/puredarwin-e2e-guest/build-manifest.txt"; do

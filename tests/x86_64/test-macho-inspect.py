@@ -37,6 +37,7 @@ LC_UNIXTHREAD = 0x5
 LC_DYLD_CHAINED_FIXUPS = 0x80000034
 SG_NORELOC = 4
 S_ATTR_PURE_INSTRUCTIONS = 0x80000000
+S_ATTR_SOME_INSTRUCTIONS = 0x00000400
 X86_THREAD_STATE64 = 4
 X86_THREAD_STATE64_COUNT = 42
 DYLD_CHAINED_PTR_X86_64_KERNEL_CACHE = 11
@@ -110,10 +111,13 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL):
 def make_hib_image():
     data = make_valid_image()
     put_name(data, TEXT_OFF + 8, "__HIB")
+    # Keep the HIB bytes separate from the header and load commands.
+    put_u64(data, TEXT_OFF + 40, 0x200)
     put_u32(data, TEXT_OFF + 56, 3)
     put_u32(data, TEXT_OFF + 60, 3)
     put_name(data, SECTION_OFF + 16, "__HIB")
-    put_u32(data, SECTION_OFF + 64, S_ATTR_PURE_INSTRUCTIONS)
+    put_u32(data, SECTION_OFF + 48, 0x300)
+    put_u32(data, SECTION_OFF + 64, S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS)
     put_u64(data, RIP_OFF, 0x1110)
     return data
 
@@ -465,7 +469,7 @@ def expect_output_write_error(binary):
 
 
 def expect_hib_entry(report):
-    if report["hib_entry"] != {"section": "__HIB,__text", "file_offset": "0x0000000000000110"}:
+    if report["hib_entry"] != {"section": "__HIB,__text", "file_offset": "0x0000000000000310"}:
         raise AssertionError("incorrect __HIB entry file offset")
     if report["entry"]["unslid"] != "0x0000000000001110":
         raise AssertionError("incorrect __HIB RIP")
@@ -568,9 +572,9 @@ def main():
     run_case(binary, "normal executable entry does not qualify", make_valid_image(), 3,
              options=hib_mode)
     for name, offset, value in (
-        ("HIB without instruction attribute", SECTION_OFF + 64, 0),
+        ("HIB with only some instructions", SECTION_OFF + 64, S_ATTR_SOME_INSTRUCTIONS),
         ("zero-fill HIB text", SECTION_OFF + 64, S_ATTR_PURE_INSTRUCTIONS | 1),
-        ("HIB text with mismatched file offset", SECTION_OFF + 48, 0x140),
+        ("HIB text with mismatched file offset", SECTION_OFF + 48, 0x340),
         ("HIB text without read-write max protections", TEXT_OFF + 56, 1),
         ("RIP at HIB text's exclusive end", RIP_OFF, 0x1120),
     ):

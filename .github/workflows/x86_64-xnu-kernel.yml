@@ -215,7 +215,10 @@ jobs:
             exit 0
           fi
           awk '
-            /: (fatal )?error:|^Undefined symbols|^ld: / {
+            /^Undefined symbols/ { in_undefined_symbols = 1 }
+            !/^Undefined symbols|^[[:space:]]/ { in_undefined_symbols = 0 }
+            /: (fatal )?error:|^Undefined symbols|^ld: / ||
+              (in_undefined_symbols && /^[[:space:]]+[^[:space:]]/) {
               gsub(/[[:cntrl:]]/, " ")
               printf "  %s\n", substr($0, 1, 500)
               if (++count == 20) exit

@@ -632,6 +632,8 @@ jobs:
           set +e
           set -o pipefail
           python3 tests/puredarwin/run-tcg-e2e.py \
+            --qemu-cpu cortex-a710 \
+            --require-direct \
             --timeout-seconds 5400 \
             --qemu-memory "$QEMU_MEMORY" \
             --linux-memory "$LINUX_MEMORY" \
@@ -693,6 +695,7 @@ jobs:
             echo "- QEMU peak RSS: ${qemu_rss}"
             echo '- Host memory before artifact downloads:'
             if [ -s "$host_memory" ]; then sed 's/^/  - /' "$host_memory"; else echo '  - Not recorded'; fi
+            echo '- CPU profile: QEMU `-cpu cortex-a710`; `--require-direct` requires TCR2_EL1.PIE=0 (or unsupported TCR2) and XNU PIE mapping mode=0.'
             echo '- A pass requires the Darwin console command, guest halt, XNU/FKI unload, Linux power-off and QEMU exit 0.'
             echo '- This experimental profile is not a support claim. Compare it with the required 6 GiB job and repeat passes before setting a floor.'
             if [ -s "$output" ]; then

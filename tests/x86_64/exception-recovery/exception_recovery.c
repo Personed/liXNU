@@ -174,7 +174,7 @@ static unsigned long er_fault_address;
 
 /* Assembly reads this only while the ioctl mutex serializes one active probe. */
 struct er_asm_control *er_active_state;
-struct er_gpr_scratch er_recovery_scratch;
+extern struct er_gpr_scratch er_recovery_scratch;
 
 long x86_er_inject(struct er_asm_control *control, unsigned int vector);
 void x86_er_pf_entry(void);

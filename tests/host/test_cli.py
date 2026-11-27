@@ -15,17 +15,40 @@ INSTALLER = ROOT / "scripts" / "install.sh"
 
 
 class TestCliAndInstaller(unittest.TestCase):
-    def simulated_user_env(self, tmp, *, without_python=False):
+    def simulated_user_env(self, tmp, *, without_python=False, sudo_log=None):
         shim = pathlib.Path(tmp) / "shim"
         shim.mkdir(exist_ok=True)
         fake_id = shim / "id"
         fake_id.write_text("#!/bin/sh\nprintf '1000\\n'\n", encoding="utf-8")
         fake_id.chmod(0o755)
+        if sudo_log is not None:
+            fake_sudo = shim / "sudo"
+            fake_sudo.write_text(
+                '#!/bin/sh\nprintf "called\\n" >> "$SUDO_LOG"\nexit 97\n', encoding="utf-8"
+            )
+            fake_sudo.chmod(0o755)
         if without_python:
             fake_python = shim / "python3"
             fake_python.write_text("#!/bin/sh\nexit 127\n", encoding="utf-8")
             fake_python.chmod(0o755)
-        return {**os.environ, "PATH": f"{shim}{os.pathsep}{os.environ.get('PATH', '')}"}
+        env = {**os.environ, "PATH": f"{shim}{os.pathsep}{os.environ.get('PATH', '')}"}
+        if sudo_log is not None:
+            env["SUDO_LOG"] = str(sudo_log)
+        return env
+
+    def make_install_fixture(self, tmp):
+        checkout = pathlib.Path(tmp) / "repo space 'single' \"double\" $dollar"
+        scripts = checkout / "scripts"
+        scripts.mkdir(parents=True)
+        fixture_installer = scripts / "install.sh"
+        shutil.copy2(INSTALLER, fixture_installer)
+        fixture_cli = scripts / "xnulinux"
+        fixture_cli.write_text(
+            '#!/bin/sh\nprintf \'root=%s\\narg=%s\\n\' "$XNULINUX_HOME" "${1:-}"\n',
+            encoding="utf-8",
+        )
+        fixture_cli.chmod(0o755)
+        return checkout.resolve(), fixture_installer, fixture_cli
 
     def test_help_doctor_status(self):
         for cmd in ("help", "doctor", "status"):
@@ -115,6 +138,71 @@ class TestCliAndInstaller(unittest.TestCase):
                 text=True,
             )
             self.assertFalse(installed.exists())
+
+    def test_user_install_wrapper_preserves_shell_special_checkout_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sudo_log = pathlib.Path(tmp) / "sudo.log"
+            env = self.simulated_user_env(tmp, sudo_log=sudo_log)
+            checkout, fixture_installer, _ = self.make_install_fixture(tmp)
+            prefix = pathlib.Path(tmp) / "prefix space 'single' \"double\" $dollar"
+            installed = prefix / "bin" / "xnulinux"
+
+            result = subprocess.run(
+                [str(fixture_installer), "--prefix", str(prefix)],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(sudo_log.exists(), "user install must not call sudo")
+            launched = subprocess.run(
+                [str(installed), "probe"], cwd="/", env=env, capture_output=True, text=True
+            )
+            self.assertEqual(launched.returncode, 0, launched.stderr)
+            self.assertEqual(launched.stdout, f"root={checkout}\narg=probe\n")
+
+    def test_system_install_wrapper_preserves_shell_special_checkout_path(self):
+        if not hasattr(os, "geteuid") or os.geteuid() != 0:
+            self.skipTest("requires root to exercise the system-wide install branch")
+        with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
+            public_root = pathlib.Path(tmp)
+            public_root.chmod(0o755)
+            checkout, fixture_installer, fixture_cli = self.make_install_fixture(tmp)
+            checkout.chmod(0o755)
+            (checkout / "scripts").chmod(0o755)
+            fixture_installer.chmod(0o755)
+
+            shim = public_root / "shim"
+            shim.mkdir()
+            sudo_log = public_root / "sudo.log"
+            fake_sudo = shim / "sudo"
+            fake_sudo.write_text(
+                '#!/bin/sh\nprintf "called\\n" >> "$SUDO_LOG"\nexit 97\n', encoding="utf-8"
+            )
+            fake_sudo.chmod(0o755)
+            env = {
+                **os.environ,
+                "PATH": f"{shim}{os.pathsep}{os.environ.get('PATH', '')}",
+                "SUDO_LOG": str(sudo_log),
+            }
+            prefix = public_root / "system prefix 'single' \"double\" $dollar"
+            installed = prefix / "bin" / "xnulinux"
+
+            result = subprocess.run(
+                [str(fixture_installer), "--prefix", str(prefix)],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(sudo_log.exists(), "root install must not call sudo")
+            self.assertTrue(installed.is_file())
+            launched = subprocess.run(
+                [str(installed), "probe"], cwd="/", env=env, capture_output=True, text=True
+            )
+            self.assertEqual(launched.returncode, 0, launched.stderr)
+            self.assertEqual(launched.stdout, f"root={checkout}\narg=probe\n")
+            self.assertEqual(str(fixture_cli), str(checkout / "scripts" / "xnulinux"))
 
     def test_system_install_rejects_private_checkout_parent(self):
         if not hasattr(os, "geteuid") or os.geteuid() != 0:

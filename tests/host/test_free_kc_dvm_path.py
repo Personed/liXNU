@@ -394,11 +394,11 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                     "#!/bin/sh\n"
                     "if [ \"$1\" = \"$POC/scripts/free-kc/fit_kernel_segments.py\" ]; then\n"
                     "  if [ \"${2:-}\" = --check ]; then\n"
-                    "    printf 'check\\n' >> \"$EVENT_CAPTURE\"\n"
+                    "    printf 'check %s %s %s\\n' \"$2\" \"$3\" \"$4\" >> \"$EVENT_CAPTURE\"\n"
                     "    [ \"${FAIL_LAYOUT_CHECK:-0}\" != 1 ] || exit 42\n"
                     "    exit 0\n"
                     "  fi\n"
-                    "  printf 'fit\\n' >> \"$EVENT_CAPTURE\"\n"
+                    "  printf 'fit %s %s\\n' \"$2\" \"$3\" >> \"$EVENT_CAPTURE\"\n"
                     "  echo 'relink kernel: fixture layout changed'\n"
                     "  exit 0\n"
                     "fi\n"
@@ -473,7 +473,15 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
 
         result, calls, poc, events = run_rebuild()
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertEqual(events, ["build", "fit", "build", "check"])
+        self.assertEqual(
+            events,
+            [
+                "build",
+                "fit out/k27/kernel-k27.macho k27/segaddrs.sh",
+                "build",
+                "check --check out/k27/kernel-k27.macho k27/segaddrs.sh",
+            ],
+        )
         self.assertEqual(
             calls,
             [expected_kext_args(poc, name) for name in ("XnuCPU", "XnuDisk", "XnuDrm")],
@@ -481,7 +489,15 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
 
         result, calls, poc, events = run_rebuild(fail_kext="XnuDisk")
         self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertEqual(events, ["build", "fit", "build", "check"])
+        self.assertEqual(
+            events,
+            [
+                "build",
+                "fit out/k27/kernel-k27.macho k27/segaddrs.sh",
+                "build",
+                "check --check out/k27/kernel-k27.macho k27/segaddrs.sh",
+            ],
+        )
         self.assertEqual(
             calls,
             [expected_kext_args(poc, name) for name in ("XnuCPU", "XnuDisk")],
@@ -490,7 +506,15 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
 
         result, calls, _poc, events = run_rebuild(fail_layout_check=True)
         self.assertEqual(result.returncode, 42, result.stdout)
-        self.assertEqual(events, ["build", "fit", "build", "check"])
+        self.assertEqual(
+            events,
+            [
+                "build",
+                "fit out/k27/kernel-k27.macho k27/segaddrs.sh",
+                "build",
+                "check --check out/k27/kernel-k27.macho k27/segaddrs.sh",
+            ],
+        )
         self.assertEqual(calls, [])
 
 

@@ -12,6 +12,7 @@
 
 #define XNU_X86_U32_LIMIT ((xnu_boot_u64)0xffffffffU)
 #define XNU_X86_U32_END   (XNU_X86_U32_LIMIT + 1)
+#define XNU_X86_LAST_BOOT_PAGE (XNU_X86_U32_END - 4096U)
 
 /* A u32 physical base plus a u32 length may end exactly at 4 GiB. */
 static int pa_range_fits_u32(xnu_boot_u64 start, xnu_boot_u64 size)
@@ -22,11 +23,14 @@ static int pa_range_fits_u32(xnu_boot_u64 start, xnu_boot_u64 size)
 	return 1;
 }
 
-/* Tahoe XNU adds kaddr + ksize in uint32_t before widening the result. */
+/*
+ * vstart() adds kaddr + ksize in uint32_t and rounds physfree up to a
+ * 4 KiB page. ID_MAP_VTOP() later keeps only the low 32 bits.
+ */
 static int kernel_range_fits_u32(xnu_boot_u64 start, xnu_boot_u64 size)
 {
-	if (!start || !size || start > XNU_X86_U32_LIMIT ||
-	    size > XNU_X86_U32_LIMIT - start)
+	if (!start || !size || start > XNU_X86_LAST_BOOT_PAGE ||
+	    size > XNU_X86_LAST_BOOT_PAGE - start)
 		return 0;
 	return 1;
 }

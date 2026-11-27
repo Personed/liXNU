@@ -86,17 +86,29 @@ The transaction states are:
 
 `INIT -> VALIDATED -> ARMED -> FOREIGN -> STOPPED -> RESTORED`
 
-with `ABORTED` reachable from `ARMED`, `FOREIGN`, or `STOPPED`.
+For a transaction that makes a blocking request, the restored Linux task may
+wait and then resume the saved foreign continuation:
+
+`RESTORED -> WAITING -> RESUME_READY -> ARMED -> FOREIGN`
+
+`RESTORED -> COMPLETE` is the terminal success path when no request remains.
+`ABORTED` is terminal and is reachable from `ARMED`, `FOREIGN`, `STOPPED`,
+`RESTORED`, `WAITING`, or `RESUME_READY`.
 
 1. `INIT`: the caller fills architectural state and metadata.
 2. `VALIDATED`: the host checks version, shape, alignment, profile, feature support, control-state consistency, memory references, and stop-mask policy. No foreign state is loaded.
 3. `ARMED`: the host snapshots its own complete restoration state and prepares the entry trampoline. The CPU is pinned and preemption/interrupt ownership is explicit.
 4. `FOREIGN`: control is in the foreign or synthetic context. Linux does not run normally on that CPU in this state.
 5. `STOPPED`: control returned to the host trampoline, foreign architectural state was captured, and the stop reason is stable.
-6. `RESTORED`: host control, descriptor, paging, interrupt, FPU/vector, and task state were restored and compared against the host oracle.
-7. `ABORTED`: restoration failed or a stop cannot be represented. The module must fail closed, poison the transaction, and prevent reuse.
+6. `RESTORED`: host control, descriptor, paging, interrupt, FPU/vector, and task state were restored and compared against the host oracle. A blocking request may enter `WAITING` only after execution is back on the owning Linux task's normal stack and Linux can schedule or sleep safely.
+7. `WAITING`: Linux is restored and the owner has published the wait state for one identified request before making that request visible to a responder. The owner may be about to sleep or already asleep; a response may arrive before the first sleep. No foreign state is loaded. The continuation slot remains reserved for this task and transaction generation; other tasks may run on the CPU but may not reuse that slot or its stack.
+8. `RESUME_READY`: exactly one valid reply was accepted for the current transaction generation and request ID. The complete reply payload is published before this state becomes visible, and the owner is woken if it is asleep. After observing this state, the owner reads and validates the reply payload before re-entry. The host then rechecks task/CPU ownership, stack bounds, continuation validity, and captures a fresh Linux restoration snapshot.
+9. `COMPLETE`: the transaction returned to Linux, the final host-state oracle passed, and no continuation or request remains live.
+10. `ABORTED`: restoration failed, the stop cannot be represented, the request timed out or was cancelled, or ownership validation failed. The module must fail closed, invalidate the continuation, and prevent reuse.
 
-Partial entry is possible. Every setup step must have reverse-order teardown, and a failure after any host state is changed must still pass through the same restoration oracle. A caller must not resume a transaction after `ABORTED`.
+The normal path is `INIT -> VALIDATED -> ARMED -> FOREIGN -> STOPPED -> RESTORED -> COMPLETE`. For a cooperative blocking stop, the owner restores Linux, records the task, generation, request ID, and reply-buffer identity, then publishes `WAITING` with the required synchronization before enqueueing or otherwise exposing the request to a responder. A responder may reply immediately after that publication. A valid reply permits `WAITING -> RESUME_READY -> ARMED -> FOREIGN`. Re-entry through `ARMED` is a new arm of the saved continuation, not a second consumption of the previous reply. A transaction may have only one outstanding request at a time; each request has a monotonically unique request ID within its transaction generation.
+
+Partial entry is possible. Every setup step must have reverse-order teardown, and a failure after any host state is changed must still pass through the same restoration oracle. Timeout, cancellation, invalid ownership, or failed restoration transitions to `ABORTED`; a caller must not resume an `ABORTED` transaction. Only `WAITING` may accept a reply. The first reply that atomically matches the owner, generation, request ID, and live state claims the reply slot, finishes the payload, and publishes `RESUME_READY`; timeout/cancellation and reply acceptance must be serialized so exactly one wins. Publish `RESUME_READY` only after the payload is complete, with synchronization that lets the owner read the payload after acquiring that state. Duplicate and late replies must be rejected without waking the task or touching the continuation or reply buffer.
 
 ## Stop reasons
 
@@ -112,6 +124,24 @@ The machine-readable stop taxonomy must distinguish at least:
 - host invariant violation or restoration failure.
 
 A page-fault stop records the vector, error code, CR2, foreign RIP/RSP/RFLAGS, active CR3/PCID, and the translation-ownership class if known. A syscall stop must not be conflated with a Linux syscall merely because the same architectural instruction is used; XNU syscall semantics are a separate contract.
+
+## Linux calls that can sleep
+
+The x86_64 branch of `fki_arch_linux_runs()` can switch to a single alternate stack for the current CPU. The common FKI calls include `fki_yield()` and `fki_idle_until()`, which enable preemption, and file and service calls that can block. A per-CPU stack can still hold a suspended callback when another task runs on that CPU. Pinning the task to that CPU does not prevent the second task from running. That stack also lies outside the task stack Linux uses for normal unwinding.
+
+Treat a request that can run Linux code as a cooperative stop. Save the foreign continuation in host-owned transaction storage and restore the Linux execution context, including the saved task stack pointer and its return frame, before running the operation in C. At that point Linux must own GS, paging, exception and syscall entry, and floating-point state. Run a blocking operation only when the restored Linux context can sleep. Balance the stop path's interrupt and preemption masking and use a Linux task frame that the configured kernel unwinder understands. Keep the request data and reply buffer in memory accessible under Linux page tables for the lifetime of the operation.
+
+Tie each pending request to one task, transaction generation, and request ID. A second task on the same CPU uses its own task stack. Reserve any per-CPU foreign context slot and continuation storage that the pending request depends on until the continuation is consumed or invalidated. The reservation must allow Linux scheduling and must survive a blocking call without holding a spinlock. The first implementation should bind the owner task to an online CPU and prevent CPU offline for the transaction.
+
+The request and reply buffers must be host-owned, accessible with Linux's restored page tables, and valid for the full wait and reply lifetime. They must not reside on the per-CPU alternate stack or in storage that another task can overwrite. A timeout or cancellation marks the request and continuation invalid, but does not free buffers still visible to an in-flight responder; release them only after completion or cancellation has been acknowledged. Reject late or duplicate replies by state, generation, and request ID before they can dereference those buffers.
+
+When a reply wakes the owner, verify task/CPU ownership and current stack bounds, capture fresh Linux restoration state, then arm the saved continuation for one resume. Consume that continuation atomically once. Any timeout, cancellation, stale generation, wrong task/CPU, or restoration failure aborts the transaction and leaves the foreign slot unusable until outstanding operations have quiesced.
+
+The first test can use `HOST_BOUND_SHIM` in a disposable Linux VM. Have the shim return an identified request to its Linux task, restore Linux to that task's normal stack, and publish `WAITING` before making the request visible. Include an immediate responder that replies after request publication but before the owner makes its first sleep attempt. Require the owner to observe the completed reply and avoid sleeping, with no lost wakeup; verify the exact expected payload, generation, and request ID. Also include a delayed responder: block the owner with a bounded timeout, deliver the reply while it sleeps, then verify that after waking the owner reads the exact expected payload before re-arming the continuation.
+
+While the original continuation is `WAITING`, run another task on the same CPU and have it attempt to enter the same shim. Require an observed context switch and prove that the second task does not reuse the reserved per-CPU stack or continuation: a single-slot implementation must reject the second entry before touching the reserved storage, while a multi-slot implementation must use a distinct slot and stack. Check the reserved canaries and original continuation before and after the attempt.
+
+Have a same-CPU helper deliver the expected reply to the owner task. Check that the reply handler runs on the requesting task's stack, the request buffers remain valid until the reply is acknowledged, and the corresponding synthetic continuation resumes exactly once. Deliver duplicate and late replies and require rejection without a second wakeup or resume. Separately exercise timeout and cancellation; each must invalidate the continuation, retain buffers until cancellation is acknowledged, and leave stale replies unusable. Apply the existing host-state, syscall, unload, and guest power-off checks to every result.
 
 ## Exception and interrupt ownership
 

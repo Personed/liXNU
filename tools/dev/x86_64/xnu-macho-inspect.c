@@ -203,7 +203,8 @@ static const char *subtype_name(uint32_t subtype)
 }
 
 static void print_report(const char *path, size_t file_size, uint32_t cpusubtype,
-			 const struct xnu_macho_x86_64_info *parsed)
+			 const struct xnu_macho_x86_64_info *parsed,
+			 const xnu_macho_u64 *hib_entry_fileoff)
 {
 	uint32_t i;
 	int path_utf8;
@@ -221,6 +222,9 @@ static void print_report(const char *path, size_t file_size, uint32_t cpusubtype
 	printf("  \"cpu_subtype\": \"%s\",\n", subtype_name(cpusubtype));
 	printf("  \"entry\": {\"source\": \"LC_UNIXTHREAD.x86_THREAD_STATE64.RIP\", \"unslid\": \"0x%016" PRIx64 "\"},\n",
 	       (uint64_t)parsed->entry);
+	if (hib_entry_fileoff)
+		printf("  \"hib_entry\": {\"section\": \"__HIB,__text\", \"file_offset\": \"0x%016" PRIx64 "\"},\n",
+		       (uint64_t)*hib_entry_fileoff);
 	printf("  \"vm_range\": {\"low\": \"0x%016" PRIx64 "\", \"high\": \"0x%016" PRIx64 "\"},\n",
 	       (uint64_t)parsed->vm_low,
 	       (uint64_t)parsed->vm_high);
@@ -279,10 +283,11 @@ static void print_report(const char *path, size_t file_size, uint32_t cpusubtype
 	puts("}");
 }
 
-static int inspect_file(const char *path)
+static int inspect_file(const char *path, int inspect_hib)
 {
 	unsigned char *file = NULL;
 	size_t file_size = 0;
+	xnu_macho_u64 hib_entry_fileoff;
 	struct xnu_macho_x86_64_info parsed;
 	int err, status = 1;
 
@@ -292,6 +297,9 @@ static int inspect_file(const char *path)
 	if (file_size >= MACH_HEADER_64_SIZE && read_u32le(file) == MH_MAGIC_64 &&
 	    read_u32le(file + 12) != MH_EXECUTE)
 		err = -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
+	else if (inspect_hib)
+		err = xnu_macho_x86_64_inspect_hib_entry(file, (unsigned long)file_size,
+						       &parsed, &hib_entry_fileoff);
 	else
 		err = xnu_macho_x86_64_parse(file, (unsigned long)file_size, &parsed);
 	if (err) {
@@ -306,7 +314,8 @@ static int inspect_file(const char *path)
 		}
 		goto out;
 	}
-	print_report(path, file_size, read_u32le(file + 8), &parsed);
+	print_report(path, file_size, read_u32le(file + 8), &parsed,
+		     inspect_hib ? &hib_entry_fileoff : NULL);
 	if (fflush(stdout) == EOF || ferror(stdout)) {
 		fprintf(stderr, "xnu-macho-inspect: failed to write JSON report: %s\n",
 			errno ? strerror(errno) : "I/O error");
@@ -321,9 +330,10 @@ out:
 
 int main(int argc, char **argv)
 {
-	if (argc != 2) {
-		fprintf(stderr, "usage: %s kernel.development\n", argv[0]);
-		return 2;
-	}
-	return inspect_file(argv[1]);
+	if (argc == 2)
+		return inspect_file(argv[1], 0);
+	if (argc == 3 && !strcmp(argv[1], "--hib-entry-metadata"))
+		return inspect_file(argv[2], 1);
+	fprintf(stderr, "usage: %s [--hib-entry-metadata] kernel.development\n", argv[0]);
+	return 2;
 }

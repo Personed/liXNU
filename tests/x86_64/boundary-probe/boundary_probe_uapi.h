@@ -12,6 +12,9 @@ struct x86_boundary_probe_request {
 
 #define X86_BOUNDARY_PROBE_MODE_RETURN 0
 #define X86_BOUNDARY_PROBE_MODE_ABORT  1
+#define X86_BOUNDARY_PROBE_COOP_REPLY  0
+#define X86_BOUNDARY_PROBE_COOP_TIMEOUT 1
 #define X86_BOUNDARY_PROBE_RUN _IOW(0xb7, 1, struct x86_boundary_probe_request)
+#define X86_BOUNDARY_PROBE_COOPERATIVE _IOW(0xb7, 2, struct x86_boundary_probe_request)
 
 #endif

@@ -110,9 +110,11 @@ jobs:
           test -f "$pkg"
           signature=$(/usr/sbin/pkgutil --check-signature "$pkg")
           printf '%s\n' "$signature"
-          grep -Eq '^[[:space:]]*Status: signed by a certificate trusted by macOS([[:space:]]|$)' <<<"$signature"
+          # pkgutil reports the platform-trusted Apple signature as signed Apple Software.
+          grep -Eq '^[[:space:]]*Status: signed Apple Software[[:space:]]*$' <<<"$signature"
           grep -Eq '^[[:space:]]*1\.[[:space:]]+Software Update[[:space:]]*$' <<<"$signature"
           grep -Eq '^[[:space:]]*2\.[[:space:]]+Apple Software Update Certification Authority[[:space:]]*$' <<<"$signature"
+          grep -Eq '^[[:space:]]*3\.[[:space:]]+Apple Root CA[[:space:]]*$' <<<"$signature"
           sudo /usr/sbin/installer -pkg "$pkg" -target /
           test -d "$kdk"
       - name: Build pinned XNU for x86_64

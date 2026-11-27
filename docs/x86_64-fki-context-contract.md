@@ -113,6 +113,16 @@ The machine-readable stop taxonomy must distinguish at least:
 
 A page-fault stop records the vector, error code, CR2, foreign RIP/RSP/RFLAGS, active CR3/PCID, and the translation-ownership class if known. A syscall stop must not be conflated with a Linux syscall merely because the same architectural instruction is used; XNU syscall semantics are a separate contract.
 
+## Linux calls that can sleep
+
+The x86_64 branch of `fki_arch_linux_runs()` can switch to a single alternate stack for the current CPU. The common FKI calls include `fki_yield()` and `fki_idle_until()`, which enable preemption, and file and service calls that can block. A per-CPU stack can still hold a suspended callback when another task runs on that CPU. Pinning the task to that CPU does not prevent the second task from running. That stack also lies outside the task stack Linux uses for normal unwinding.
+
+Treat a request that can run Linux code as a cooperative stop. Save the foreign continuation in host-owned transaction storage and restore the Linux execution context and saved task stack before running the operation in C. At that point Linux must own GS, paging, exception and syscall entry, and floating-point state. Run a blocking operation only when the restored Linux context can sleep. Balance the stop path's interrupt and preemption masking and use a Linux task frame that the configured kernel unwinder understands. Keep the request data and reply buffer in memory accessible under Linux page tables for the lifetime of the operation.
+
+Tie each pending request to one task and one transaction generation. A second task on the same CPU uses its own task stack. The first implementation should bind the owner task to an online CPU and prevent CPU offline for the transaction. After handling the request, verify task/CPU ownership and the current stack bounds, then capture fresh Linux restoration state before re-entry. Consume the continuation once. Invalidate it on cancellation, timeout, or an ownership failure, and keep outstanding request buffers until completion or cancellation is acknowledged.
+
+The first test can use `HOST_BOUND_SHIM` in a disposable Linux VM. Have the shim return an identified request to its Linux task, block that task with a timeout, and run another task on the same CPU while the request is pending. Require an observed context switch. Check that the handler runs within the requesting task's stack, obtains the expected reply after waking, and resumes the corresponding synthetic continuation exactly once. Check that cancellation or timeout leaves a stale continuation unusable. Apply the existing host state, syscall, unload and guest power-off checks to each result.
+
 ## Exception and interrupt ownership
 
 This is the central unresolved x86-64 problem. Linux and XNU both expect architectural control of IDT entries, exceptions, syscalls, interrupt delivery, and low-level CPU state. A contract that only saves and restores registers is insufficient.

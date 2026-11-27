@@ -23,7 +23,11 @@ The project target is native hosted-XNU on x86_64 Linux PCs, targeting macOS Tah
 
 ## Native x86_64 hosted-XNU work status
 
-Native x86_64 hosting of Tahoe 26.7.3 is the project target; direct ARM64 hosting of macOS 27 remains preserved. PR #48 builds the x86_64 FKI host backend, #47 keeps the x86_64 XNU target fail-closed, and #78 adds bounded, read-only Mach-O metadata parsing. These milestones do not execute XNU. Native runtime, physical Intel/AMD boots, host-integrity checks, and guest shutdown remain pending.
+Native x86_64 hosting of Tahoe 26.7.3 is the project target; direct ARM64 hosting of macOS 27 remains preserved. PR #48 builds the x86_64 FKI host backend, #47 keeps the x86_64 XNU target fail-closed, and #78 adds bounded, read-only Mach-O metadata parsing. These milestones do not execute XNU, and the native runtime remains fail-closed (`fki_caps()==0`; `xnu.ko` returns `-EOPNOTSUPP`).
+
+PR #144's disposable [QEMU TCG run #7](https://github.com/Personed/liXNU/actions/runs/46027708857) passed controlled `#PF` and segment-load `#GP` recovery on both vCPUs. The workflow ran on an Ubuntu 24.04 GitHub Actions runner and booted a Linux 7.0.0-44 VM with two QEMU vCPUs. It checked the expected error codes (`0` and `0xfff8`), GPR/DS/IDTR/RSP recovery, post-recovery syscalls on each vCPU, test-module cleanup, and normal Linux VM power-off. This boundary probe does not enter XNU, test NMI, validate Linux host integrity during XNU execution, or demonstrate macOS guest shutdown.
+
+Physical Intel and AMD x86-64 acceptance remain untested. No native minimum CPU, RAM, or Linux kernel requirements have been measured. Keep the two hardware profiles separate and record those requirements from full native-route tests before making support claims.
 
 ## Direct ARM64 hosted-XNU profiles
 

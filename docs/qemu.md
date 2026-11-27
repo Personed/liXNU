@@ -94,13 +94,27 @@ then loads FKI/XNU and reaches the PureDarwin console. It is separate from the U
 installer-based Linux VM above. It does not require VT-x or AMD-V.
 
 For the exact tested input set, check out PR #98 head
-[`589c40e`](https://github.com/Personed/xnulinux/commit/589c40ead54a63946fb44e8bdb35eb6add9adffe), then download and extract the paired
+[`589c40e`](https://github.com/Personed/xnulinux/commit/589c40ead54a63946fb44e8bdb35eb6add9adffe).
+From a clone of this repository, fetch that pull request and check out the tested revision:
+
+```sh
+git fetch origin pull/98/head:refs/remotes/origin/pr-98
+git checkout --detach 589c40ead54a63946fb44e8bdb35eb6add9adffe
+```
+
+Download and extract the paired
 [`puredarwin-e2e-guest` artifact](https://github.com/Personed/xnulinux/actions/runs/45911026412/artifacts/15161900498) and
 [`puredarwin-e2e-disk` artifact](https://github.com/Personed/xnulinux/actions/runs/45911026412/artifacts/15161666268) from [run #158](https://github.com/Personed/xnulinux/actions/runs/45911026412).
-Both artifacts expire on 2026-12-27. Keep the artifacts from that run paired.
-The guest archive contains `Image`, `initramfs.cpio.gz`,
-`guest-manifest.txt`, and `build-manifest.txt`; the disk archive contains
-`pd.img`. The three boot inputs have these SHA-256 values:
+Both artifacts expire on 2026-12-27. You can download them in the browser or with GitHub CLI:
+
+```sh
+gh run download 45911026412 --repo Personed/xnulinux --name puredarwin-e2e-guest --dir artifacts/guest
+gh run download 45911026412 --repo Personed/xnulinux --name puredarwin-e2e-disk --dir artifacts/disk
+```
+
+Keep the artifacts from that run paired. The guest archive contains `Image`,
+`initramfs.cpio.gz`, `guest-manifest.txt`, and `build-manifest.txt`;
+the disk archive contains `pd.img`. The three boot inputs have these SHA-256 values:
 
 | Input | SHA-256 |
 | --- | --- |
@@ -114,13 +128,15 @@ Install QEMU system ARM emulation 8.2 or later and Python 3. On Ubuntu or Debian
 sudo apt-get install qemu-system-arm python3 coreutils util-linux
 ```
 
-Extract the artifacts so that you can refer to their `Image`, `initramfs.cpio.gz`,
-and `pd.img` paths. Verify their hashes against the table above, then copy the disk
-so the source artifact remains unchanged. Replace the paths with the extracted files:
+Run the download commands from the repository root; they extract the files under `artifacts/guest` and `artifacts/disk`. The command below verifies the three hashes from run #158, then copies the disk so the source artifact remains unchanged.
 
 ```sh
-sha256sum /path/to/Image /path/to/initramfs.cpio.gz /path/to/pd.img
-cp /path/to/pd.img /path/to/pd-tcg-test.img
+sha256sum --check - <<'EOF'
+02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6  artifacts/guest/Image
+fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667  artifacts/guest/initramfs.cpio.gz
+7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f  artifacts/disk/pd.img
+EOF
+cp artifacts/disk/pd.img artifacts/disk/pd-tcg-test.img
 python3 tests/puredarwin/run-tcg-e2e.py \
   --timeout-seconds 5400 \
   --qemu-memory 6G \
@@ -130,10 +146,10 @@ python3 tests/puredarwin/run-tcg-e2e.py \
   --fki-carve-mb 3072 \
   --xnu-ram-mb 2816 \
   --max-rss-mib 6144 \
-  /path/to/Image \
-  /path/to/initramfs.cpio.gz \
-  /path/to/pd-tcg-test.img \
-  /path/to/puredarwin-tcg-serial.log
+  artifacts/guest/Image \
+  artifacts/guest/initramfs.cpio.gz \
+  artifacts/disk/pd-tcg-test.img \
+  artifacts/disk/puredarwin-tcg-serial.log
 ```
 
 The manifest-aware validation script and optional exact-hash guard are in

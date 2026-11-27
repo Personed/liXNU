@@ -473,12 +473,15 @@ static int bp_task_continuation_owner_thread(void *data)
 		WRITE_ONCE(test->owner_wait_started, true);
 		WRITE_ONCE(test->owner_first_wait_attempted, true);
 		if (test->test_case == BP_CONT_TIMEOUT_REPLY) {
+			unsigned long reply_nvcsw_before;
+
 			/* Time the reply only after the contention check. */
 			if (!wait_for_completion_timeout(&test->contender_checked,
 							 msecs_to_jiffies(BP_CONT_WATCHDOG_MS))) {
 				ret = -ETIMEDOUT;
 				goto out;
 			}
+			reply_nvcsw_before = current->nvcsw;
 			waited = wait_for_completion_timeout(&test->reply_ready,
 							 msecs_to_jiffies(BP_CONT_TIMEOUT_MS));
 			if (waited) {
@@ -486,7 +489,7 @@ static int bp_task_continuation_owner_thread(void *data)
 				goto out;
 			}
 			test->owner_nvcsw_after = current->nvcsw;
-			if (test->owner_nvcsw_after <= test->owner_nvcsw_before) {
+			if (test->owner_nvcsw_after <= reply_nvcsw_before) {
 				ret = -EUCLEAN;
 				goto out;
 			}

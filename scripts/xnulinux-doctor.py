@@ -137,11 +137,12 @@ def linux_cpu_info(path="/proc/cpuinfo"):
 
 
 def linux_kernel_config_facts(release, proc_config_path="/proc/config.gz", boot_config_dir="/boot"):
-    """Hash the running Linux kernel config, preferring its proc gzip export.
+    """Hash the Linux config bytes, preferring the running kernel's gzip export.
 
-    The gzip stream is decompressed before hashing so the digest identifies the
-    canonical .config bytes rather than gzip metadata. If no readable config is
-    available, the returned status is "unavailable" and the hash/source are null.
+    The /boot fallback identifies a file associated with the kernel release,
+    which can be shared by multiple kernel builds. The digest covers the plain
+    .config bytes. If there is no readable, nonblank config, the status is
+    "unavailable" and the hash and source are null.
     """
     candidates = [(proc_config_path, True)]
     if release and os.path.basename(release) == release:
@@ -156,6 +157,8 @@ def linux_kernel_config_facts(release, proc_config_path="/proc/config.gz", boot_
                 with open(path, "rb") as config_file:
                     config = config_file.read()
         except (OSError, EOFError, zlib.error):
+            continue
+        if not config.strip():
             continue
         return {
             "status": "available",

@@ -15,6 +15,7 @@
 #include <linux/uaccess.h>
 #include <linux/workqueue.h>
 #include <asm/cpufeature.h>
+#include <asm/desc.h>
 #include <asm/fpu/api.h>
 #include <asm/msr-index.h>
 #include <asm/msr.h>
@@ -57,11 +58,20 @@ struct bp_host_snapshot {
 	unsigned long stack_end;
 	unsigned long rsp;
 	unsigned long rflags;
+	unsigned long cr0;
 	unsigned long cr3;
+	unsigned long cr4;
+	u64 efer;
 	u64 fs_base;
 	u64 gs_base;
 	u64 kernel_gs_base;
 	u64 xcr0;
+	unsigned long gdt_base;
+	unsigned long idt_base;
+	unsigned int gdt_limit;
+	unsigned int idt_limit;
+	unsigned int ldt;
+	unsigned int tr;
 	unsigned int preempt_count;
 	bool irq_disabled;
 };
@@ -98,6 +108,7 @@ static int bp_read_xcr0(u64 *xcr0)
 
 static noinline int bp_snapshot(struct bp_host_snapshot *snapshot)
 {
+	struct desc_ptr gdt, idt;
 	unsigned long flags;
 	u32 low, high;
 	int err;
@@ -111,7 +122,18 @@ static noinline int bp_snapshot(struct bp_host_snapshot *snapshot)
 	snapshot->rflags = flags;
 	snapshot->preempt_count = preempt_count();
 	snapshot->irq_disabled = irqs_disabled();
+	snapshot->cr0 = read_cr0();
 	snapshot->cr3 = __read_cr3();
+	snapshot->cr4 = __read_cr4();
+	native_store_gdt(&gdt);
+	store_idt(&idt);
+	snapshot->ldt = 0;
+	store_ldt(snapshot->ldt);
+	store_tr(snapshot->tr);
+	snapshot->gdt_base = gdt.address;
+	snapshot->gdt_limit = gdt.size;
+	snapshot->idt_base = idt.address;
+	snapshot->idt_limit = idt.size;
 	err = bp_read_xcr0(&snapshot->xcr0);
 	if (err)
 		return err;
@@ -124,6 +146,9 @@ static noinline int bp_snapshot(struct bp_host_snapshot *snapshot)
 	if (rdmsr_safe(MSR_KERNEL_GS_BASE, &low, &high))
 		return -EIO;
 	snapshot->kernel_gs_base = ((u64)high << 32) | low;
+	if (rdmsr_safe(MSR_EFER, &low, &high))
+		return -EIO;
+	snapshot->efer = ((u64)high << 32) | low;
 	return 0;
 }
 
@@ -139,6 +164,13 @@ static bool bp_snapshots_match(const struct bp_host_snapshot *before,
 	       before->preempt_count == after->preempt_count &&
 	       before->irq_disabled == after->irq_disabled &&
 	       before->xcr0 == after->xcr0 &&
+	       before->cr0 == after->cr0 && before->cr4 == after->cr4 &&
+	       before->efer == after->efer &&
+	       before->gdt_base == after->gdt_base &&
+	       before->gdt_limit == after->gdt_limit &&
+	       before->idt_base == after->idt_base &&
+	       before->idt_limit == after->idt_limit &&
+	       before->ldt == after->ldt && before->tr == after->tr &&
 	       ((before->rflags ^ after->rflags) & BP_RFLAGS_CONTROL) == 0 &&
 	       before->cr3 == after->cr3 &&
 	       (before->cr3 & page_table_address_mask) ==

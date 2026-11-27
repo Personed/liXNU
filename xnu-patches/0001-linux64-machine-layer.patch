@@ -4070,6 +4070,9 @@ index a17a07d..81e5f76 100644
  
  	/* call the generic etimer */
  	timer_intr(user_mode, pc);
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
 @@ -709,5 +725,6 @@
  }
 +#define write_pte_fast(ptep, pte) \

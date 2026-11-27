@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,8 @@ OPENCORE_COMMIT = "ebea824880706ac9faa8ee45604245de62be658b"
 OPENCORE_URL = "https://github.com/acidanthera/OpenCorePkg.git"
 BOARD_ID = "Mac-CFF7D910A743CAAF"
 MLB = "00000000000000000"
+TARGET_RUNTIME_VERSION = "26.7.2"
+XNU_RELEASE_PATTERN = re.compile(rb"xnu-([0-9]+\.[0-9]+\.[0-9]+(?:~[0-9]+)?)/RELEASE_X86_64\b")
 
 
 def run(command: list[str], *, timeout: int = 300) -> subprocess.CompletedProcess[str]:
@@ -62,6 +65,62 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def resolve_image_target(path: Path, mount: Path) -> Path | None:
+    """Resolve a path as it appears inside the mounted image, never on the host."""
+    try:
+        if path.is_symlink():
+            raw_target = os.readlink(path)
+            target = mount / raw_target.lstrip("/") if raw_target.startswith("/") else path.parent / raw_target
+        else:
+            target = path
+        resolved = target.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+
+    image_root = mount.resolve()
+    if resolved != image_root and image_root not in resolved.parents:
+        return None
+    return resolved
+
+
+def walk_image_entries(mount: Path, link_counts: dict[str, int]):
+    """Walk the mounted image and follow only symlinks that stay inside it."""
+    image_root = mount.resolve()
+    pending: list[tuple[Path, Path, frozenset[Path]]] = [
+        (mount, image_root, frozenset({image_root}))
+    ]
+    while pending:
+        logical_directory, actual_directory, ancestors = pending.pop()
+        try:
+            children = sorted(actual_directory.iterdir(), key=lambda item: item.name, reverse=True)
+        except OSError:
+            continue
+        for actual_child in children:
+            logical_child = logical_directory / actual_child.name
+            if actual_child.is_symlink():
+                target = resolve_image_target(actual_child, mount)
+                if target is None:
+                    link_counts["outside_or_unresolved"] += 1
+                    continue
+                if target.is_dir():
+                    if target in ancestors:
+                        link_counts["directory_cycles_skipped"] += 1
+                        continue
+                    link_counts["directories_followed"] += 1
+                    pending.append((logical_child, target, ancestors | {target}))
+                    continue
+                if target.is_file():
+                    link_counts["files_followed"] += 1
+                    yield logical_child, target
+                    continue
+                continue
+            if actual_child.is_dir():
+                resolved_child = actual_child.resolve()
+                pending.append((logical_child, resolved_child, ancestors | {resolved_child}))
+            elif actual_child.is_file():
+                yield logical_child, actual_child
+
+
 def host_metadata() -> dict[str, Any]:
     result: dict[str, Any] = {"platform": platform.platform(), "machine": platform.machine()}
     sw_vers = shutil.which("sw_vers")
@@ -80,7 +139,11 @@ def inspect_mounted_image(mount: Path, image: Path) -> dict[str, Any]:
         "image_sha256": sha256(image),
         "system_product_version": None,
         "system_product_build": None,
+        "recovery_matches_runtime_goal": False,
         "xnu_version": None,
+        "xnu_version_candidates": [],
+        "xnu_version_source": None,
+        "system_kext_bundle_version": None,
         "kernel_artifacts": [],
         "kernel_search_roots": [],
         "trustcache_api_headers": [],
@@ -93,6 +156,9 @@ def inspect_mounted_image(mount: Path, image: Path) -> dict[str, Any]:
             version = plistlib.load(source)
         result["system_product_version"] = version.get("ProductVersion")
         result["system_product_build"] = version.get("ProductBuildVersion")
+        result["recovery_matches_runtime_goal"] = (
+            result["system_product_version"] == TARGET_RUNTIME_VERSION
+        )
 
     for system_kext in (
         mount / "System/Library/Extensions/System.kext/Info.plist",
@@ -101,11 +167,18 @@ def inspect_mounted_image(mount: Path, image: Path) -> dict[str, Any]:
         if system_kext.is_file():
             with system_kext.open("rb") as source:
                 metadata = plistlib.load(source)
-            result["xnu_version"] = metadata.get("CFBundleVersion")
+            result["system_kext_bundle_version"] = metadata.get("CFBundleVersion")
             break
 
     trusted_headers: list[str] = []
     kernel_artifacts: list[dict[str, Any]] = []
+    xnu_version_candidates: set[str] = set()
+    link_counts = {
+        "directories_followed": 0,
+        "files_followed": 0,
+        "directory_cycles_skipped": 0,
+        "outside_or_unresolved": 0,
+    }
     kernel_names = {
         "kernel",
         "mach_kernel",
@@ -115,32 +188,36 @@ def inspect_mounted_image(mount: Path, image: Path) -> dict[str, Any]:
         "bootkernelextensions.kc",
         "systemkernelextensions.kc",
     }
-    for root, dirs, files in os.walk(mount):
-        directory = Path(root)
-        if directory.name == "TrustCache" and "API.h" in files:
-            trusted_headers.append(str((directory / "API.h").relative_to(mount)))
-        for name in files + dirs:
-            relative_path = (directory / name).relative_to(mount)
-            in_kernel_collection_dir = "KernelCollections" in relative_path.parts
-            if name.lower() not in kernel_names and not (in_kernel_collection_dir and name.lower().endswith(".kc")):
-                continue
-            path = directory / name
-            try:
-                item: dict[str, Any] = {
-                    "path": str(relative_path),
-                    "entry_type": "symlink" if path.is_symlink() else "directory" if path.is_dir() else "file",
-                }
-                if path.is_file():
-                    item["bytes"] = path.stat().st_size
-                    item["sha256"] = sha256(path)
-                    file_tool = shutil.which("file")
-                    if file_tool:
-                        description = run([file_tool, "-b", str(path)])
-                        if description.returncode == 0:
-                            item["file_type"] = description.stdout.strip()
-                kernel_artifacts.append(item)
-            except OSError:
-                continue
+    for logical_path, actual_path in walk_image_entries(mount, link_counts):
+        relative_path = logical_path.relative_to(mount)
+        if logical_path.name == "API.h" and logical_path.parent.name == "TrustCache":
+            trusted_headers.append(str(relative_path))
+        in_kernel_collection_dir = "KernelCollections" in relative_path.parts
+        if logical_path.name.lower() not in kernel_names and not (
+            in_kernel_collection_dir and logical_path.name.lower().endswith(".kc")
+        ):
+            continue
+        try:
+            item: dict[str, Any] = {
+                "path": str(relative_path),
+                "resolved_path": str(actual_path.relative_to(mount)),
+                "entry_type": "symlink" if logical_path.is_symlink() else "file",
+                "bytes": actual_path.stat().st_size,
+                "sha256": sha256(actual_path),
+            }
+            file_tool = shutil.which("file")
+            if file_tool:
+                description = run([file_tool, "-b", str(actual_path)])
+                if description.returncode == 0:
+                    item["file_type"] = description.stdout.strip()
+            if logical_path.name == "BootKernelExtensions.kc":
+                xnu_version_candidates.update(
+                    match.decode("ascii")
+                    for match in XNU_RELEASE_PATTERN.findall(actual_path.read_bytes())
+                )
+            kernel_artifacts.append(item)
+        except OSError:
+            continue
 
     for relative_root in (
         Path("System/Library/Kernels"),
@@ -149,17 +226,18 @@ def inspect_mounted_image(mount: Path, image: Path) -> dict[str, Any]:
         Path("System/Library/Extensions/System.kext"),
     ):
         root = mount / relative_root
-        if not root.exists():
+        actual_root = resolve_image_target(root, mount)
+        if actual_root is None:
             state = "absent"
             entries: list[dict[str, str]] = []
-        elif root.is_dir():
+        elif actual_root.is_dir():
             state = "directory"
             entries = [
                 {
                     "name": entry.name,
                     "entry_type": "symlink" if entry.is_symlink() else "directory" if entry.is_dir() else "file",
                 }
-                for entry in sorted(root.iterdir(), key=lambda item: item.name)[:100]
+                for entry in sorted(actual_root.iterdir(), key=lambda item: item.name)[:100]
             ]
         else:
             state = "file"
@@ -169,6 +247,11 @@ def inspect_mounted_image(mount: Path, image: Path) -> dict[str, Any]:
         )
 
     result["kernel_artifacts"] = kernel_artifacts
+    result["mounted_symlinks_followed"] = link_counts
+    result["xnu_version_candidates"] = sorted(xnu_version_candidates)
+    if len(xnu_version_candidates) == 1:
+        result["xnu_version"] = next(iter(xnu_version_candidates))
+        result["xnu_version_source"] = "BootKernelExtensions.kc"
     result["trustcache_api_headers"] = sorted(set(trusted_headers))
     result["trustcache_api_header_present"] = bool(trusted_headers)
     return result
@@ -188,7 +271,10 @@ def main() -> int:
         "opencore_commit": OPENCORE_COMMIT,
         "board_id": BOARD_ID,
         "os_selector": "latest",
-        "target_runtime_goal": "macOS Tahoe 26.7.1",
+        "target_runtime_goal": f"macOS Tahoe {TARGET_RUNTIME_VERSION}",
+        "catalog_transport": "HTTP (OpenCore Internet Recovery protocol)",
+        "catalog_selection_authenticated": False,
+        "recovery_product_identity_verified": False,
         "host": host_metadata(),
         "recovery_image_uploaded": False,
         "kdk_supplied": False,

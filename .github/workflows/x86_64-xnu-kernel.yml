@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# The x86 runtime goal is Tahoe 26.7.1. The newest public XNU source is 26.5;
-# artifacts from this workflow are source-build evidence only, not 26.7.1 runtime proof.
+# The x86 runtime goal is Tahoe 26.7.2. The newest public XNU source is 26.5;
+# artifacts from this workflow are source-build evidence only, not 26.7.2 runtime proof.
 name: x86_64 XNU source build
 on:
   pull_request:
@@ -40,6 +40,23 @@ jobs:
           xcodebuild -version
           xcrun --find clang
           xcrun --find ld
+      - name: Record Apple's current full-installer catalog
+        shell: bash
+        run: |
+          catalog="$RUNNER_TEMP/apple-full-installers.txt"
+          set +e
+          softwareupdate --list-full-installers > "$catalog" 2>&1
+          status=$?
+          set -e
+          echo "softwareupdate exit code: $status"
+          python3 - "$catalog" <<'PY'
+          from pathlib import Path
+          import sys
+
+          lines = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").splitlines()
+          matches = [line for line in lines if "Title: macOS Tahoe" in line]
+          print("\n".join(matches) if matches else "No Tahoe installer rows in catalog output.")
+          PY
       - name: Test read-only --check diagnostic workspace
         run: bash scripts/x86_64/xnu-trustcache-scan-workspace.sh --self-test
       - name: Build pinned XNU for x86_64
@@ -66,7 +83,7 @@ jobs:
           assert manifest["build_process_translated"] is False, manifest
           assert manifest["target_architecture"] == "x86_64", manifest
           assert manifest["architecture"] == "x86_64", manifest
-          assert manifest["runtime_target_os_version"] == "26.7.1", manifest
+          assert manifest["runtime_target_os_version"] == "26.7.2", manifest
           assert manifest["runtime_compatibility_verified"] is False, manifest
           assert manifest["kernel_source_runtime_match"] is False, manifest
           assert manifest["xnu_source_release"] == "26.5", manifest
@@ -147,6 +164,7 @@ jobs:
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/kdk-preflight.log
             ${{ runner.temp }}/xnulinux-x86_64-xnu/trustcache-sdk-header-candidates.txt
             ${{ runner.temp }}/xnulinux-x86_64-xnu/trustcache-sdk-header-scan-errors.log
+            ${{ runner.temp }}/apple-full-installers.txt
           if-no-files-found: ignore
           retention-days: 5
   cross-build-on-arm64-host:
@@ -207,7 +225,7 @@ jobs:
           assert manifest["build_process_translated"] is False, manifest
           assert manifest["target_architecture"] == "x86_64", manifest
           assert manifest["architecture"] == "x86_64", manifest
-          assert manifest["runtime_target_os_version"] == "26.7.1", manifest
+          assert manifest["runtime_target_os_version"] == "26.7.2", manifest
           assert manifest["runtime_compatibility_verified"] is False, manifest
           assert manifest["kernel_source_runtime_match"] is False, manifest
           assert manifest["xnu_source_release"] == "26.5", manifest

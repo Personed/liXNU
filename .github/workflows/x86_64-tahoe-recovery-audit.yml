@@ -1,0 +1,30 @@
+name: Tahoe Internet Recovery audit
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/x86_64-tahoe-recovery-audit.yml"
+      - "scripts/x86_64/audit-tahoe-recovery.py"
+      - "tools/dev/x86_64/xnu-fileset-metadata.c"
+      - "xnu-ko/macho_parse_x86_64.c"
+      - "xnu-ko/macho_parse_x86_64.h"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-official-recovery:
+    runs-on: macos-26-intel
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit the signed Intel Recovery image
+        run: python3 scripts/x86_64/audit-tahoe-recovery.py "$RUNNER_TEMP/tahoe-recovery-audit.json"
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: tahoe-recovery-audit-${{ github.sha }}
+          path: ${{ runner.temp }}/tahoe-recovery-audit.json
+          if-no-files-found: error
+          retention-days: 5

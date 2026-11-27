@@ -39,6 +39,14 @@ PR #89 run [#151](https://github.com/Personed/xnulinux/actions/runs/45904189412)
 
 PR #98 run [#158](https://github.com/Personed/xnulinux/actions/runs/45911026412) completed image build, disk/collection build, guest preparation, and all three 6 GiB host boot jobs successfully. The jobs used QEMU 8.2.2 on Ubuntu and QEMU 11.1.0 on Windows/macOS, all with `cortex-a710`; each reached the PureDarwin console, guest halt, XNU/FKI unload, Linux power-off, and QEMU exit 0. This is one hosted-runner pass per OS on head `589c40e` atop #89's older `3fbfa6a` chain. It validates that tested profile but neither isolates S1PIE causality nor exercises the PIE-enabled `-cpu max` path; PR #102's correction and a current-chain PIE=1 rerun remain outstanding.
 
+All three run #158 boot logs record identical input SHA-256 values: ARM64 image
+`02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6`, initramfs
+`fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667`, and PureDarwin disk
+`7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f`. The same hashes appear in the Ubuntu
+[#158 boot log](https://github.com/Personed/xnulinux/actions/runs/45911026412/job/140229870570), Windows
+[#158 boot log](https://github.com/Personed/xnulinux/actions/runs/45911026412/job/140229870588), and Intel macOS
+[#158 boot log](https://github.com/Personed/xnulinux/actions/runs/45911026412/job/140229870640).
+
 PR #83 run [#149](https://github.com/Personed/xnulinux/actions/runs/45902502697), head `07d08c5`, independently passed the 6 GiB route on a hosted Ubuntu x86-64 VM with QEMU 8.2.2. Host `MemTotal` was 16,078,424 kB and `MemAvailable` was 14,784,852 kB before QEMU. The profile used Linux `mem=2G`, a 3,072 MiB FKI carve-out at `0xc0000000`, and 2,816 MiB XNU RAM; peak QEMU RSS was 3,843,952 KiB (3.67 GiB). The boot reached the PureDarwin console and completed guest halt, XNU/FKI unload, Linux power-off, and QEMU exit 0. This is a second hosted-runner measurement of the 6 GiB profile, not a physical host-RAM floor.
 
 

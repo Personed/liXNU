@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Read-only MH_FILESET metadata for the Intel Recovery audit. */
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE 1 /* expose O_NOFOLLOW in Darwin's fcntl.h */
+#else
 #define _POSIX_C_SOURCE 200809L
+#endif
 
 #include <fcntl.h>
 #include <inttypes.h>

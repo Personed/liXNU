@@ -184,9 +184,9 @@ python3 tests/puredarwin/run-tcg-e2e.py \
 
 
 On Windows PowerShell, install QEMU, add its executable directory to the current session's
-`PATH`, and confirm the QEMU binary is available. Install Python 3 with the Python launcher
-if `py -3 --version` is not already available. The following commands use the same extracted
-artifact directories:
+`PATH`, and confirm the QEMU binary is available. Install Python 3.9 or newer with the
+Python launcher. Run `py -3 --version` and confirm that it reports 3.9 or newer before
+starting the script. The following commands use the same extracted artifact directories:
 
 ```powershell
 $env:Path += ";$env:ProgramFiles\qemu"

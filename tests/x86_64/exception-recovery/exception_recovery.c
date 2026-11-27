@@ -264,6 +264,8 @@ static_assert(offsetof(struct er_asm_control, result_ss) == ER_OFF_RESULT_SS);
 static_assert(offsetof(struct er_asm_control, expected_rax) == ER_OFF_EXPECTED_RAX);
 static_assert(offsetof(struct er_asm_control, saved_ds) == ER_OFF_SAVED_DS);
 static_assert(sizeof(struct er_asm_control) == 368);
+static_assert(ER_SENTINEL_R11 != 0,
+	      "R11 sentinel must differ from the expected #GP CR2 value");
 static_assert(offsetof(struct er_gpr_scratch, rax) == ER_SCRATCH_RAX);
 static_assert(offsetof(struct er_gpr_scratch, r15) == ER_SCRATCH_R15);
 static_assert(offsetof(struct er_gpr_scratch, rflags) == ER_SCRATCH_FLAGS);
@@ -500,6 +502,12 @@ static long er_run_on_cpu(void *argument)
 	ret = er_check_fault_address(control->fault_address);
 	if (ret)
 		goto out_restore;
+	if (work->request.vector == X86_EXCEPTION_RECOVERY_PF &&
+	    control->fault_address == ER_SENTINEL_R11) {
+		pr_err("x86-exception-recovery: not-run, R11 sentinel matches expected CR2\n");
+		ret = -EOPNOTSUPP;
+		goto out_restore;
+	}
 	if (work->request.vector == X86_EXCEPTION_RECOVERY_GP) {
 		/* SGDT must prove selector 0xfff8 is beyond this CPU's GDT limit. */
 		native_store_gdt(&current_gdt);

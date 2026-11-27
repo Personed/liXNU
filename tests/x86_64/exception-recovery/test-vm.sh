@@ -105,6 +105,7 @@ test ! -e /dev/x86-boundary-probe
 
 insmod /x86-exception-recovery.ko
 /exception-recovery-test 0
+/exception-recovery-test 1
 rmmod x86_exception_recovery
 test ! -e /sys/module/x86_exception_recovery
 test ! -e /dev/x86-exception-recovery
@@ -156,6 +157,9 @@ for marker in \
   'X86_EXCEPTION_RECOVERY_CASE cpu=0 vector=14 rip=0x' \
   'X86_EXCEPTION_RECOVERY_CASE cpu=0 vector=13 rip=0x' \
   'X86_EXCEPTION_RECOVERY_PASS cpu=0 pf=passed gp=passed syscalls=passed' \
+  'X86_EXCEPTION_RECOVERY_CASE cpu=1 vector=14 rip=0x' \
+  'X86_EXCEPTION_RECOVERY_CASE cpu=1 vector=13 rip=0x' \
+  'X86_EXCEPTION_RECOVERY_PASS cpu=1 pf=passed gp=passed syscalls=passed' \
   'X86_EXCEPTION_RECOVERY_VM_PASS' \
   'reboot: Power down'; do
   grep -Fq "$marker" "$LOG" || {

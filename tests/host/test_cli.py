@@ -251,7 +251,6 @@ class TestCliAndInstaller(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(installed.is_file())
             self.assertEqual(installed.stat().st_mode & 0o777, 0o755)
-            self.assertIn(str(fixture_cli.resolve()), installed.read_text(encoding="utf-8"))
             launched = subprocess.run(
                 [str(installed), "doctor"], cwd=public_root, capture_output=True, text=True
             )

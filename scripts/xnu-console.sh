@@ -31,10 +31,17 @@ fi
 SED_FILTER='s/\r//g; s/^\[ *[0-9.]*\] .*fki: darwin console: //p; t; s/^\[ *[0-9.]*\] fki: darwin console: //p; t; s/^fki: darwin console: //p'
 
 if [ "$MODE" = local ]; then
-  # Prefer journalctl -k -f when systemd-journald is running: util-linux dmesg
-  # (/dev/kmsg) can stop delivering records after a flood of XNU output while
-  # journald keeps receiving them (see scripts/vm-dmesg-shell.sh).
+  # Prefer journalctl -k -f when systemd-journald is running and actually
+  # collecting kernel messages (not ReadKMsg=no): util-linux dmesg (/dev/kmsg)
+  # can stop delivering records after a flood of XNU output while journald keeps
+  # receiving them (see scripts/vm-dmesg-shell.sh).
+  JOURNAL_HAS_KMSG=0
   if command -v journalctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    if [ -n "$( (sudo journalctl -k -n 1 -q --no-pager 2>/dev/null || journalctl -k -n 1 -q --no-pager 2>/dev/null) | head -c 1)" ]; then
+      JOURNAL_HAS_KMSG=1
+    fi
+  fi
+  if [ "$JOURNAL_HAS_KMSG" = 1 ]; then
     (sudo journalctl -k -f -n 0 -q -o short-monotonic --no-pager 2>/dev/null ||
       journalctl -k -f -n 0 -q -o short-monotonic --no-pager) | sed -un "$SED_FILTER" &
   elif command -v dmesg >/dev/null 2>&1; then

@@ -127,6 +127,57 @@ class TestXnuVnc(unittest.TestCase):
             self.assertIn((xnu_vnc.EV_KEY, xnu_vnc.BTN_LEFT, 0), events)
             self.assertIn((xnu_vnc.EV_KEY, 30, 0), events)
 
+    def test_big_endian_conversion(self):
+        red_bgra = bytes([0x00, 0x00, 0xFF, 0xFF])
+        # 16-bit big-endian RGB565 (R=255 -> 0xF800 -> b"\xF8\x00")
+        rgb565_be = xnu_vnc.bgra_to_pixel_bytes(red_bgra, 16, 1, 11, 5, 0, 1, 31, 63, 31)
+        self.assertEqual(rgb565_be, b"\xf8\x00")
+        # 32-bit big-endian XRGB (red_shift=16, green_shift=8, blue_shift=0 -> b"\x00\xFF\x00\x00")
+        xrgb_be = xnu_vnc.bgra_to_pixel_bytes(red_bgra, 32, 1, 16, 8, 0, 1, 255, 255, 255)
+        self.assertEqual(xrgb_be, b"\x00\xff\x00\x00")
+
+    def test_console_local_falls_back_when_journal_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = pathlib.Path(tmp) / "bin"
+            bin_dir.mkdir()
+            console_in = pathlib.Path(tmp) / "console-in"
+            console_in.touch()
+
+            # Stub sudo, journalctl (returns empty, simulating ReadKMsg=no), and dmesg
+            (bin_dir / "sudo").write_text('#!/bin/sh\nexec "$@"\n', encoding="utf-8")
+            (bin_dir / "journalctl").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            (bin_dir / "dmesg").write_text(
+                '#!/bin/sh\nprintf "[    1.234567] fki: darwin console: fallback-ok\\r\\n"\n',
+                encoding="utf-8",
+            )
+            for name in ("sudo", "journalctl", "dmesg"):
+                os.chmod(bin_dir / name, 0o755)
+
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "CONSOLE_IN": str(console_in),
+            }
+            proc = subprocess.Popen(
+                ["bash", str(ROOT / "scripts" / "xnu-console.sh"), "--local"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                text=True,
+            )
+            try:
+                line = proc.stdout.readline()
+                self.assertEqual(line.strip(), "fallback-ok")
+                proc.stdin.write("echo hi\n")
+                proc.stdin.close()
+                proc.wait(timeout=5)
+                self.assertEqual(proc.returncode, 0)
+            finally:
+                proc.stdout.close()
+                proc.stderr.close()
+            self.assertEqual(console_in.read_text(encoding="utf-8"), "echo hi\n")
+
 
 if __name__ == "__main__":
     unittest.main()

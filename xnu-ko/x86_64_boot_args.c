@@ -15,6 +15,9 @@
 #define XNU_X86_LAST_BOOT_PAGE (XNU_X86_U32_END - 4096U)
 #define XNU_X86_EFI_PAGE_SHIFT 12U
 #define XNU_X86_EFI_PAGE_MASK  ((1U << XNU_X86_EFI_PAGE_SHIFT) - 1)
+#define XNU_X86_ADT_MAX_DEPTH  32U
+#define XNU_X86_ADT_PROP_NAME 32U
+#define XNU_X86_ADT_NODE_NAME 64U
 
 /* A u32 physical base plus a u32 length may end exactly at 4 GiB. */
 static int pa_range_fits_u32(xnu_boot_u64 start, xnu_boot_u64 size)
@@ -105,6 +108,75 @@ int xnu_x86_boot_memory_map_validate(const struct xnu_x86_boot_args *args,
 			return -ERANGE;
 	}
 	return 0;
+}
+
+/* Flattened DeviceTreeNode and DeviceTreeNodeProperty from XNU's device_tree.h. */
+int xnu_x86_boot_device_tree_validate(const struct xnu_x86_boot_args *args,
+				      const void *tree, unsigned long tree_size)
+{
+	const unsigned char *bytes = tree;
+	xnu_boot_u32 pending[XNU_X86_ADT_MAX_DEPTH] = { 1 };
+	unsigned int depth = 1;
+	unsigned long offset = 0;
+	int err;
+
+	if (!tree)
+		return -EINVAL;
+	err = xnu_x86_boot_args_validate(args);
+	if (err)
+		return err;
+	if (tree_size != args->deviceTreeLength)
+		return -ENOEXEC;
+
+	while (depth) {
+		xnu_boot_u32 node[2];
+		xnu_boot_u32 i;
+		int has_name = 0;
+
+		if (!pending[depth - 1]) {
+			depth--;
+			continue;
+		}
+		pending[depth - 1]--;
+		if (tree_size - offset < sizeof(node))
+			return -ENOEXEC;
+		memcpy(node, bytes + offset, sizeof(node));
+		offset += sizeof(node);
+
+		for (i = 0; i < node[0]; i++) {
+			const unsigned char *name = bytes + offset;
+			xnu_boot_u32 length, padding;
+
+			if (tree_size - offset < XNU_X86_ADT_PROP_NAME + sizeof(length))
+				return -ENOEXEC;
+			if (!name[0] || !memchr(name, 0, XNU_X86_ADT_PROP_NAME))
+				return -ENOEXEC;
+			memcpy(&length, name + XNU_X86_ADT_PROP_NAME, sizeof(length));
+			offset += XNU_X86_ADT_PROP_NAME + sizeof(length);
+			padding = (4U - (length & 3U)) & 3U;
+			if (length > tree_size - offset ||
+			    padding > tree_size - offset - length)
+				return -ENOEXEC;
+
+			if (!memcmp(name, "name", sizeof("name"))) {
+				const unsigned char *value = bytes + offset;
+
+				if (has_name || !length || length > XNU_X86_ADT_NODE_NAME ||
+				    !value[0] || !memchr(value, 0, length))
+					return -ENOEXEC;
+				has_name = 1;
+			}
+			offset += (unsigned long)length + padding;
+		}
+		if (!has_name || node[1] > (tree_size - offset) / sizeof(node))
+			return -ENOEXEC;
+		if (node[1]) {
+			if (depth == XNU_X86_ADT_MAX_DEPTH)
+				return -EOPNOTSUPP;
+			pending[depth++] = node[1];
+		}
+	}
+	return offset == tree_size ? 0 : -ENOEXEC;
 }
 
 int xnu_x86_boot_args_build_core(struct xnu_x86_boot_args *out,

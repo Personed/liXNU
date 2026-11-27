@@ -261,6 +261,85 @@ static void test_efi_memory_map_page_indices(void)
 	assert(xnu_x86_boot_memory_map_validate(&args, map, 2 * STRIDE) == -ENOEXEC);
 }
 
+enum { ADT_TEST_NODE_SIZE = 48 };
+
+static void make_named_adt_node(unsigned char *dest, uint32_t children)
+{
+	uint32_t props = 1, length = 2;
+
+	memset(dest, 0, ADT_TEST_NODE_SIZE);
+	memcpy(dest, &props, sizeof(props));
+	memcpy(dest + 4, &children, sizeof(children));
+	memcpy(dest + 8, "name", sizeof("name"));
+	memcpy(dest + 40, &length, sizeof(length));
+	memcpy(dest + 44, "n", sizeof("n"));
+}
+
+static void test_device_tree_wire_format(void)
+{
+	struct xnu_x86_boot_args args;
+	struct xnu_x86_boot_args_core in = valid_input();
+	unsigned char storage[1 + 33 * ADT_TEST_NODE_SIZE];
+	unsigned char *tree = storage + 1;
+	uint32_t children, huge_length = UINT32_MAX;
+	unsigned int i;
+
+	in.device_tree_size = 2 * ADT_TEST_NODE_SIZE;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+	make_named_adt_node(tree, 1);
+	make_named_adt_node(tree + ADT_TEST_NODE_SIZE, 0);
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, in.device_tree_size) == 0);
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, in.device_tree_size - 1) == -ENOEXEC);
+	assert(xnu_x86_boot_device_tree_validate(&args, NULL, in.device_tree_size) == -EINVAL);
+
+	tree[45] = 'x';
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, in.device_tree_size) == -ENOEXEC);
+	make_named_adt_node(tree, 1);
+	memset(tree + 8, 'x', 32);
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, in.device_tree_size) == -ENOEXEC);
+	make_named_adt_node(tree, 1);
+	memcpy(tree + 40, &huge_length, sizeof(huge_length));
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, in.device_tree_size) == -ENOEXEC);
+	make_named_adt_node(tree, 0);
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, in.device_tree_size) == -ENOEXEC);
+
+	make_named_adt_node(tree, 1);
+	args.deviceTreeLength = ADT_TEST_NODE_SIZE - 1;
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, args.deviceTreeLength) == -ENOEXEC);
+
+	for (i = 0; i < 33; i++)
+		make_named_adt_node(tree + i * ADT_TEST_NODE_SIZE, i != 32);
+	args.deviceTreeLength = 33 * ADT_TEST_NODE_SIZE;
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, args.deviceTreeLength) == -EOPNOTSUPP);
+
+	children = 0;
+	memcpy(tree + 31 * ADT_TEST_NODE_SIZE + 4, &children, sizeof(children));
+	args.deviceTreeLength = 32 * ADT_TEST_NODE_SIZE;
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, args.deviceTreeLength) == 0);
+}
+
+static void test_device_tree_sibling_traversal(void)
+{
+	struct xnu_x86_boot_args args;
+	struct xnu_x86_boot_args_core in = valid_input();
+	unsigned char tree[4 * ADT_TEST_NODE_SIZE];
+	unsigned char *sibling = tree + 3 * ADT_TEST_NODE_SIZE;
+
+	in.device_tree_size = sizeof(tree);
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+
+	/* Root, first child, grandchild, then the second child of the root. */
+	make_named_adt_node(tree, 2);
+	make_named_adt_node(tree + ADT_TEST_NODE_SIZE, 1);
+	make_named_adt_node(tree + 2 * ADT_TEST_NODE_SIZE, 0);
+	make_named_adt_node(sibling, 0);
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, sizeof(tree)) == 0);
+
+	/* A malformed sibling must still be visited after the subtree is consumed. */
+	memset(sibling + 8, 'x', 32);
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, sizeof(tree)) == -ENOEXEC);
+}
+
 int main(void)
 {
 	test_valid_core_fields();
@@ -271,6 +350,8 @@ int main(void)
 	test_validator_rejects_u32_overflow();
 	test_reject_unsupported_or_malformed_output();
 	test_efi_memory_map_page_indices();
+	test_device_tree_wire_format();
+	test_device_tree_sibling_traversal();
 	puts("xnu x86 boot_args layout/validation fixtures passed");
 	return 0;
 }

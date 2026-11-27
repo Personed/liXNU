@@ -12,8 +12,8 @@ usage() {
 Usage: build-xnu-kernel.sh [--check]
 
 Build the latest publicly published Tahoe 26 XNU source as an x86_64 macOS
-development kernel. The runtime goal is Tahoe 26.6.2, but the latest published
-matching XNU source is 26.5; this artifact does not prove 26.6.2 compatibility.
+development kernel. The runtime goal is Tahoe 26.7.1, but the latest published
+matching XNU source is 26.5; this artifact does not prove 26.7.1 compatibility.
 Intel macOS is the native build target; Apple Silicon cross-build support is
 experimental until the CI probe produces and validates its artifact.
 The build uses pinned AvailabilityVersions, XNU, and libdispatch revisions
@@ -58,7 +58,7 @@ readonly AVAILABILITY_TAG='AvailabilityVersions-157.2'
 readonly KERNEL_VERSION='25.5.0'
 readonly SOURCE_VERSION='12377.121.6'
 readonly XNU_SOURCE_RELEASE='26.5'
-readonly RUNTIME_TARGET_VERSION='26.6.2'
+readonly RUNTIME_TARGET_VERSION='26.7.1'
 readonly SDK_VERSION='26.5'
 readonly XCODE_VERSION='26.6'
 readonly KDK_VERSION='26.5'

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# The x86 runtime goal is Tahoe 26.6.2. The newest public XNU source is 26.5;
-# artifacts from this workflow are source-build evidence only, not 26.6.2 runtime proof.
+# The x86 runtime goal is Tahoe 26.7.1. The newest public XNU source is 26.5;
+# artifacts from this workflow are source-build evidence only, not 26.7.1 runtime proof.
 name: x86_64 XNU source build
 on:
   pull_request:
@@ -66,7 +66,7 @@ jobs:
           assert manifest["build_process_translated"] is False, manifest
           assert manifest["target_architecture"] == "x86_64", manifest
           assert manifest["architecture"] == "x86_64", manifest
-          assert manifest["runtime_target_os_version"] == "26.6.2", manifest
+          assert manifest["runtime_target_os_version"] == "26.7.1", manifest
           assert manifest["runtime_compatibility_verified"] is False, manifest
           assert manifest["kernel_source_runtime_match"] is False, manifest
           assert manifest["xnu_source_release"] == "26.5", manifest
@@ -207,7 +207,7 @@ jobs:
           assert manifest["build_process_translated"] is False, manifest
           assert manifest["target_architecture"] == "x86_64", manifest
           assert manifest["architecture"] == "x86_64", manifest
-          assert manifest["runtime_target_os_version"] == "26.6.2", manifest
+          assert manifest["runtime_target_os_version"] == "26.7.1", manifest
           assert manifest["runtime_compatibility_verified"] is False, manifest
           assert manifest["kernel_source_runtime_match"] is False, manifest
           assert manifest["xnu_source_release"] == "26.5", manifest

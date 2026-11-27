@@ -94,10 +94,11 @@ export PATH=/bin
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
-read -r original_console_loglevel other_printk_levels < /proc/sys/kernel/printk
-test -n "$original_console_loglevel"
+original_console_loglevel=
 restore_console_loglevel() {
-	dmesg -n "$original_console_loglevel"
+	if [ -n "$original_console_loglevel" ]; then
+		dmesg -n "$original_console_loglevel"
+	fi
 }
 failure_cleanup() {
 	status=$?
@@ -113,6 +114,9 @@ failure_cleanup() {
 	exit "$status"
 }
 trap failure_cleanup EXIT
+# BusyBox read reads one byte at a time, which procfs sysctls may truncate.
+original_console_loglevel=$(cut -f1 /proc/sys/kernel/printk)
+test -n "$original_console_loglevel"
 
 insmod /fki.ko
 insmod /x86-boundary-probe.ko

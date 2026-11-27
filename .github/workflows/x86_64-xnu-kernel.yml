@@ -171,6 +171,7 @@ jobs:
           assert manifest["kernel_source_runtime_match"] is False, manifest
           assert manifest["xnu_source_release"] == "26.5", manifest
           assert len(manifest["xnu_source_compat_patch_sha256"]) == 64, manifest
+          assert manifest["xnu_source_compat_patch_sha256"] == hashlib.sha256(Path("scripts/x86_64/tahoe-xnu-pointer-casts.patch").read_bytes()).hexdigest(), manifest
           assert manifest["xnu_source_modified"] is True, manifest
           assert manifest["xnu_source_patch"] == "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch", manifest
           assert manifest["xnu_source_patch_sha256"] == hashlib.sha256(Path(manifest["xnu_source_patch"]).read_bytes()).hexdigest(), manifest
@@ -320,6 +321,7 @@ jobs:
           assert manifest["kernel_source_runtime_match"] is False, manifest
           assert manifest["xnu_source_release"] == "26.5", manifest
           assert len(manifest["xnu_source_compat_patch_sha256"]) == 64, manifest
+          assert manifest["xnu_source_compat_patch_sha256"] == hashlib.sha256(Path("scripts/x86_64/tahoe-xnu-pointer-casts.patch").read_bytes()).hexdigest(), manifest
           assert manifest["xnu_source_modified"] is True, manifest
           assert manifest["xnu_source_patch"] == "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch", manifest
           assert manifest["xnu_source_patch_sha256"] == hashlib.sha256(Path(manifest["xnu_source_patch"]).read_bytes()).hexdigest(), manifest

@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0-only
 import importlib.util
 import json
+import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("xnulinux_doctor", ROOT / "scripts" / "xnulinux-doctor.py")
@@ -41,6 +44,26 @@ class DoctorTest(unittest.TestCase):
             values = doctor.read_meminfo(str(path))
         self.assertEqual(values["MemTotal"], 16367500 * 1024)
         self.assertEqual(values["MemAvailable"], 14965924 * 1024)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_linux_cpu_facts_use_one_cpu_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cpuinfo"
+            path.write_text(
+                "processor : 0\nvendor_id : AuthenticAMD\nmodel name : Example AMD CPU\n"
+                "flags : fma avx2\n\nprocessor : 1\nflags : sse4_2\n",
+                encoding="utf-8",
+            )
+            cpu_info = doctor.linux_cpu_info(path)
+        with patch.object(doctor, "linux_cpu_info", return_value=cpu_info):
+            # Avoid running QEMU while testing independent Linux host facts.
+            with patch.object(doctor, "qemu_facts", return_value={}):
+                host = doctor.collect_facts()
+
+        self.assertEqual(host["linux_cpu_vendor"], "AuthenticAMD")
+        self.assertEqual(host["linux_cpu_model"], "Example AMD CPU")
+        self.assertEqual(host["linux_cpu_flags"], ["avx2", "fma"])
+        self.assertEqual(host["linux_page_size_bytes"], os.sysconf("SC_PAGE_SIZE"))
 
     def test_linux_x86_with_reference_qemu_passes(self):
         checks, overall = doctor.evaluate(facts())

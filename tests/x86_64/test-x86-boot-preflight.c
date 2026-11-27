@@ -13,14 +13,14 @@
 #define LARGE_BYTES XNU_X86_BOOT_PTD_LEAF_BYTES
 #define OWNED_PA 0x02000000ULL
 #define OWNED_BYTES (4 * LARGE_BYTES)
-#define IMAGE_PA (OWNED_PA + LARGE_BYTES)
+#define IMAGE_PA (OWNED_PA + 2 * LARGE_BYTES)
 #define IMAGE_BYTES 0x100000ULL
 #define BOOTSTRAP_BYTES 0x210000ULL
 #define FIRST_USABLE (IMAGE_PA + IMAGE_BYTES + BOOTSTRAP_BYTES)
 #define HIGH_ALIAS 0xffffff8000000000ULL
 #define MAP_PA (OWNED_PA + PAGE_BYTES)
 #define ADT_PA (OWNED_PA + 2 * PAGE_BYTES)
-#define STACK_PA (OWNED_PA + 3 * PAGE_BYTES)
+#define STACK_PA (OWNED_PA + LARGE_BYTES)
 #define ENTRY_PA (IMAGE_PA + 6 * PAGE_BYTES)
 
 static xnu_boot_u64 tables[6 * PAGE_ENTRIES];
@@ -118,11 +118,15 @@ int main(void)
 							OWNED_PA, OWNED_PA + OWNED_BYTES,
 							FIRST_USABLE) < 0);
 
-	/* All remaining leaves are owned, but the stack must also be reachable. */
-	directory[OWNED_PA / LARGE_BYTES] = 0;
+	/* Only the stack leaf is absent. Other required objects still map. */
+	directory[STACK_PA / LARGE_BYTES] = 0;
 	assert(xnu_x86_page_table_audit(&snapshot, OWNED_PA, OWNED_BYTES) == 0);
-	assert(xnu_x86_page_table_check_mapping(&snapshot, OWNED_PA, OWNED_BYTES,
-						 &required[3]) == -ENOENT);
+	for (i = 0; i < sizeof(required) / sizeof(required[0]); i++) {
+		int expected = required[i].pa == STACK_PA ? -ENOENT : 0;
+
+		assert(xnu_x86_page_table_check_mapping(&snapshot, OWNED_PA, OWNED_BYTES,
+							 &required[i]) == expected);
+	}
 	puts("xnu x86 integrated boot preflight fixture passed");
 	return 0;
 }

@@ -56,8 +56,8 @@
 #define DYSYMTAB_COMMAND_SIZE 80U
 #define UUID_COMMAND_SIZE 24U
 #define SOURCE_VERSION_COMMAND_SIZE 16U
-#define BUILD_VERSION_COMMAND_MIN_SIZE 24U
-#define BUILD_VERSION_TOOL_SIZE 8U
+#define BUILD_VERSION_COMMAND_SIZE 24U
+#define BUILD_TOOL_VERSION_SIZE 8U
 #define NLIST_64_SIZE 16U
 
 #define DYLD_CHAINED_PTR_START_NONE 0xffffU
@@ -723,6 +723,37 @@ static int parse_symtab(const unsigned char *file, unsigned long file_size,
 	return 0;
 }
 
+static int parse_dysymtab(const unsigned char *command, unsigned long file_size,
+			  xnu_macho_u32 symbol_count)
+{
+	/* Element sizes from loader.h and reloc.h, in command field order. */
+	static const unsigned char entry_sizes[] = {
+		8,  /* dylib_table_of_contents */
+		56, /* dylib_module_64 */
+		4,  /* dylib_reference */
+		4,  /* indirect symbol index */
+		8,  /* external relocation_info */
+		8,  /* local relocation_info */
+	};
+	unsigned int i;
+
+	for (i = 0; i < 3; i++) {
+		xnu_macho_u32 index = read_u32le(command + 8U + i * 8U);
+		xnu_macho_u32 count = read_u32le(command + 12U + i * 8U);
+
+		if (index > symbol_count || count > symbol_count - index)
+			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	}
+	for (i = 0; i < sizeof(entry_sizes); i++) {
+		xnu_macho_u32 offset = read_u32le(command + 32U + i * 8U);
+		xnu_macho_u32 count = read_u32le(command + 36U + i * 8U);
+
+		if (offset > file_size || count > (file_size - offset) / entry_sizes[i])
+			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	}
+	return 0;
+}
+
 static int read_segment_bounds(const unsigned char *file, unsigned long file_size,
 			       unsigned long command_off, xnu_macho_u32 command_size,
 			       struct segment_info *segment)
@@ -962,7 +993,8 @@ static int parse_image(const void *input, unsigned long file_size,
 	xnu_macho_u32 chained_fixups_count = 0;
 	xnu_macho_u32 chained_fixups_data_offset = 0;
 	xnu_macho_u32 chained_fixups_data_size = 0;
-	xnu_macho_u32 symtab_count = 0;
+	unsigned long symtab_off = 0;
+	unsigned long dysymtab_off = 0;
 	xnu_macho_u32 entry_matches = 0;
 	xnu_macho_u32 hib_matches = 0;
 	xnu_macho_u32 vm_matches = 0;
@@ -1076,26 +1108,26 @@ static int parse_image(const void *input, unsigned long file_size,
 				return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
 			out->inspection_flags |= XNU_MACHO_X86_64_HAS_DYLD_INFO;
 		} else if (command == LC_SYMTAB) {
-			if (++symtab_count != 1)
+			if (symtab_off || parse_symtab(file, file_size, command_off,
+						      command_size))
 				return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
-			if (parse_symtab(file, file_size, command_off, command_size))
-				return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
+			symtab_off = command_off;
 			out->inspection_flags |= XNU_MACHO_X86_64_HAS_SYMTAB;
-		} else if (command == LC_DYSYMTAB || command == LC_UUID ||
-			   command == LC_SOURCE_VERSION) {
-			xnu_macho_u32 expected_size = command == LC_DYSYMTAB ? DYSYMTAB_COMMAND_SIZE :
-				command == LC_UUID ? UUID_COMMAND_SIZE : SOURCE_VERSION_COMMAND_SIZE;
+		} else if (command == LC_DYSYMTAB) {
+			if (dysymtab_off || command_size != DYSYMTAB_COMMAND_SIZE)
+				return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
+			dysymtab_off = command_off;
+			out->inspection_flags |= XNU_MACHO_X86_64_HAS_UNINTERPRETED_LINKEDIT;
+		} else if (command == LC_UUID || command == LC_SOURCE_VERSION) {
+			xnu_macho_u32 expected_size = command == LC_UUID ?
+				UUID_COMMAND_SIZE : SOURCE_VERSION_COMMAND_SIZE;
 
 			if (command_size != expected_size)
 				return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
 		} else if (command == LC_BUILD_VERSION) {
-			xnu_macho_u32 tool_count;
-
-			if (command_size < BUILD_VERSION_COMMAND_MIN_SIZE ||
-			    (command_size - BUILD_VERSION_COMMAND_MIN_SIZE) % BUILD_VERSION_TOOL_SIZE)
-				return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
-			tool_count = read_u32le(file + command_off + 20U);
-			if (tool_count != (command_size - BUILD_VERSION_COMMAND_MIN_SIZE) / BUILD_VERSION_TOOL_SIZE)
+			if (command_size < BUILD_VERSION_COMMAND_SIZE ||
+			    read_u32le(file + command_off + 20U) !=
+			    (command_size - BUILD_VERSION_COMMAND_SIZE) / BUILD_TOOL_VERSION_SIZE)
 				return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
 		} else if (is_linkedit_data_command(command)) {
 			if (parse_linkedit_data(file, file_size, command_off,
@@ -1114,6 +1146,11 @@ static int parse_image(const void *input, unsigned long file_size,
 
 	if (command_off != command_end || thread_count != 1 ||
 	    !have_loaded_segment || out->vm_high <= out->vm_low)
+		return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
+	/* The symbol table command may appear on either side of LC_DYSYMTAB. */
+	if (dysymtab_off &&
+	    (!symtab_off || parse_dysymtab(file + dysymtab_off, file_size,
+					  read_u32le(file + symtab_off + 12U))))
 		return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
 	if (chained_fixups_count) {
 		int err;

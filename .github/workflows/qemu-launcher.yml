@@ -69,7 +69,7 @@ jobs:
           QEMU_TEST_DISPLAY_BACKEND: ${{ matrix.display_backend }}
         run: xvfb-run -a python tests/qemu/test_uefi_launch.py UefiLaunchTest.test_launcher_starts_graphical_uefi_guest
   uefi-launch:
-    if: always() && needs.uefi-graphical.result != 'cancelled'
+    if: ${{ !cancelled() }}
     needs: uefi-graphical
     runs-on: ubuntu-24.04
     steps:

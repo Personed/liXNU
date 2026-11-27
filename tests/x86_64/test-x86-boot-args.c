@@ -300,6 +300,28 @@ static void test_device_tree_wire_format(void)
 	assert(xnu_x86_boot_device_tree_validate(&args, tree, args.deviceTreeLength) == 0);
 }
 
+static void test_device_tree_sibling_traversal(void)
+{
+	struct xnu_x86_boot_args args;
+	struct xnu_x86_boot_args_core in = valid_input();
+	unsigned char tree[4 * ADT_TEST_NODE_SIZE];
+	unsigned char *sibling = tree + 3 * ADT_TEST_NODE_SIZE;
+
+	in.device_tree_size = sizeof(tree);
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+
+	/* Root, first child, grandchild, then the second child of the root. */
+	make_named_adt_node(tree, 2);
+	make_named_adt_node(tree + ADT_TEST_NODE_SIZE, 1);
+	make_named_adt_node(tree + 2 * ADT_TEST_NODE_SIZE, 0);
+	make_named_adt_node(sibling, 0);
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, sizeof(tree)) == 0);
+
+	/* A malformed sibling must still be visited after the subtree is consumed. */
+	memset(sibling + 8, 'x', 32);
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, sizeof(tree)) == -ENOEXEC);
+}
+
 int main(void)
 {
 	test_valid_core_fields();
@@ -310,6 +332,7 @@ int main(void)
 	test_reject_unsupported_or_malformed_output();
 	test_efi_memory_map_page_indices();
 	test_device_tree_wire_format();
+	test_device_tree_sibling_traversal();
 	puts("xnu x86 boot_args layout/validation fixtures passed");
 	return 0;
 }

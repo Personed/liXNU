@@ -160,8 +160,10 @@ int xnu_x86_boot_memory_map_validate(const struct xnu_x86_boot_args *args,
 /*
  * Inspect a supplied Apple Device Tree buffer without dereferencing deviceTreeP.
  * Size must match deviceTreeLength. Every node must have a bounded name, and
- * the tree is limited to 32 levels. Platform properties and physical placement
- * require separate validation before entry.
+ * the tree is limited to 32 levels. The inspection buffer may be unaligned,
+ * but the copy handed to XNU must start on a four-byte boundary because XNU
+ * aligns properties using absolute addresses. Platform properties and memory
+ * ownership require separate validation before entry.
  */
 int xnu_x86_boot_device_tree_validate(const struct xnu_x86_boot_args *args,
 				      const void *tree, unsigned long tree_size);

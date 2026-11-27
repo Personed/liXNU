@@ -12,8 +12,9 @@ usage() {
 Usage: build-xnu-kernel.sh [--check]
 
 Build the latest publicly published Tahoe 26 XNU source as an x86_64 macOS
-development kernel. The runtime goal is Tahoe 26.7.3, but the latest published
-matching XNU source is 26.5; this artifact does not prove 26.7.3 compatibility.
+development kernel. The runtime goal is Tahoe 26.7.3 build 25G342, but the
+latest published matching XNU source is 26.5; this artifact does not prove
+26.7.3 compatibility.
 Intel macOS is the native build target; Apple Silicon cross-build support is
 experimental until the CI probe produces and validates its artifact.
 The build uses pinned AvailabilityVersions, XNU, and libdispatch revisions
@@ -59,6 +60,7 @@ readonly KERNEL_VERSION='25.5.0'
 readonly SOURCE_VERSION='12377.121.6'
 readonly XNU_SOURCE_RELEASE='26.5'
 readonly RUNTIME_TARGET_VERSION='26.7.3'
+readonly RUNTIME_TARGET_BUILD='25G342'
 readonly SDK_VERSION='26.5'
 readonly XCODE_VERSION='26.6'
 readonly KDK_VERSION='26.5'
@@ -871,10 +873,10 @@ if (( CHECK_ONLY )); then
   verify_firehose_header_closure
   printf 'int xnu_x86_64_target_probe;\n' |
     xcrun clang -target x86_64-apple-macosx26.0 -mkernel -ffreestanding -fsyntax-only -x c -
-  printf 'XNU source release %s, SDK %s, and Xcode %s are ready for X86_64/NONE; KDK status=%s; runtime target is %s and remains unverified.\n' \
+  printf 'XNU source release %s, SDK %s, and Xcode %s are ready for X86_64/NONE; KDK status=%s; runtime target is %s build %s and remains unverified.\n' \
     "$XNU_SOURCE_RELEASE" "$SDK_VERSION" "$XCODE_VERSION" \
     "$([[ "$KDK_PRESENT" == true ]] && printf 'matching %s/%s' "$KDK_VERSION" "$KDK_BUILD" || printf 'not required for Intel')" \
-    "$RUNTIME_TARGET_VERSION"
+    "$RUNTIME_TARGET_VERSION" "$RUNTIME_TARGET_BUILD"
   exit 0
 fi
 
@@ -1167,7 +1169,8 @@ python3 - "$PACKAGE_KERNEL" "$RESULT" "$XNU_COMMIT" "$XNU_TAG" "$SOURCE_VERSION"
   "$XNU_OVERLAY_HEADER_DEPENDENCY_COUNT" "$KDKROOT" "$KDK_VERSION" "$KDK_BUILD" \
   "$KDK_PRIVATE_HEADER_SHA256" "$HOST_OS_VERSION" "$XNU_SOURCE_RELEASE" "$RUNTIME_TARGET_VERSION" \
   "$KDK_PRESENT" "$KDK_REQUIRED" "$KDK_PRODUCT_VERSION" "$KDK_PRODUCT_BUILD" "$KDK_XNU_VERSION" \
-  "$TRUSTCACHE_HEADER_SOURCE" "$TRUSTCACHE_HEADER_SHA256" "$TRUSTCACHE_HEADER" <<'PY'
+  "$TRUSTCACHE_HEADER_SOURCE" "$TRUSTCACHE_HEADER_SHA256" "$TRUSTCACHE_HEADER" \
+  "$RUNTIME_TARGET_BUILD" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -1235,6 +1238,7 @@ result = {
     "xnu_source_version": sys.argv[5],
     "xnu_source_release": sys.argv[44],
     "runtime_target_os_version": sys.argv[45],
+    "runtime_target_os_build": sys.argv[54],
     "runtime_compatibility_verified": False,
     "kernel_source_runtime_match": False,
     "darwin_kernel_version": sys.argv[6],

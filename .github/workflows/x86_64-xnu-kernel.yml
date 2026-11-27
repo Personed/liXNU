@@ -102,6 +102,7 @@ jobs:
           assert manifest["target_architecture"] == "x86_64", manifest
           assert manifest["architecture"] == "x86_64", manifest
           assert manifest["runtime_target_os_version"] == "26.7.3", manifest
+          assert manifest["runtime_target_os_build"] == "25G342", manifest
           assert manifest["runtime_compatibility_verified"] is False, manifest
           assert manifest["kernel_source_runtime_match"] is False, manifest
           assert manifest["xnu_source_release"] == "26.5", manifest
@@ -244,6 +245,7 @@ jobs:
           assert manifest["target_architecture"] == "x86_64", manifest
           assert manifest["architecture"] == "x86_64", manifest
           assert manifest["runtime_target_os_version"] == "26.7.3", manifest
+          assert manifest["runtime_target_os_build"] == "25G342", manifest
           assert manifest["runtime_compatibility_verified"] is False, manifest
           assert manifest["kernel_source_runtime_match"] is False, manifest
           assert manifest["xnu_source_release"] == "26.5", manifest

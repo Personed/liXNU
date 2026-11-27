@@ -23,6 +23,7 @@ OPENCORE_URL = "https://github.com/acidanthera/OpenCorePkg.git"
 BOARD_ID = "Mac-CFF7D910A743CAAF"
 MLB = "00000000000000000"
 TARGET_RUNTIME_VERSION = "26.7.3"
+TARGET_RUNTIME_BUILD = "25G342"
 XNU_RELEASE_PATTERN = re.compile(rb"xnu-([0-9]+\.[0-9]+\.[0-9]+(?:~[0-9]+)?)/RELEASE_X86_64\b")
 
 
@@ -190,6 +191,7 @@ def inspect_mounted_image(mount: Path, image: Path) -> dict[str, Any]:
         result["system_product_build"] = version.get("ProductBuildVersion")
         result["recovery_matches_runtime_goal"] = (
             result["system_product_version"] == TARGET_RUNTIME_VERSION
+            and result["system_product_build"] == TARGET_RUNTIME_BUILD
         )
 
     for system_kext in (
@@ -304,6 +306,7 @@ def main() -> int:
         "board_id": BOARD_ID,
         "os_selector": "latest",
         "target_runtime_goal": f"macOS Tahoe {TARGET_RUNTIME_VERSION}",
+        "target_runtime_build": TARGET_RUNTIME_BUILD,
         "catalog_transport": "HTTP (OpenCore Internet Recovery protocol)",
         "catalog_selection_authenticated": False,
         "recovery_product_identity_verified": False,

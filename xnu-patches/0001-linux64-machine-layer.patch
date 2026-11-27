@@ -2468,7 +2468,7 @@ index 79d0bc1..40de86f 100644
  #include <vm/pmap_cs.h>
  #include <vm/vm_map_xnu.h>
  #include <vm/vm_kern.h>
-@@ -85,1 +86,16 @@
+@@ -85,2 +86,17 @@
  #include <arm64/proc_reg.h>
 +
 +/* LINUX64: translate XNU's direct RW AP encodings for Linux's active PIE table. */
@@ -2485,6 +2485,7 @@ index 79d0bc1..40de86f 100644
 +	return pte;
 +}
 +
+ #include <pexpert/arm64/boot.h>
 @@ -327,6 +328,32 @@ const struct page_table_attr * const native_pt_attr = &pmap_pt_attr_16k;
  const struct page_table_attr * const native_pt_attr = &pmap_pt_attr_4k;
  #endif /* !__ARM_16K_PG__ */
@@ -4069,13 +4070,26 @@ index a17a07d..81e5f76 100644
  
  	/* call the generic etimer */
  	timer_intr(user_mode, pc);
-@@ -675,2 +691,3 @@
- write_pte_fast(pt_entry_t *ptep, pt_entry_t pte)
+@@ -709,5 +725,6 @@
+ }
++#define write_pte_fast(ptep, pte) \
++	write_pte_fast((ptep), linux64_pie_normalize_pte((pte)))
+-
+ /**
+  * Writes enough page table entries to map a single VM page and then ensures
+  * those writes complete by executing a Data Memory Barrier.
+@@ -5897,3 +5914,3 @@
+ static inline bool
+-pmap_enter_pte(pmap_t pmap, pt_entry_t *pte_p, pt_entry_t *old_pte, pt_entry_t new_pte, vm_map_address_t v)
++pmap_enter_pte_impl(pmap_t pmap, pt_entry_t *pte_p, pt_entry_t *old_pte, pt_entry_t new_pte, vm_map_address_t v)
  {
-+	pte = linux64_pie_normalize_pte(pte);
-@@ -5897,2 +5914,3 @@ pmap_enter_pte(pmap_t pmap, pt_entry_t *pte_p, pt_entry_t *old_pte, pt_entry_t new_pte, vm_map_address_t v)
- {
-+	new_pte = linux64_pie_normalize_pte(new_pte);
+@@ -5963,4 +5980,5 @@
+ }
++#define pmap_enter_pte(pmap, pte_p, old_pte, new_pte, v) \
++	pmap_enter_pte_impl((pmap), (pte_p), (old_pte), linux64_pie_normalize_pte((new_pte)), (v))
+-
+ MARK_AS_PMAP_TEXT static pt_entry_t
+ wimg_to_pte(unsigned int wimg, pmap_paddr_t pa)
 
 diff --git a/osfmk/arm/thread.h b/osfmk/arm/thread.h
 index 29ea6d8..b60ee80 100644
@@ -4139,13 +4153,14 @@ index f7f387e..beedde7 100644
 +				    | ((linux64_pie && (pte_prot_APX == AP_RWNA || pte_prot_APX == AP_RWRW)) ? ARM_PTE_DBM : 0);
 +				ptmp = ptmp | ARM_PTE_NX;
  #if __ARM_KERNEL_PROTECT__
-@@ -1146,3 +1163,5 @@
+@@ -1146,4 +1163,5 @@
 -				    | ARM_TTE_BLOCK_AP(pte_prot_APX) | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY)
 -				    | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITEBACK);
 +				    | ARM_TTE_BLOCK_AP(pte_prot_APX)
 +				    | ((linux64_pie && (pte_prot_APX == AP_RWNA || pte_prot_APX == AP_RWRW)) ? ARM_PTE_DBM : 0)
 +				    | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY)
 +				    | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITEBACK);
+-
  #if __ARM_KERNEL_PROTECT__
 @@ -1089,7 +1106,8 @@ arm_vm_page_granular_helper(vm_offset_t start, vm_offset_t _end, vm_offset_t va,
  				/*
@@ -12446,10 +12461,11 @@ diff --git a/osfmk/arm64/proc_reg.h b/osfmk/arm64/proc_reg.h
 index 8e4d7ec..0de0021 100644
 --- a/osfmk/arm64/proc_reg.h
 +++ b/osfmk/arm64/proc_reg.h
-@@ -2353,1 +2353,2 @@
+@@ -2353,2 +2353,3 @@
  #define ARM_PTE_AP(x)              ((x) << 6)            /* access protections */
 +#define ARM_PTE_DBM                0x0008000000000000ULL /* dirty bit modifier / PIE write selector */
-@@ -2419,14 +2420,15 @@
+ #define ARM_PTE_APMASK             (0x3ULL << 6)         /* mask access protections */
+@@ -2419,16 +2420,16 @@
  #define ARM_PTE_RESERVED_MASK \
 -	(~(ARM_PTE_TYPE_MASK | \
 -	   ARM_PTE_ATTRINDXMASK | \
@@ -12478,3 +12494,5 @@ index 8e4d7ec..0de0021 100644
 +	   ARM_PTE_NXMASK | \
 +	   ARM_PTE_DBM | \
 +	   ARM_PTE_SW_RESERVED_MASK))
+-
+ #define ARM_PTE_BOOT_PAGE_BASE \

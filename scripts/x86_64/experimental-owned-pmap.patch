@@ -1,0 +1,178 @@
+diff --git a/osfmk/i386/i386_init.c b/osfmk/i386/i386_init.c
+index d66e3f8..7773d7e 100644
+--- a/osfmk/i386/i386_init.c
++++ b/osfmk/i386/i386_init.c
+@@ -115,6 +115,13 @@ extern void xcpm_bootstrap(void);
+ 
+ #include <san/kasan.h>
+ 
++#if defined(XNU_LINUX_HOSTED_PMAP)
++#if KASAN
++#error XNU_LINUX_HOSTED_PMAP requires the non-KASAN bootstrap sequence
++#endif
++#include <i386/linux_hosted_boot_memory.h>
++#endif
++
+ #if DEBUG || DEVELOPMENT
+ #define DBG(x, ...)          kprintf(x, ##__VA_ARGS__)
+ #define dyldLogFunc(x, ...) kprintf(x, ##__VA_ARGS__)
+@@ -177,6 +184,32 @@ int insn_copyin_count;
+ char *physfree;
+ void idt64_remap(void);
+ 
++#if defined(XNU_LINUX_HOSTED_PMAP)
++static struct linux_hosted_boot_memory linux_hosted_memory;
++
++static void
++linux_hosted_validate_boot_memory(const boot_args *args, uintptr_t args_pa)
++{
++	struct linux_hosted_boot_memory prefix;
++	uintptr_t first_free = (uintptr_t)physfree;
++
++	if (args->Version != kBootArgsVersion || args->Revision != kBootArgsRevision0 ||
++	    !linux_hosted_boot_memory_init(&linux_hosted_memory,
++	    args->bootMemStart, args->bootMemSize) ||
++	    !linux_hosted_boot_contains(&linux_hosted_memory, first_free, PAGE_SIZE)) {
++		panic("invalid hosted XNU boot memory");
++	}
++	prefix = linux_hosted_memory;
++	prefix.end = first_free;
++	if (!linux_hosted_boot_contains(&prefix, args_pa, sizeof(*args)) ||
++	    !linux_hosted_boot_contains(&prefix, args->kaddr, args->ksize) ||
++	    !linux_hosted_boot_contains(&prefix, args->MemoryMap, args->MemoryMapSize) ||
++	    !linux_hosted_boot_contains(&prefix, args->deviceTreeP, args->deviceTreeLength)) {
++		panic("hosted XNU boot object outside the kernel alias");
++	}
++}
++#endif
++
+ TUNABLE(bool, restore_boot, "-restore", false);
+ 
+ /*
+@@ -187,6 +220,12 @@ static void *
+ ALLOCPAGES(int npages)
+ {
+ 	uintptr_t tmp = (uintptr_t)physfree;
++#if defined(XNU_LINUX_HOSTED_PMAP)
++	if (npages <= 0 || !linux_hosted_boot_allocate(&linux_hosted_memory,
++	    tmp, (uint64_t)npages * PAGE_SIZE)) {
++		panic("hosted XNU bootstrap allocation outside the reservation");
++	}
++#endif
+ 	bzero(physfree, npages * PAGE_SIZE);
+ 	physfree += npages * PAGE_SIZE;
+ 	tmp += VM_MIN_KERNEL_ADDRESS & ~LOW_4GB_MASK;
+@@ -244,6 +283,16 @@ physmap_init_L2(uint64_t *physStart, pt_entry_t **l2ptep)
+ 	}
+ 
+ 	for (i = 0; i < NPDPG; i++) {
++#if defined(XNU_LINUX_HOSTED_PMAP)
++		/*
++		 * Keep physical offsets unchanged for PHYSMAP_PTOV(). The
++		 * allocator zeroed this table, so skip non-owned leaves.
++		 */
++		if (!linux_hosted_boot_contains(&linux_hosted_memory, *physStart, NBPD)) {
++			*physStart += NBPD;
++			continue;
++		}
++#endif
+ 		physmapL2[i] = *physStart
+ 		    | INTEL_PTE_PS
+ 		    | INTEL_PTE_VALID
+@@ -396,9 +445,19 @@ Idle_PTs_init(void)
+ 	IdlePDPT = ALLOCPAGES(1);               /* level 3 */
+ 	IdlePML4 = ALLOCPAGES(1);               /* level 4 */
+ 
++#if defined(XNU_LINUX_HOSTED_PMAP)
++	uint64_t start = linux_hosted_memory.start;
++	uint64_t end = (uintptr_t)physfree;
++	if (end <= start || (end >> PAGE_SHIFT) > NKPT * PTE_PER_PAGE) {
++		panic("hosted XNU bootstrap alias exceeds the kernel page tables");
++	}
++	fillkpt(KPTphys, INTEL_PTE_WRITE, start, (int)(start >> PAGE_SHIFT),
++	    (int)((end - start) >> PAGE_SHIFT));
++#else
+ 	// Fill the lowest level with everything up to physfree
+ 	fillkpt(KPTphys,
+ 	    INTEL_PTE_WRITE, 0, 0, (int)(((uintptr_t)physfree) >> PAGE_SHIFT));
++#endif
+ 
+ 	/* IdlePTD */
+ 	fillkpt(IdlePTD,
+@@ -722,6 +781,9 @@ vstart(vm_offset_t boot_args_start)
+ 		kernelBootArgs = (boot_args *)boot_args_start;
+ 		lphysfree = kernelBootArgs->kaddr + kernelBootArgs->ksize;
+ 		physfree = (void *)(uintptr_t)((lphysfree + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
++#if defined(XNU_LINUX_HOSTED_PMAP)
++		linux_hosted_validate_boot_memory(kernelBootArgs, boot_args_start);
++#endif
+ 
+ 		pal_serial_init();
+ 
+@@ -1172,6 +1234,14 @@ doublemap_init(uint8_t randL3)
+ 	unsigned long hdescsz = hdescseg->vmsize;
+ 	unsigned long hdescszr = round_page_64(hdescsz);
+ 	vm_offset_t hdescc = hdescb, hdesce = hdescb + hdescszr;
++#if defined(XNU_LINUX_HOSTED_PMAP)
++	if ((hdescb & PAGE_MASK) || hdesce < hdescb || hdescszr < hdescsz ||
++	    hdescszr > (uint64_t)PTE_PER_PAGE * NBPD ||
++	    !linux_hosted_boot_contains(&linux_hosted_memory,
++	    ID_MAP_VTOP(hdescb), hdescszr)) {
++		panic("hosted XNU __HIB double map outside the reservation");
++	}
++#endif
+ 
+ 	kernel_section_t *thdescsect = getsectbynamefromheader(&_mh_execute_header, "__HIB", "__text");
+ 	vm_offset_t thdescb = thdescsect->addr;
+diff --git a/osfmk/i386/linux_hosted_boot_memory.h b/osfmk/i386/linux_hosted_boot_memory.h
+new file mode 100644
+index 0000000..7609246
+--- /dev/null
++++ b/osfmk/i386/linux_hosted_boot_memory.h
+@@ -0,0 +1,46 @@
++/* SPDX-License-Identifier: APSL-2.0 */
++#ifndef _I386_LINUX_HOSTED_BOOT_MEMORY_H_
++#define _I386_LINUX_HOSTED_BOOT_MEMORY_H_
++
++#include <stdbool.h>
++#include <stdint.h>
++
++#define LINUX_HOSTED_PA_LIMIT (1ULL << 32)
++#define LINUX_HOSTED_LARGE_PAGE (1ULL << 21)
++
++struct linux_hosted_boot_memory {
++	uint64_t start;
++	uint64_t end;
++};
++
++static inline bool
++linux_hosted_boot_memory_init(struct linux_hosted_boot_memory *range,
++    uint64_t start, uint64_t size)
++{
++	if (!start || !size || ((start | size) & (LINUX_HOSTED_LARGE_PAGE - 1)) ||
++	    start >= LINUX_HOSTED_PA_LIMIT || size > LINUX_HOSTED_PA_LIMIT - start) {
++		return false;
++	}
++	range->start = start;
++	range->end = start + size;
++	return true;
++}
++
++static inline bool
++linux_hosted_boot_contains(const struct linux_hosted_boot_memory *range,
++    uint64_t pa, uint64_t bytes)
++{
++	return bytes && pa >= range->start && pa < range->end &&
++	       bytes <= range->end - pa;
++}
++
++static inline bool
++linux_hosted_boot_allocate(const struct linux_hosted_boot_memory *range,
++    uint64_t pa, uint64_t bytes)
++{
++	/* first_avail is computed with ID_MAP_VTOP(), which discards bit 32. */
++	return linux_hosted_boot_contains(range, pa, bytes) &&
++	       bytes < LINUX_HOSTED_PA_LIMIT - pa;
++}
++
++#endif /* _I386_LINUX_HOSTED_BOOT_MEMORY_H_ */

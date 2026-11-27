@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: x86_64 hosted pmap patch
+on:
+  pull_request:
+    paths:
+      - .github/workflows/x86_64-hosted-pmap-patch.yml
+      - scripts/x86_64/experimental-owned-pmap.patch
+      - tests/x86_64/test-xnu-hosted-pmap-patch.sh
+      - tests/x86_64/test-xnu-hosted-boot-memory.c
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/x86_64-hosted-pmap-patch.yml
+      - scripts/x86_64/experimental-owned-pmap.patch
+      - tests/x86_64/test-xnu-hosted-pmap-patch.sh
+      - tests/x86_64/test-xnu-hosted-boot-memory.c
+
+permissions:
+  contents: read
+jobs:
+  pinned-source:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply and test against pinned public XNU
+        run: bash tests/x86_64/test-xnu-hosted-pmap-patch.sh

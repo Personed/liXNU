@@ -1,0 +1,34 @@
+name: Tahoe Intel KDK audit
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/x86_64-tahoe-kdk-audit.yml"
+      - "scripts/x86_64/audit-tahoe-kdk.*"
+      - "tests/x86_64/test-audit-tahoe-kdk.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-kdk-metadata:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash -n scripts/x86_64/audit-tahoe-kdk.sh
+      - run: python3 tests/x86_64/test-audit-tahoe-kdk.py
+
+  inspect-target-kdk:
+    runs-on: macos-26-intel
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect the signed KDK package without installing it
+        run: bash scripts/x86_64/audit-tahoe-kdk.sh "$RUNNER_TEMP/tahoe-kdk-audit.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tahoe-kdk-audit-${{ github.sha }}
+          path: ${{ runner.temp }}/tahoe-kdk-audit.json
+          if-no-files-found: error
+          retention-days: 5

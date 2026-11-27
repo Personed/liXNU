@@ -61,8 +61,8 @@ struct bp_host_snapshot {
 	unsigned long rsp;
 	unsigned long rflags;
 	unsigned long cr0;
-	unsigned long cr3;
 	unsigned long cr4;
+	struct fki_x86_cr3 cr3;
 	u64 efer;
 	u64 fs_base;
 	u64 gs_base;
@@ -125,8 +125,15 @@ static noinline int bp_snapshot(struct bp_host_snapshot *snapshot)
 	snapshot->preempt_count = preempt_count();
 	snapshot->irq_disabled = irqs_disabled();
 	snapshot->cr0 = read_cr0();
-	snapshot->cr3 = __read_cr3();
 	snapshot->cr4 = __read_cr4();
+	err = fki_x86_decode_cr3(__read_cr3(), boot_cpu_data.x86_phys_bits,
+				 snapshot->cr4 & X86_CR4_PCIDE,
+				 boot_cpu_has(X86_FEATURE_PCID), &snapshot->cr3);
+	if (err) {
+		pr_err("x86-boundary-probe: CR3 rejected by the plain-address snapshot profile: %d\n",
+		       err);
+		return err;
+	}
 	native_store_gdt(&gdt);
 	store_idt(&idt);
 	snapshot->ldt = 0;
@@ -154,25 +161,6 @@ static noinline int bp_snapshot(struct bp_host_snapshot *snapshot)
 	return 0;
 }
 
-static bool bp_cr3_matches(const struct bp_host_snapshot *before,
-			   const struct bp_host_snapshot *after)
-{
-	struct fki_x86_cr3 decoded_before, decoded_after;
-	unsigned int phys_bits = boot_cpu_data.x86_phys_bits;
-	bool pcid_supported = boot_cpu_has(X86_FEATURE_PCID);
-
-	if (fki_x86_decode_cr3(before->cr3, phys_bits,
-			       before->cr4 & X86_CR4_PCIDE, pcid_supported,
-			       &decoded_before) ||
-	    fki_x86_decode_cr3(after->cr3, phys_bits,
-			       after->cr4 & X86_CR4_PCIDE, pcid_supported,
-			       &decoded_after))
-		return false;
-	return decoded_before.root_pa == decoded_after.root_pa &&
-	       decoded_before.pcid == decoded_after.pcid &&
-	       decoded_before.cache_flags == decoded_after.cache_flags;
-}
-
 static bool bp_snapshots_match(const struct bp_host_snapshot *before,
 			      const struct bp_host_snapshot *after)
 {
@@ -190,7 +178,9 @@ static bool bp_snapshots_match(const struct bp_host_snapshot *before,
 	       before->idt_limit == after->idt_limit &&
 	       before->ldt == after->ldt && before->tr == after->tr &&
 	       ((before->rflags ^ after->rflags) & BP_RFLAGS_CONTROL) == 0 &&
-	       bp_cr3_matches(before, after) &&
+	       before->cr3.root_pa == after->cr3.root_pa &&
+	       before->cr3.pcid == after->cr3.pcid &&
+	       before->cr3.cache_flags == after->cr3.cache_flags &&
 	       before->fs_base == after->fs_base && before->gs_base == after->gs_base &&
 	       before->kernel_gs_base == after->kernel_gs_base;
 }

@@ -101,9 +101,26 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install qemu --yes --no-progress
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Join-Path $env:ProgramFiles 'qemu' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $qemuDirectory = Join-Path $env:ProgramFiles 'qemu'
+          $qemuSystem = Join-Path $qemuDirectory 'qemu-system-aarch64.exe'
+          $installed = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            choco install qemu --yes --no-progress
+            $chocoExitCode = $LASTEXITCODE
+            $present = Test-Path -LiteralPath $qemuSystem -PathType Leaf
+            if ($chocoExitCode -eq 0 -and $present) {
+              $installed = $true
+              break
+            }
+            if ($attempt -lt 3) {
+              Write-Warning "QEMU install attempt $attempt did not provide qemu-system-aarch64.exe (Chocolatey exit $chocoExitCode); retrying."
+              Start-Sleep -Seconds (10 * $attempt)
+            }
+          }
+          if (-not $installed) {
+            throw "QEMU install did not provide qemu-system-aarch64.exe after 3 attempts (Chocolatey exit $chocoExitCode)."
+          }
+          $qemuDirectory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install QEMU on macOS
         if: runner.os == 'macOS'
         run: brew install qemu

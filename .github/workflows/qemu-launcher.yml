@@ -38,9 +38,31 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install qemu --yes --no-progress
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Join-Path $env:ProgramFiles 'qemu' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $qemuDirectory = Join-Path $env:ProgramFiles 'qemu'
+          $requiredExecutables = @(
+            (Join-Path $qemuDirectory 'qemu-system-aarch64.exe'),
+            (Join-Path $qemuDirectory 'qemu-img.exe')
+          )
+          $installed = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            choco install qemu --yes --no-progress
+            $chocoExitCode = $LASTEXITCODE
+            $missing = @($requiredExecutables | Where-Object {
+              -not (Test-Path -LiteralPath $_ -PathType Leaf)
+            })
+            if ($chocoExitCode -eq 0 -and $missing.Count -eq 0) {
+              $installed = $true
+              break
+            }
+            if ($attempt -lt 3) {
+              Write-Warning "QEMU install attempt $attempt did not provide required executables (Chocolatey exit $chocoExitCode); retrying."
+              Start-Sleep -Seconds (10 * $attempt)
+            }
+          }
+          if (-not $installed) {
+            throw "QEMU install did not provide required executables after 3 attempts (Chocolatey exit $chocoExitCode); missing: $($missing -join ', ')"
+          }
+          $qemuDirectory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install QEMU on macOS
         if: runner.os == 'macOS'
         run: brew install qemu

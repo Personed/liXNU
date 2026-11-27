@@ -75,6 +75,10 @@ file-backed and records that the segment lacks execute permission. The
 manifest must report the pinned XNU patch hashes, the expected non-Intel
 vendor policy, and a native x86_64 build host and process.
 
+Earlier artifacts can record the vendor guard under its former path in
+`xnu-patches/`. Both manifest paths use the SHA-256 of the same patch checked
+out under `scripts/x86_64/`.
+
 ```sh
 python3 tools/dev/x86_64/verify-xnu-artifact.py \
   --output /tmp/xnu-artifact-report.json \

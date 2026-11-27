@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 
 
 XNU_COMMIT = "ac9718fb1af618d5ce8678d0dc6e8a58f252216f"
@@ -21,16 +23,19 @@ class GuardError(Exception):
     pass
 
 
-def git(source_root: pathlib.Path, *args: str) -> bytes:
+def git(source_root: pathlib.Path, *args: str, env: dict[str, str] | None = None,
+        data: bytes | None = None) -> bytes:
     try:
         result = subprocess.run(
             ["git", "-C", str(source_root), *args],
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=env,
+            input=data,
         )
     except (OSError, subprocess.CalledProcessError) as error:
-        detail = getattr(error, "stderr", b"")
+        detail = getattr(error, "stderr", None) or b""
         raise GuardError(f"git {' '.join(args)} failed: {detail.decode(errors='replace')}") from error
     return result.stdout
 
@@ -85,12 +90,7 @@ def function_body(source: str, name: str) -> str:
     raise GuardError(f"definition of {name}() has unbalanced braces")
 
 
-def verify_order(source_root: pathlib.Path) -> None:
-    source_path = source_root / SOURCE_FILE
-    if not source_path.is_file():
-        raise GuardError(f"pinned XNU source is missing {SOURCE_FILE}")
-    source = source_path.read_text(encoding="utf-8")
-
+def verify_order(source: str) -> None:
     vendor = function_body(source, "cpuid_vendor_is_intel")
     expected_vendor_steps = (
         "cpuid_fn(0, reg);",
@@ -124,11 +124,30 @@ def verify_order(source_root: pathlib.Path) -> None:
         raise GuardError("pinned generic Intel MSR path changed; re-audit this guard")
 
 
-def expected_patch_state(source_root: pathlib.Path, patch_bytes: bytes) -> None:
-    status = git(source_root, "status", "--porcelain", "--untracked-files=all")
-    diff = git(source_root, "diff", "--binary", "--no-ext-diff", "--", SOURCE_FILE)
-    if status != EXPECTED_STATUS or diff != patch_bytes:
-        raise GuardError("XNU source tree must contain exactly the committed vendor-guard patch and no other changes")
+def patched_source_bytes(source_root: pathlib.Path, patch_bytes: bytes) -> bytes:
+    original_objects = git(source_root, "rev-parse", "--path-format=absolute",
+                           "--git-path", "objects").rstrip(b"\n")
+    # Keep both the scratch index and the blob written by git apply out of the checkout.
+    with tempfile.TemporaryDirectory(prefix="lixnu-xnu-guard-") as temporary:
+        root = pathlib.Path(temporary)
+        objects = root / "objects"
+        (objects / "info").mkdir(parents=True)
+        (objects / "info" / "alternates").write_bytes(original_objects + b"\n")
+        env = dict(os.environ, GIT_INDEX_FILE=str(root / "index"), GIT_OBJECT_DIRECTORY=str(objects))
+        git(source_root, "read-tree", XNU_COMMIT, env=env)
+        git(source_root, "apply", "--cached", "--whitespace=error", "-", env=env, data=patch_bytes)
+        changed = git(source_root, "diff-index", "--cached", "--name-status", "--no-renames", "-z",
+                      XNU_COMMIT, "--", env=env)
+        if changed != f"M\0{SOURCE_FILE}\0".encode():
+            raise GuardError(f"the vendor guard patch must modify only {SOURCE_FILE}")
+        entry = git(source_root, "ls-files", "--stage", "--", SOURCE_FILE, env=env)
+        if not entry.startswith(b"100644 "):
+            raise GuardError(f"the vendor guard patch must keep {SOURCE_FILE} as a regular nonexecutable file")
+        return git(source_root, "show", f":{SOURCE_FILE}", env=env)
+
+
+def source_status(source_root: pathlib.Path) -> bytes:
+    return git(source_root, "--no-optional-locks", "status", "--porcelain", "--untracked-files=all")
 
 
 def apply_or_verify(source_root: pathlib.Path, patch_path: pathlib.Path, apply: bool) -> str:
@@ -136,20 +155,14 @@ def apply_or_verify(source_root: pathlib.Path, patch_path: pathlib.Path, apply: 
     if git(source_root, "rev-parse", "HEAD").decode().strip() != XNU_COMMIT:
         raise GuardError(f"XNU checkout must be exactly {XNU_COMMIT}")
     patch_bytes = patch_path.read_bytes()
-    status = git(source_root, "status", "--porcelain", "--untracked-files=all")
-    diff = git(source_root, "diff", "--binary", "--no-ext-diff", "--", SOURCE_FILE)
-
-    if apply and not status and not diff:
-        subprocess.run(
-            ["git", "-C", str(source_root), "apply", "--check", "--whitespace=error", str(patch_path)],
-            check=True,
-        )
-        subprocess.run(
-            ["git", "-C", str(source_root), "apply", "--whitespace=error", str(patch_path)],
-            check=True,
-        )
-    expected_patch_state(source_root, patch_bytes)
-    verify_order(source_root)
+    expected = patched_source_bytes(source_root, patch_bytes)
+    verify_order(expected.decode("utf-8"))
+    if apply and not source_status(source_root):
+        git(source_root, "apply", "--check", "--whitespace=error", "-", data=patch_bytes)
+        git(source_root, "apply", "--whitespace=error", "-", data=patch_bytes)
+    source = source_root / SOURCE_FILE
+    if source_status(source_root) != EXPECTED_STATUS or source.is_symlink() or source.read_bytes() != expected:
+        raise GuardError("XNU source tree must contain exactly the committed vendor-guard patch and no other changes")
     return hashlib.sha256(patch_bytes).hexdigest()
 
 

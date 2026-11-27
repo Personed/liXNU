@@ -50,7 +50,7 @@ source "$SCRIPT_DIR/xnu-trustcache-scan-workspace.sh"
 readonly XNU_URL='https://github.com/apple-oss-distributions/xnu.git'
 readonly XNU_COMMIT='ac9718fb1af618d5ce8678d0dc6e8a58f252216f'
 readonly XNU_TAG='xnu-12377.121.6'
-readonly XNU_SOURCE_PATCH_NAME='xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch'
+readonly XNU_SOURCE_PATCH_NAME='scripts/x86_64/tahoe-xnu-cpuid-vendor-guard.patch'
 readonly XNU_SOURCE_PATCH_PATH="$SCRIPT_DIR/../../$XNU_SOURCE_PATCH_NAME"
 readonly LIBDISPATCH_URL='https://github.com/apple-oss-distributions/libdispatch.git'
 readonly LIBDISPATCH_COMMIT='701f4d1a24ae9c6863901bbbb22624b7d1b87321'
@@ -1306,7 +1306,7 @@ result = {
     "runtime_target_os_build": sys.argv[54],
     "xnu_source_compat_patch_sha256": sys.argv[55],
     "xnu_source_modified": True,
-    "xnu_source_patch": "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch",
+    "xnu_source_patch": "scripts/x86_64/tahoe-xnu-cpuid-vendor-guard.patch",
     "xnu_source_patch_sha256": sys.argv[56],
     "xnu_non_intel_vendor_policy": "refuse-before-cpuid_do_precpuid_was-and-cpuid_set_generic_info",
     "runtime_compatibility_verified": False,

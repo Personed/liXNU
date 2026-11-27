@@ -28,7 +28,8 @@ HIB_ENTRY_SECTION = "__HIB,__text"
 INSPECTOR_INVALID_IMAGE = 3
 LAYOUT_PROFILE = "xnu-development-kernel-v1"
 MANIFEST_CONTRACT = "build-xnu-kernel-result-v1"
-XNU_SOURCE_PATCH = "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch"
+XNU_SOURCE_PATCH = "scripts/x86_64/tahoe-xnu-cpuid-vendor-guard.patch"
+LEGACY_XNU_SOURCE_PATCH = "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch"
 XNU_COMPAT_PATCH = "scripts/x86_64/tahoe-xnu-pointer-casts.patch"
 NON_INTEL_VENDOR_POLICY = "refuse-before-cpuid_do_precpuid_was-and-cpuid_set_generic_info"
 EXPECTED_BUILD_IDENTITY = {
@@ -129,7 +130,9 @@ def verify_manifest(
 
     if manifest.get("xnu_source_modified") is not True:
         raise VerificationError("build-result.json must attest that the pinned XNU patch was applied")
-    source_patch = require_string(manifest, "xnu_source_patch", XNU_SOURCE_PATCH)
+    source_patch = require_string(manifest, "xnu_source_patch")
+    if source_patch not in {XNU_SOURCE_PATCH, LEGACY_XNU_SOURCE_PATCH}:
+        raise VerificationError("build-result.json does not name the pinned XNU vendor guard patch")
     vendor_policy = require_string(manifest, "xnu_non_intel_vendor_policy", NON_INTEL_VENDOR_POLICY)
     source_patch_sha256 = require_string(manifest, "xnu_source_patch_sha256")
     compat_patch_sha256 = require_string(manifest, "xnu_source_compat_patch_sha256")
@@ -137,6 +140,7 @@ def verify_manifest(
         raise VerificationError("build-result.json xnu_source_patch_sha256 must be a 64-digit SHA-256")
     if not SHA256_RE.fullmatch(compat_patch_sha256):
         raise VerificationError("build-result.json xnu_source_compat_patch_sha256 must be a 64-digit SHA-256")
+    # Both manifest paths identify the same checked-out patch bytes.
     expected_source_patch_sha256 = sha256_file(repo_root / XNU_SOURCE_PATCH)
     if source_patch_sha256.lower() != expected_source_patch_sha256:
         raise VerificationError("XNU source patch SHA-256 does not match the checked-out patch")

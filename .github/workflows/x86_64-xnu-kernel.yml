@@ -12,7 +12,7 @@ on:
       - "scripts/x86_64/verify-xnu-kdk.py"
       - "scripts/x86_64/verify-xnu-cpuid-vendor-guard.py"
       - "scripts/x86_64/verify-xnu-target-build.py"
-      - "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch"
+      - "scripts/x86_64/tahoe-xnu-cpuid-vendor-guard.patch"
       - "tools/dev/x86_64/verify-xnu-artifact.py"
       - "tools/dev/x86_64/xnu-macho-inspect.c"
       - "xnu-ko/macho_parse_x86_64.c"
@@ -29,7 +29,7 @@ on:
       - "scripts/x86_64/verify-xnu-kdk.py"
       - "scripts/x86_64/verify-xnu-cpuid-vendor-guard.py"
       - "scripts/x86_64/verify-xnu-target-build.py"
-      - "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch"
+      - "scripts/x86_64/tahoe-xnu-cpuid-vendor-guard.patch"
       - "tools/dev/x86_64/verify-xnu-artifact.py"
       - "tools/dev/x86_64/xnu-macho-inspect.c"
       - "xnu-ko/macho_parse_x86_64.c"
@@ -55,10 +55,19 @@ jobs:
           git -C "$source_root" remote add origin https://github.com/apple-oss-distributions/xnu.git
           git -C "$source_root" fetch --depth 1 origin ac9718fb1af618d5ce8678d0dc6e8a58f252216f
           git -C "$source_root" checkout -q --detach FETCH_HEAD
+          git -C "$source_root" config core.abbrev 12
           python3 scripts/x86_64/verify-xnu-cpuid-vendor-guard.py \
             --source-root "$source_root" \
-            --patch xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch \
+            --patch scripts/x86_64/tahoe-xnu-cpuid-vendor-guard.patch \
             --apply
+      - name: Verify the applied vendor guard with custom Git diff settings
+        run: |
+          source_root="$RUNNER_TEMP/xnu-source"
+          git -C "$source_root" config diff.context 1
+          git -C "$source_root" config diff.noprefix true
+          python3 scripts/x86_64/verify-xnu-cpuid-vendor-guard.py \
+            --source-root "$source_root" \
+            --patch scripts/x86_64/tahoe-xnu-cpuid-vendor-guard.patch
       - name: Check compatibility patch after applying the CPUID guard
         run: |
           git -C "$RUNNER_TEMP/xnu-source" apply --check --whitespace=error \
@@ -197,7 +206,7 @@ jobs:
           assert len(manifest["xnu_source_compat_patch_sha256"]) == 64, manifest
           assert manifest["xnu_source_compat_patch_sha256"] == hashlib.sha256(Path("scripts/x86_64/tahoe-xnu-pointer-casts.patch").read_bytes()).hexdigest(), manifest
           assert manifest["xnu_source_modified"] is True, manifest
-          assert manifest["xnu_source_patch"] == "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch", manifest
+          assert manifest["xnu_source_patch"] == "scripts/x86_64/tahoe-xnu-cpuid-vendor-guard.patch", manifest
           assert manifest["xnu_source_patch_sha256"] == hashlib.sha256(Path(manifest["xnu_source_patch"]).read_bytes()).hexdigest(), manifest
           assert manifest["xnu_non_intel_vendor_policy"] == "refuse-before-cpuid_do_precpuid_was-and-cpuid_set_generic_info", manifest
           assert manifest["host_os_version"].startswith("26."), manifest
@@ -361,7 +370,7 @@ jobs:
           assert len(manifest["xnu_source_compat_patch_sha256"]) == 64, manifest
           assert manifest["xnu_source_compat_patch_sha256"] == hashlib.sha256(Path("scripts/x86_64/tahoe-xnu-pointer-casts.patch").read_bytes()).hexdigest(), manifest
           assert manifest["xnu_source_modified"] is True, manifest
-          assert manifest["xnu_source_patch"] == "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch", manifest
+          assert manifest["xnu_source_patch"] == "scripts/x86_64/tahoe-xnu-cpuid-vendor-guard.patch", manifest
           assert manifest["xnu_source_patch_sha256"] == hashlib.sha256(Path(manifest["xnu_source_patch"]).read_bytes()).hexdigest(), manifest
           assert manifest["xnu_non_intel_vendor_policy"] == "refuse-before-cpuid_do_precpuid_was-and-cpuid_set_generic_info", manifest
           assert manifest["host_os_version"].startswith("26."), manifest

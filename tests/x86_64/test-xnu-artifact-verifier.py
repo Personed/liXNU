@@ -34,7 +34,8 @@ X86_THREAD_STATE64 = 4
 X86_THREAD_STATE64_COUNT = 42
 S_ATTR_PURE_INSTRUCTIONS = 0x80000000
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-XNU_SOURCE_PATCH = "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch"
+XNU_SOURCE_PATCH = "scripts/x86_64/tahoe-xnu-cpuid-vendor-guard.patch"
+LEGACY_XNU_SOURCE_PATCH = "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch"
 XNU_COMPAT_PATCH = "scripts/x86_64/tahoe-xnu-pointer-casts.patch"
 NON_INTEL_VENDOR_POLICY = "refuse-before-cpuid_do_precpuid_was-and-cpuid_set_generic_info"
 
@@ -231,7 +232,7 @@ def run_case(verifier, name, image, expected_success, mutate_manifest=None,
         metadata = report["build_result"]["metadata"]
         expected_provenance = {
             "xnu_source_modified": True,
-            "xnu_source_patch": XNU_SOURCE_PATCH,
+            "xnu_source_patch": manifest["xnu_source_patch"],
             "xnu_source_patch_sha256": hashlib.sha256((REPO_ROOT / XNU_SOURCE_PATCH).read_bytes()).hexdigest(),
             "xnu_source_compat_patch_sha256": hashlib.sha256((REPO_ROOT / XNU_COMPAT_PATCH).read_bytes()).hexdigest(),
             "xnu_non_intel_vendor_policy": NON_INTEL_VENDOR_POLICY,
@@ -349,6 +350,17 @@ def main():
     run_case(verifier, "unclassified optional load command", unknown_command, False)
 
     valid = make_valid_image()
+    run_case(
+        verifier, "legacy XNU patch path with matching digest", valid, True,
+        mutate_manifest=lambda manifest: manifest.update({"xnu_source_patch": LEGACY_XNU_SOURCE_PATCH}),
+    )
+    run_case(
+        verifier, "legacy XNU patch path with wrong digest", valid, False,
+        mutate_manifest=lambda manifest: manifest.update({
+            "xnu_source_patch": LEGACY_XNU_SOURCE_PATCH, "xnu_source_patch_sha256": "0" * 64,
+        }),
+        expected_diagnostic="XNU source patch SHA-256 does not match the checked-out patch",
+    )
     run_case(
         verifier,
         "manifest artifact hash mismatch",

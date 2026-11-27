@@ -68,6 +68,14 @@ directory to fork it intentionally.
 
 ## Development tests
 
+To reproduce the Debian 13 CI module pair, install `build-essential`, `git`, `linux-headers-amd64`, and `pahole`.
+Use the same commit, kernel headers, and tool versions as the artifact's build manifest. The builder checks both
+modules byte for byte across two clean build directories before writing them to the new output directory.
+
+```sh
+bash scripts/ci/build-debian-x86-module-pair.sh /path/to/headers HEAD /usr/src/lixnu ./debian-x86-modules
+```
+
 ```sh
 bash tests/x86_64/test-launcher.sh
 bash tests/x86_64/test-tcg-smoke.sh

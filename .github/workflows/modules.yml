@@ -54,27 +54,26 @@ jobs:
           kdir=$(find /usr/src -mindepth 1 -maxdepth 1 -type d -name 'linux-headers-*-amd64' | sort -V | tail -1)
           case "$kdir" in */linux-headers-6.12.*-amd64) ;; *) echo "expected Debian 13 Linux 6.12 x86_64 headers; got $kdir" >&2; exit 1;; esac
           echo "KDIR=$kdir" >> "$GITHUB_ENV"
-      - name: Build x86_64 FKI
-        run: make -C "$KDIR" ARCH=x86_64 M="$PWD/fki-ko" CONFIG_DEBUG_INFO_BTF_MODULES= modules
-      - name: Build x86_64 fail-closed XNU module
-        run: make -C "$KDIR" ARCH=x86_64 M="$PWD/xnu-ko" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
-      - name: Verify Debian 13 x86_64 modules and record build inputs
+      - name: Build and verify Debian 13 x86_64 modules across checkout paths
         shell: bash
         run: |
           export LC_ALL=C
           release=$(cat "$KDIR/include/config/kernel.release")
           test -n "$release"
           source_commit=$(git -c safe.directory="$PWD" rev-parse --verify 'HEAD^{commit}')
-          source_tree=$(git -c safe.directory="$PWD" rev-parse --verify 'HEAD^{tree}')
+          source_tree=$(git -c safe.directory="$PWD" rev-parse --verify "$source_commit^{tree}")
           stage="$RUNNER_TEMP/debian13-x86_64-module-build"
-          mkdir "$stage"
-          cp fki-ko/fki.ko xnu-ko/xnu.ko "$stage/"
+          source_prefix=/usr/src/lixnu
+          bash scripts/ci/build-debian-x86-module-pair.sh "$KDIR" "$source_commit" "$source_prefix" "$stage"
           (
             echo 'profile=debian13-x86_64-fail-closed'
             printf 'source_commit=%s\nsource_tree=%s\n' "$source_commit" "$source_tree"
             echo "kernel_release=$release"
             echo 'kbuild_arch=x86_64'
             echo 'fki_btf_modules=disabled'
+            printf 'kbuild_kcflags=-ffile-prefix-map=<checkout>=%s\n' "$source_prefix"
+            printf 'kbuild_kaflags=-ffile-prefix-map=<checkout>=%s\n' "$source_prefix"
+            echo 'checkout_path_comparison=byte-identical'
             echo '[os-release]'
             cat /etc/os-release
             echo '[build-packages]'
@@ -109,7 +108,9 @@ jobs:
           if-no-files-found: error
           retention-days: 5
       - name: Test x86_64 XNU stub refusal on Debian 13
-        run: tests/x86_64/test-xnu-stub-vm.sh "$KDIR"
+        run: |
+          cp -- "$RUNNER_TEMP/debian13-x86_64-module-build/xnu.ko" xnu-ko/xnu.ko
+          tests/x86_64/test-xnu-stub-vm.sh "$KDIR"
       - name: Test x86_64 host-state boundary on Debian 13
         run: tests/x86_64/test-boundary-probe-vm.sh "$KDIR"
   build:

@@ -46,6 +46,9 @@ _Static_assert(X86_BOUNDARY_PROBE_RUN == _IOW(0xb7, 1, struct x86_boundary_probe
 _Static_assert(X86_BOUNDARY_PROBE_COOPERATIVE ==
 	       _IOW(0xb7, 2, struct x86_boundary_probe_request),
 	       "userspace cooperative ioctl number disagrees with kernel UAPI");
+_Static_assert(X86_BOUNDARY_PROBE_TASK_CONTINUATION ==
+	       _IOW(0xb7, 3, struct x86_boundary_continuation_request),
+	       "userspace continuation ioctl disagrees with kernel UAPI");
 
 static long invoke_with_xstate(int fd, unsigned long ioctl_command,
 			       const struct x86_boundary_probe_request *request,
@@ -272,6 +275,10 @@ static int run_cooperative_ioctl(int fd, pid_t pid, unsigned int cpu,
 int main(void)
 {
 	const pid_t pid = getpid();
+	const struct x86_boundary_continuation_request continuation = {
+		.owner_cpu = 0,
+		.responder_cpu = 1,
+	};
 	struct xsave_config xsave;
 	long cpu_count;
 	int fd, cpu;
@@ -302,11 +309,18 @@ int main(void)
 		    run_cooperative_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_COOP_TIMEOUT, &xsave))
 			return 1;
 	}
+	if (ioctl(fd, X86_BOUNDARY_PROBE_TASK_CONTINUATION, &continuation)) {
+		perror("x86 task-continuation probe ioctl failed");
+		return 1;
+	}
+	if (check_linux_syscalls(pid))
+		return 1;
+	puts("X86_FKI_TASK_CONTINUATION_PASS");
 	if (close(fd)) {
 		perror("close probe device");
 		return 1;
 	}
-	printf("x86 boundary probe passed: %ld CPUs, return/abort, cooperative callback reply/timeout, enabled user XSAVE compared per ioctl, x87/MXCSR/YMM, Linux syscalls (xcr0=%#llx size=%zu)\n",
+	printf("x86 boundary probe passed: %ld CPUs, return/abort, cooperative callback reply/timeout, host state, enabled user XSAVE compared per ioctl, x87/MXCSR/YMM, Linux syscalls; task-stack continuation probe passed (xcr0=%#llx size=%zu)\n",
 	       cpu_count, (unsigned long long)xsave.mask, xsave.size);
 	return 0;
 }

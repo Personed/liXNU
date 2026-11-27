@@ -113,6 +113,20 @@ capabilities, change CR3 or GS, inspect supervisor XSS state, install or replace
 under foreign host state. Passing it does not establish native XNU runtime support or prove the proposed early
 exception/syscall bridge.
 
+The same disposable VM also runs a synthetic task-stack continuation model. It covers a reply
+published after the owner's initial completion check but before its first wait, a delayed reply
+while the owner sleeps and a second task on that CPU is refused entry to the reserved stack/context,
+a timeout followed by a rejected late reply, and cancellation acknowledged by the owner before a
+late reply is rejected. The checks include the owner and responder task stacks, one resume with the
+exact reply payload/generation/request ID, unchanged alternate-stack canaries, and a voluntary
+context switch on the delayed/timeout/cancellation paths. The reply timer starts after the
+contender has been refused. For immediate and delayed replies, the owner resumes after the
+responder checks for a duplicate reply. Request and reply storage remains allocated until the
+responder acknowledges completion, timeout handling, or cancellation. This models the
+proposed ownership rules. The synthetic callback runs with local interrupts and preemption disabled;
+both are restored after returning to the owner's task stack and before any wait. It does not call
+`fki_arch_linux_runs()` or validate a production FKI continuation.
+
 The separate exception-recovery probe runs in a disposable x86_64 VM and temporarily loads a test-owned shadow IDT on
 the selected vCPU to test controlled `#PF`/`#GP` recovery. It needs matching x86_64 kernel headers as `KDIR`, QEMU 8.2
 or newer, `cpio`, static C libraries and the normal module build tools. Run it as root or with usable `sudo` so it can

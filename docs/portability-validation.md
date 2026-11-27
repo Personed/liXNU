@@ -59,13 +59,18 @@ source-built XNU/free collection, ARM64 guest preparation, and three TCG boots. 
 common guest profile was 6 GiB QEMU RAM, Linux `mem=2G`, FKI carve-out 3,072 MiB at
 `0xc0000000`, and XNU RAM 2,816 MiB. All three boot jobs recorded these stages.
 
-- **Firmware and Linux boot.** QEMU loaded the ARM64 Linux `Image` and initramfs directly
-  with `-kernel` and `-initrd`. Firmware boot was outside this profile. Linux reached the
-  initramfs script and loaded FKI with the configured carve-out.
-- **FKI allocation.** FKI reported 3,072 MiB of foreign-kernel DRAM at `0xc0000000`.
-  This run covers one allocation per boot. The separate reuse probe is tracked below.
-- **XNU probe and carve-out use.** The initramfs loaded `xnu.ko`. XNU reported contiguous
-  DRAM at `0x00000000c0000000`, matching the FKI carve-out, before entering PureDarwin.
+- **Firmware and Linux boot.** Firmware was not applicable: QEMU directly loaded the
+  ARM64 Linux `Image` and initramfs with `-kernel` and `-initrd`. Linux reached its
+  initramfs, loaded FKI and XNU, and relayed the PureDarwin console.
+- **FKI configuration.** `fki.ko` loaded with `carve_base=0xc0000000` and
+  `carve_mb=3072`. Run #172 did not perform a separate allocation/free/reuse probe, so
+  those allocation properties are not established by this run.
+- **XNU module probe and carve-out use.** There was no standalone loader probe: the
+  initramfs loaded `xnu.ko` with the real matching collection and it reached PureDarwin.
+  All three host logs reported `xnu: contiguous DRAM at phys 0x00000000c0000000`, the
+  configured carve-out's start address. The logs did not record the returned interval's
+  size, so containment of the complete XNU DRAM interval within the carve-out remains
+  unverified.
 - **Console and shutdown.** The shell returned `Darwin` and
   `XNULINUX_USERLAND_OK`. The guest issued `halt`, XNU returned, both modules unloaded,
   Linux printed `reboot: Power down`, and QEMU exited with status 0.

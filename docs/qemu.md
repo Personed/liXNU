@@ -137,8 +137,9 @@ build there or use the tested Ubuntu 24.04 package.
 Run the download commands from the repository root; they extract the files under `artifacts/guest` and `artifacts/disk`. The command below verifies the three hashes from run #158, then copies the disk so the source artifact remains unchanged.
 
 ```sh
-set -e
-sha256sum --check - <<'EOF'
+(
+  set -e
+  sha256sum --check - <<'EOF'
 02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6  artifacts/guest/Image
 fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667  artifacts/guest/initramfs.cpio.gz
 7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f  artifacts/disk/pd.img
@@ -157,6 +158,7 @@ python3 tests/puredarwin/run-tcg-e2e.py \
   artifacts/guest/initramfs.cpio.gz \
   artifacts/disk/pd-tcg-test.img \
   artifacts/disk/puredarwin-tcg-serial.log
+)
 ```
 
 The manifest-aware validation script and optional exact-hash guard are in

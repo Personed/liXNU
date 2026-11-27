@@ -9,22 +9,27 @@ import pathlib
 import plistlib
 import re
 import struct
+from xml.etree import ElementTree
 
 PRODUCT_VERSION = "26.7.3"
 PRODUCT_BUILD = "25G342"
 DARWIN_VERSION = b"25.6.0"
 XNU_VERSION = b"12377.161.15.701.48~2"
-BUNDLE_NAME = f"KDK_{PRODUCT_VERSION}_{PRODUCT_BUILD}.kdk"
+INSTALL_LOCATION = f"/Library/Developer/KDKs/KDK_{PRODUCT_VERSION}_{PRODUCT_BUILD}.kdk"
 KERNEL_IDENTITY = re.compile(
     rb"Darwin Kernel Version ([0-9]+\.[0-9]+\.[0-9]+): [^\x00\r\n]{1,160}; "
-    rb"root:xnu-([0-9]+(?:\.[0-9]+){2,}(?:~[0-9]+)?)/DEVELOPMENT_X86_64\x00"
+    rb"root:xnu_development-([0-9]+(?:\.[0-9]+){2,}(?:~[0-9]+)?)/DEVELOPMENT_X86_64\x00"
 )
 
 
-def inspect(bundle):
-    if bundle.name != BUNDLE_NAME:
-        raise ValueError(f"expected bundle {BUNDLE_NAME}")
-    library = bundle / "System/Library"
+def inspect(package):
+    # The component package puts System/Library directly under Payload.
+    metadata = ElementTree.parse(package / "PackageInfo").getroot()
+    if (metadata.tag != "pkg-info"
+        or metadata.get("identifier") != f"com.apple.pkg.KDK.{PRODUCT_BUILD}"
+        or metadata.get("install-location") != INSTALL_LOCATION):
+        raise ValueError("KDK PackageInfo does not identify the target component")
+    library = package / "Payload/System/Library"
     with (library / "CoreServices/SystemVersion.plist").open("rb") as source:
         version = plistlib.load(source)
     if not isinstance(version, dict) or (
@@ -55,14 +60,14 @@ def inspect(bundle):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("bundle", type=pathlib.Path)
+    parser.add_argument("package", type=pathlib.Path)
     parser.add_argument("report", type=pathlib.Path)
     args = parser.parse_args()
     try:
-        report = json.dumps(inspect(args.bundle), indent=2) + "\n"
+        report = json.dumps(inspect(args.package), indent=2) + "\n"
         args.report.write_text(report, encoding="utf-8")
         print(report, end="")
-    except (OSError, ValueError, plistlib.InvalidFileException) as error:
+    except (OSError, ValueError, plistlib.InvalidFileException, ElementTree.ParseError) as error:
         parser.exit(1, f"KDK metadata audit: {error}\n")
 
 

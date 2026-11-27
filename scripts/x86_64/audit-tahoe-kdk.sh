@@ -52,16 +52,7 @@ grep -Eq '^[[:space:]]*2\.[[:space:]]+Apple Software Update Certification Author
 grep -Eq '^[[:space:]]*3\.[[:space:]]+Apple Root CA[[:space:]]*$' <<<"$signature"
 
 /usr/sbin/pkgutil --expand-full "$pkg" "$work/expanded"
-name=KDK_26.7.3_25G342.kdk
-bundles=()
-while IFS= read -r -d '' bundle; do
-    bundles+=("$bundle")
-done < <(find "$work/expanded" -type d -name "$name" -prune -print0)
-if [[ ${#bundles[@]} -ne 1 ]]; then
-    echo "Expected one $name bundle in the signed package payload" >&2
-    exit 1
-fi
-python3 "$script_dir/audit-tahoe-kdk.py" "${bundles[0]}" "$work/report.json"
+python3 "$script_dir/audit-tahoe-kdk.py" "$work/expanded/KDK.pkg" "$work/report.json"
 /usr/bin/hdiutil detach "$mount"
 mounted=false
 mv -- "$work/report.json" "$1"

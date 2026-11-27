@@ -13,16 +13,23 @@ import unittest
 SCRIPT = pathlib.Path(__file__).resolve().parents[2] / "scripts/x86_64/audit-tahoe-kdk.py"
 IDENTITY = (
     b"Darwin Kernel Version 25.6.0: build time; "
-    b"root:xnu-12377.161.15.701.48~2/DEVELOPMENT_X86_64\x00"
+    b"root:xnu_development-12377.161.15.701.48~2/DEVELOPMENT_X86_64\x00"
 )
 
 
 class AuditTest(unittest.TestCase):
-    def run_audit(self, cpu=0x01000007, file_type=2, build="25G342", identity=IDENTITY):
+    def run_audit(self, cpu=0x01000007, file_type=2, build="25G342",
+                  identity=IDENTITY, package_build="25G342"):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
-            bundle = root / "KDK_26.7.3_25G342.kdk"
-            library = bundle / "System/Library"
+            package = root / "KDK.pkg"
+            package.mkdir()
+            (package / "PackageInfo").write_text(
+                f'<pkg-info identifier="com.apple.pkg.KDK.{package_build}" '
+                'install-location="/Library/Developer/KDKs/KDK_26.7.3_25G342.kdk"/>',
+                encoding="utf-8",
+            )
+            library = package / "Payload/System/Library"
             plist = library / "CoreServices/SystemVersion.plist"
             plist.parent.mkdir(parents=True)
             plist.write_bytes(plistlib.dumps({
@@ -35,7 +42,7 @@ class AuditTest(unittest.TestCase):
             kernel.write_bytes(data)
             report = root / "report.json"
             result = subprocess.run(
-                [sys.executable, SCRIPT, bundle, report], capture_output=True, text=True
+                [sys.executable, SCRIPT, package, report], capture_output=True, text=True
             )
             if result.returncode:
                 self.assertFalse(report.exists())
@@ -48,6 +55,7 @@ class AuditTest(unittest.TestCase):
         self.assertEqual(self.run_audit()["xnu_version"], "12377.161.15.701.48~2")
 
     def test_wrong_target(self):
+        self.assertIn("KDK PackageInfo", self.run_audit(package_build="25G83"))
         self.assertIn("SystemVersion.plist", self.run_audit(build="25G83"))
         self.assertIn("thin x86_64 Mach-O", self.run_audit(cpu=0x0100000C))
         self.assertIn("not MH_EXECUTE", self.run_audit(file_type=12))

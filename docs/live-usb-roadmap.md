@@ -39,4 +39,6 @@ Keep Calamares as the installer engine on the Linux side. Give the installer a m
 - Compare a disposable internal disk image before and after an automated live session and confirm no change. On physical machines, also verify internal disks are not mounted and no swap is activated on them.
 - Publish minimum requirements, known limitations, and fallback modes only to the extent backed by tests. A USB prompt, Linux-only boot, or PureDarwin console alone is not a passing desktop Live USB test.
 
+For any supported direct-host desktop mode that changes Linux CPU idle flags or IRQ affinities, compare the exact original values with the post-stop values after both guest shutdown and host stop. Include a pre-disabled idle state in an isolated fixture so an unconditional reset cannot pass. For any supported Apple Silicon launch-agent mode, test graceful removal using a non-default SSH port and krunkit path. These are separate from Live USB disk isolation and emulated PC console checks. Track the upstream work in [#47](https://github.com/AFK-surf/xnulinux/pull/47) and [#48](https://github.com/AFK-surf/xnulinux/pull/48); proposed upstream fixes alone are not acceptance evidence.
+
 See [portability validation](portability-validation.md) for the distinction between boot evidence and hardware support.

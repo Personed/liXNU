@@ -33,7 +33,7 @@ In 64-bit mode the architectural exception frame includes SS, RSP, RFLAGS, CS an
 - save the general-purpose registers it needs in per-vCPU test storage before touching them;
 - record the vector selected by the independent handler entry point;
 - record the error code and hardware frame fields exactly as delivered;
-- read CR2 for `#PF` before any instruction that can take another fault, while preserving the fault-time R11 before using it as a CR2 temporary and restoring it before `iretq`;
+- for `#PF`, save the full GPR set on the already validated fault stack, then read CR2 into R11 before any other handler data access; the entry pushes must not produce a passing recovery if they fault, and the handler must restore the saved fault-time R11 before `iretq`;
 - restore every general-purpose register it used before `iretq`, so the recovery path starts with the fault-time register state, and compare the captured full GPR image against the exact expected per-injection image before reporting success (including registers used to form injection operands);
 - rewrite the frame exactly once: set frame RIP to the test recovery stub, set frame RSP to the test-owned recovery-stack top, keep CS/RFLAGS/SS unchanged, and account for the error-code slot before executing `iretq`; and
 - increment no counter and perform no C call in the raw handler beyond the capture writes.

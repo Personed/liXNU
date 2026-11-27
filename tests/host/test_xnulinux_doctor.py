@@ -52,8 +52,11 @@ class DoctorTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "cpuinfo"
             path.write_text(
-                "processor : 0\nvendor_id : AuthenticAMD\nmodel name : Example AMD CPU\n"
-                "flags : fma avx2\n\nprocessor : 1\nflags : sse4_2\n",
+                "processor : 0\nvendor_id : AuthenticAMD\ncpu family : 25\nmodel : 17\n"
+                "model name : Example AMD CPU\nstepping : 2\nmicrocode : 0x0a0011c\n"
+                "flags : fma avx2 hypervisor\n\nprocessor : 1\n"
+                "cpu family : 6\nmodel : 158\nstepping : 10\nmicrocode : 0xdeadbeef\n"
+                "flags : sse4_2\n",
                 encoding="utf-8",
             )
             cpu_info = doctor.linux_cpu_info(path)
@@ -65,7 +68,20 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(host["linux_cpu_vendor"], "AuthenticAMD")
         self.assertEqual(host["linux_cpu_model"], "Example AMD CPU")
         self.assertEqual(host["linux_cpu_flags"], ["avx2", "fma"])
+        self.assertEqual(host["linux_cpu_family"], "25")
+        self.assertEqual(host["linux_cpu_model_number"], "17")
+        self.assertEqual(host["linux_cpu_stepping"], "2")
+        self.assertEqual(host["linux_cpu_microcode"], "0x0a0011c")
+        self.assertIs(host["linux_cpu_hypervisor_flag"], True)
         self.assertEqual(host["linux_page_size_bytes"], os.sysconf("SC_PAGE_SIZE"))
+
+    def test_linux_cpu_hypervisor_flag_false_when_flags_are_available_without_it(self):
+        self.assertIs(doctor.cpu_hypervisor_flag({"flags": "avx2 fma"}), False)
+
+    def test_linux_cpu_hypervisor_flag_is_null_when_flags_are_unavailable(self):
+        for cpu_info in ({}, {"flags": ""}, {"features": "fp asimd"}):
+            with self.subTest(cpu_info=cpu_info):
+                self.assertIsNone(doctor.cpu_hypervisor_flag(cpu_info))
 
     def test_kernel_config_prefers_proc_gzip_and_hashes_decompressed_bytes(self):
         config = b"CONFIG_64BIT=y\nCONFIG_EXAMPLE=m\n"
@@ -156,6 +172,11 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(host["linux_kernel_config_status"], "available")
         self.assertEqual(host["linux_kernel_config_source"], "/proc/config.gz")
         self.assertEqual(host["linux_kernel_config_sha256"], "abc123")
+        self.assertIsNone(host["linux_cpu_family"])
+        self.assertIsNone(host["linux_cpu_model_number"])
+        self.assertIsNone(host["linux_cpu_stepping"])
+        self.assertIsNone(host["linux_cpu_microcode"])
+        self.assertIsNone(host["linux_cpu_hypervisor_flag"])
         sysconf.assert_called_once_with("SC_PAGE_SIZE")
         config_facts.assert_called_once_with("6.8.0-test")
 

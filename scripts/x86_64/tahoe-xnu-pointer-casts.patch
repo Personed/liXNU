@@ -1,3 +1,115 @@
+diff --git a/bsd/dev/dtrace/systrace.c b/bsd/dev/dtrace/systrace.c
+index 66c445fb55bc811d8ce1023d122aeb9700df6bfd..2d550639610a8c58ab867a7555f3aa498eba59be 100644
+--- a/bsd/dev/dtrace/systrace.c
++++ b/bsd/dev/dtrace/systrace.c
+@@ -1005,7 +1005,7 @@ systrace_getargdesc(void *arg, dtrace_id_t id, void *parg,
+     dtrace_argdesc_t *desc)
+ {
+ #pragma unused(arg, id)
+-	int sysnum = SYSTRACE_SYSNUM(parg);
++	int sysnum = SYSTRACE_SYSNUM((uintptr_t)parg);
+ 	uthread_t uthread = current_uthread();
+ 	uint64_t *uargs = NULL;
+ 
+diff --git a/bsd/kern/kern_descrip.c b/bsd/kern/kern_descrip.c
+index fac307fcbc80bd6b6e5fc34d61aa172db10e21c5..147a7827985f82ca9a15ed33f8f718e73b8832a1 100644
+--- a/bsd/kern/kern_descrip.c
++++ b/bsd/kern/kern_descrip.c
+@@ -4992,7 +4992,7 @@ dropboth:
+ 		if (uap->arg) {
+ 			/* extract 32 bits of flags from userland */
+ 			param_ptr = (caddr_t) uap->arg;
+-			param = (uint32_t) param_ptr;
++			param = (uint32_t)(uintptr_t)param_ptr;
+ 		} else {
+ 			/* If no argument is specified, error out */
+ 			error = EINVAL;
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index 2467b24045cd8ce0b960723273c495519b2169ae..be4ee44f152857d48eab3461e2af21c7f9475d86 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7010,7 +7010,7 @@ exec_add_entropy_key(struct image_params *imgp,
+     int values,
+     boolean_t embedNUL)
+ {
+-	const int limit = 8;
++	enum { limit = 8 };
+ 	uint64_t entropy[limit];
+ 	char str[strlen(key) + (HEX_STR_LEN + 1) * limit + 1];
+ 	if (values > limit) {
+@@ -7360,7 +7360,7 @@ exec_add_apple_strings(struct image_params *imgp,
+ 
+ 
+ 	if (load_result->hardened_browser) {
+-		const size_t HR_STRING_SIZE = sizeof(HARDENED_RUNTIME_KEY) + HR_FLAGS_NUM_NIBBLES + 2 + 1;
++		enum { HR_STRING_SIZE = sizeof(HARDENED_RUNTIME_KEY) + HR_FLAGS_NUM_NIBBLES + 2 + 1 };
+ 		char hardened_runtime[HR_STRING_SIZE];
+ 		snprintf(hardened_runtime, HR_STRING_SIZE, HARDENED_RUNTIME_KEY"0x%x", load_result->hardened_browser);
+ 		error = exec_add_user_string(imgp, CAST_USER_ADDR_T(hardened_runtime), UIO_SYSSPACE, FALSE);
+@@ -8448,7 +8448,7 @@ exec_resettextvp(proc_t p, struct image_params *imgp)
+ }
+ 
+ // Includes the 0-byte (therefore "SIZE" instead of "LEN").
+-static const size_t CS_CDHASH_STRING_SIZE = CS_CDHASH_LEN * 2 + 1;
++enum { CS_CDHASH_STRING_SIZE = CS_CDHASH_LEN * 2 + 1 };
+ 
+ static void
+ cdhash_to_string(char str[CS_CDHASH_STRING_SIZE], uint8_t const * const cdhash)
+diff --git a/bsd/kern/kern_malloc.c b/bsd/kern/kern_malloc.c
+index 5fc0ac5a8a535ca1eeea25adb66e2f5358f4ad12..b2b68eb5ca92fa941a6c5050116b3d3a21f62c30 100644
+--- a/bsd/kern/kern_malloc.c
++++ b/bsd/kern/kern_malloc.c
+@@ -442,8 +442,9 @@ sysctl_zone_reset_peak SYSCTL_HANDLER_ARGS
+ #pragma unused(oidp, arg1, arg2)
+ 	kern_return_t kr;
+ 	int ret;
+-	const size_t name_len = MAX_ZONE_NAME + 1;
+-	char zonename[name_len];
++	enum { ZONE_NAME_CAPACITY = MAX_ZONE_NAME + 1 };
++	const size_t name_len = ZONE_NAME_CAPACITY;
++	char zonename[ZONE_NAME_CAPACITY];
+ 
+ 	ret = sysctl_io_string(req, zonename, name_len, 0, NULL);
+ 	if (ret) {
+diff --git a/bsd/kern/kern_mib.c b/bsd/kern/kern_mib.c
+index e67ea79add9e74e840949eb557f878d38299f7c2..dac559bd43fe5a6da28d2d3d36ca48facbfcfd11 100644
+--- a/bsd/kern/kern_mib.c
++++ b/bsd/kern/kern_mib.c
+@@ -320,7 +320,7 @@ sysctl_hw_generic(__unused struct sysctl_oid *oidp, void *arg1,
+ 	 * If we are using one of the perflevel sysctls, return early if the perflevel
+ 	 * does not exist in this system.
+ 	 */
+-	int perflevel = (int)arg1;
++	int perflevel = (int)(intptr_t)arg1;
+ 	int n_perflevels = __builtin_popcount(ml_get_cpu_types());
+ 
+ 	if (arg2 & CTLHW_PERFLEVEL) {
+diff --git a/bsd/kern/kern_sig.c b/bsd/kern/kern_sig.c
+index c25ed3fb98106095c82e12177f9e85a4c9dea7be..6bbbb89a1b9ec588b2e5b1c8569e14c50c50ce97 100644
+--- a/bsd/kern/kern_sig.c
++++ b/bsd/kern/kern_sig.c
+@@ -2011,7 +2011,7 @@ build_signal_reason(int signum, const char *procname)
+ 	if (KERN_SUCCESS == kcdata_get_memory_addr(&signal_reason->osr_kcd_descriptor, KCDATA_TYPE_PROCNAME,
+ 	    proc_name_length, &data_addr)) {
+ 		if (procname) {
+-			char truncated_procname[proc_name_length];
++			char truncated_procname[sizeof(sender_proc->p_name)];
+ 			strncpy((char *) &truncated_procname, procname, proc_name_length);
+ 			truncated_procname[proc_name_length - 1] = '\0';
+ 
+diff --git a/bsd/kern/kern_sysctl.c b/bsd/kern/kern_sysctl.c
+index 94a949b572cc652d4dbc66e8987d3dad7e816564..70ae8329880fa48d0365620bda65a36e4aca03d0 100644
+--- a/bsd/kern/kern_sysctl.c
++++ b/bsd/kern/kern_sysctl.c
+@@ -3383,7 +3383,7 @@ STATIC int
+ sysctl_timer
+ (__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+ {
+-	int             oid = (int)arg1;
++	int             oid = (int)(intptr_t)arg1;
+ 	uint64_t        value = timer_sysctl_get(oid);
+ 	uint64_t        new_value;
+ 	int             error;
 diff --git a/bsd/net/classq/classq_fq_codel.c b/bsd/net/classq/classq_fq_codel.c
 index de3c3cb8780b689722be5fbddcb5010d2468fcec..45a8347be6e496e1868ff8340ffa800479b937b0 100644
 --- a/bsd/net/classq/classq_fq_codel.c
@@ -92,6 +204,77 @@ index 86354c82557184adb2175c5547e7734e6a09369b..831f9b1c9592e6ec8a109c60399ce71e
  
  /*
   * Synchronization notes:
+diff --git a/bsd/netinet/tcp_prague.c b/bsd/netinet/tcp_prague.c
+index 3a037a77e4447455f2092e6314c241132a6a3282..9a29fcfe71cc1da2702962505aebe233ca1640e8 100644
+--- a/bsd/netinet/tcp_prague.c
++++ b/bsd/netinet/tcp_prague.c
+@@ -110,7 +110,7 @@ cubic_target(struct tcpcb *tp, uint32_t srtt)
+ 			 * Wmax again after reduction due to loss.
+ 			 */
+ 
+-			K = ((float)(tp->t_ccstate->cubic_W_max - tp->snd_cwnd)) / cubic_c_factor / tp->t_maxseg;
++			K = ((float)(tp->t_ccstate->cubic_W_max - tp->snd_cwnd)) / cubic_c_factor / (float)tp->t_maxseg;
+ 			K = cbrtf(K);
+ 			tp->t_ccstate->cubic_K = K * TCP_RETRANSHZ; /* in milliseconds */
+ 			tp->t_ccstate->cubic_origin_point = tp->t_ccstate->cubic_W_max;
+@@ -130,8 +130,8 @@ cubic_target(struct tcpcb *tp, uint32_t srtt)
+ 	uint32_t elapsed_time = timer_diff(tcp_globals_now(globals), 0, tp->t_ccstate->cubic_epoch_start, 0);
+ 	elapsed_time += srtt;
+ 
+-	float var = (elapsed_time - tp->t_ccstate->cubic_K) / TCP_RETRANSHZ;
+-	var = var * var * var * cubic_c_factor * tp->t_maxseg;
++	float var = ((float)elapsed_time - tp->t_ccstate->cubic_K) / TCP_RETRANSHZ;
++	var = var * var * var * cubic_c_factor * (float)tp->t_maxseg;
+ 
+ 	int32_t cwnd = (int32_t)((float)tp->t_ccstate->cubic_origin_point + var);
+ 	uint32_t w_cubic_next = cwnd > 0 ? (uint32_t)cwnd : 0;
+@@ -179,7 +179,7 @@ reno_friendly_win(struct tcpcb *tp, struct tcphdr *th)
+ 			alpha_aimd = 1;
+ 		}
+ 
+-		tp->t_ccstate->reno_cwnd += (uint32_t)(tp->t_maxseg * alpha_aimd);
++		tp->t_ccstate->reno_cwnd += (uint32_t)((float)tp->t_maxseg * alpha_aimd);
+ 	}
+ 
+ 	return tp->t_ccstate->reno_cwnd;
+@@ -304,7 +304,7 @@ tcp_prague_pre_fr(struct tcpcb *tp)
+ 	}
+ 
+ 	/* Calculate congestion window by multiplying with beta factor */
+-	win = (uint32_t)(win * cubic_beta);
++	win = (uint32_t)((float)win * cubic_beta);
+ 	win = tcp_round_to(win, tp->t_maxseg);
+ 	if (win < 2 * tp->t_maxseg) {
+ 		win =  2 * tp->t_maxseg;
+diff --git a/bsd/netinet6/frag6.c b/bsd/netinet6/frag6.c
+index 29bbff2f7383b613d60aa3b12c5bf2496f704dfe..33307b9ae7b85bb3f48ab25fedfc6c7725976640 100644
+--- a/bsd/netinet6/frag6.c
++++ b/bsd/netinet6/frag6.c
+@@ -195,7 +195,7 @@ frag6_scrub_context(struct mbuf *m)
+ static int
+ frag6_restore_context(struct mbuf *m)
+ {
+-	return (int)m->m_pkthdr.pkt_hdr;
++	return (int)(intptr_t)m->m_pkthdr.pkt_hdr;
+ }
+ 
+ /*
+diff --git a/bsd/skywalk/lib/cuckoo_hashtable.c b/bsd/skywalk/lib/cuckoo_hashtable.c
+index 84dabfebbb5351ff51bab234a72b6d83ce063f00..0fe9f5777575ee116f6687a0a46b19403ae298aa 100644
+--- a/bsd/skywalk/lib/cuckoo_hashtable.c
++++ b/bsd/skywalk/lib/cuckoo_hashtable.c
+@@ -189,9 +189,8 @@ struct _slot {
+  */
+ #define _CHT_CACHELINE_CHUNK 128
+ #define _CHT_SLOT_INVAL UINT8_MAX
+-static const uint8_t _CHT_BUCKET_SLOTS =
+-    ((_CHT_CACHELINE_CHUNK - sizeof(lck_mtx_t) - sizeof(uint8_t)) /
+-    sizeof(struct _slot));
++#define _CHT_BUCKET_SLOTS ((uint8_t)((_CHT_CACHELINE_CHUNK - \
++    sizeof(lck_mtx_t) - sizeof(uint8_t)) / sizeof(struct _slot)))
+ 
+ struct _bucket {
+ 	struct _slot            _slots[_CHT_BUCKET_SLOTS];
 diff --git a/libkern/c++/OSNumber.cpp b/libkern/c++/OSNumber.cpp
 index dc2ed78b0da22b2abbbed71e9db5cc7957e22b6e..b276b52bc93590f7b287e44e63196f99457f5d0c 100644
 --- a/libkern/c++/OSNumber.cpp
@@ -191,47 +374,11 @@ index 75d172f13d69239a60e80f13bd01efa1a6de304e..a07d49be31a80df66f05c4bb823540a3
  	struct btlog_record recs[RECS] = {0};
  	bt_stack_t bts;
  
---- a/bsd/netinet/tcp_prague.c
-+++ b/bsd/netinet/tcp_prague.c
-@@ -110,7 +110,7 @@
- 			 * Wmax again after reduction due to loss.
- 			 */
- 
--			K = ((float)(tp->t_ccstate->cubic_W_max - tp->snd_cwnd)) / cubic_c_factor / tp->t_maxseg;
-+			K = ((float)(tp->t_ccstate->cubic_W_max - tp->snd_cwnd)) / cubic_c_factor / (float)tp->t_maxseg;
- 			K = cbrtf(K);
- 			tp->t_ccstate->cubic_K = K * TCP_RETRANSHZ; /* in milliseconds */
- 			tp->t_ccstate->cubic_origin_point = tp->t_ccstate->cubic_W_max;
-@@ -131,7 +131,7 @@
- 	elapsed_time += srtt;
- 
- 	float var = (elapsed_time - tp->t_ccstate->cubic_K) / TCP_RETRANSHZ;
--	var = var * var * var * cubic_c_factor * tp->t_maxseg;
-+	var = var * var * var * cubic_c_factor * (float)tp->t_maxseg;
- 
- 	int32_t cwnd = (int32_t)((float)tp->t_ccstate->cubic_origin_point + var);
- 	uint32_t w_cubic_next = cwnd > 0 ? (uint32_t)cwnd : 0;
-@@ -179,7 +179,7 @@
- 			alpha_aimd = 1;
- 		}
- 
--		tp->t_ccstate->reno_cwnd += (uint32_t)(tp->t_maxseg * alpha_aimd);
-+		tp->t_ccstate->reno_cwnd += (uint32_t)((float)tp->t_maxseg * alpha_aimd);
- 	}
- 
- 	return tp->t_ccstate->reno_cwnd;
-@@ -304,7 +304,7 @@
- 	}
- 
- 	/* Calculate congestion window by multiplying with beta factor */
--	win = (uint32_t)(win * cubic_beta);
-+	win = (uint32_t)((float)win * cubic_beta);
- 	win = tcp_round_to(win, tp->t_maxseg);
- 	if (win < 2 * tp->t_maxseg) {
- 		win =  2 * tp->t_maxseg;
+diff --git a/osfmk/kern/smr.c b/osfmk/kern/smr.c
+index a92a484b093859189258614c9fc951a442112537..4b09176946e429bf9cf44c98dd3503b1267a0783 100644
 --- a/osfmk/kern/smr.c
 +++ b/osfmk/kern/smr.c
-@@ -2930,8 +2930,9 @@
+@@ -2930,8 +2930,9 @@ __smr_shash_rehash_with_target(
  	uint8_t                 newshift,
  	smrh_traits_t           traits)
  {
@@ -243,3 +390,146 @@ index 75d172f13d69239a60e80f13bd01efa1a6de304e..a07d49be31a80df66f05c4bb823540a3
  
  	size_t oldsize, newsize;
  	hw_lck_ptr_t *oldarray;
+diff --git a/osfmk/kern/test_lock.c b/osfmk/kern/test_lock.c
+index c3d7ba1eb2a78966a6798648007900ac465f9143..e759e1dc93c77a2d95d0ac9a8061cc95db65540e 100644
+--- a/osfmk/kern/test_lock.c
++++ b/osfmk/kern/test_lock.c
+@@ -186,8 +186,9 @@ static int
+ smr_hash_basic_test(__unused int64_t in, int64_t *out)
+ {
+ 	__auto_type T = &smrh_test_traits;
+-	const size_t nelems = 64;
+-	struct smrh_elem e_buf[nelems];
++	enum { NELEMS = 64 };
++	const size_t nelems = NELEMS;
++	struct smrh_elem e_buf[NELEMS];
+ 	struct smr_hash h_buf;
+ 
+ 	struct smrh_elem *elems = e_buf;
+@@ -196,7 +197,7 @@ smr_hash_basic_test(__unused int64_t in, int64_t *out)
+ 	__auto_type check_content = ^{
+ 		struct smrh_elem *e;
+ 		smrh_key_t key;
+-		bool seen[nelems] = { };
++		bool seen[NELEMS] = { };
+ 
+ 		assert3u(smr_hash_serialized_count(h), ==, nelems / 2);
+ 
+diff --git a/osfmk/kern/trap_telemetry.c b/osfmk/kern/trap_telemetry.c
+index 04059021605951e0df4453350334c70731815393..39426b88c3dc5e8c0e7f65e4547ea3cc63c02c03 100644
+--- a/osfmk/kern/trap_telemetry.c
++++ b/osfmk/kern/trap_telemetry.c
+@@ -625,7 +625,7 @@ backtrace_to_offset_bt_string(
+ 	 * The UUID cache relies on NULL entries to represent free slots, so clear
+ 	 * it before use.
+ 	 */
+-	uuid_t *uuid_cache[uuid_cache_count] = {0};
++	uuid_t *uuid_cache[TRAP_TELEMETRY_BT_FRAMES] = {0};
+ 	assert(frames_len <= uuid_cache_count);
+ 
+ 	/* Add all frames and store unique UUIDs into the cache */
+@@ -1148,7 +1148,7 @@ trap_telemetry_report_simulated_trap_impl(
+ 	 */
+ 
+ 	const size_t frames_count = TRAP_TELEMETRY_BT_FRAMES + 1;
+-	uintptr_t frames[frames_count];
++	uintptr_t frames[TRAP_TELEMETRY_BT_FRAMES + 1];
+ 
+ 	struct backtrace_control ctl = {
+ 		.btc_frame_addr = (uintptr_t)__builtin_frame_address(0),
+diff --git a/osfmk/kern/zalloc.c b/osfmk/kern/zalloc.c
+index 9edf8c5c0c01702423f99ce25e64de1804079520..c75e56b35e8de3b8c197672d090758ac2f603db6 100644
+--- a/osfmk/kern/zalloc.c
++++ b/osfmk/kern/zalloc.c
+@@ -10576,7 +10576,7 @@ zone_basic_test_run(__unused int64_t in, int64_t *out)
+ 	{
+ 		zone_t test_pcpu_zone;
+ 		kern_return_t kr;
+-		const int num_allocs = 8;
++		enum { num_allocs = 8 };
+ 		int idx;
+ 		vm_size_t elem_size = 2 * PAGE_SIZE / num_allocs;
+ 		void *allocs[num_allocs];
+diff --git a/osfmk/vm/lz4.h b/osfmk/vm/lz4.h
+index 419241ec180fd08591b2dc1f63651df2155fe7ec..23c91a69ebbfb42ef21a1e539e00e14ee7ad70f1 100644
+--- a/osfmk/vm/lz4.h
++++ b/osfmk/vm/lz4.h
+@@ -45,7 +45,8 @@
+ 
+ //  Represents a position in the input stream
+ typedef struct { uint32_t offset; uint32_t word; } lz4_hash_entry_t;
+-static const size_t lz4_hash_table_size = LZ4_COMPRESS_HASH_ENTRIES * sizeof(lz4_hash_entry_t);
++#define LZ4_HASH_TABLE_SIZE (LZ4_COMPRESS_HASH_ENTRIES * sizeof(lz4_hash_entry_t))
++static const size_t lz4_hash_table_size = LZ4_HASH_TABLE_SIZE;
+ 
+ // Worker function for lz4 encode.  Underlies both the buffer and stream encode operations.
+ // Performs lz4 encoding of up to 2gb of data, updates dst_ptr and src_ptr to point to the
+@@ -70,7 +71,8 @@ extern int lz4_decode_asm(uint8_t **dst_ptr, uint8_t *dst_begin, uint8_t *dst_en
+ 
+ #pragma mark - Buffer interfaces
+ 
+-static const size_t lz4_encode_scratch_size = lz4_hash_table_size;
++#define LZ4_ENCODE_SCRATCH_SIZE LZ4_HASH_TABLE_SIZE
++static const size_t lz4_encode_scratch_size = LZ4_ENCODE_SCRATCH_SIZE;
+ static const size_t lz4_decode_scratch_size = 0;
+ 
+ #pragma mark - Buffer interfaces (LZ4 RAW)
+diff --git a/osfmk/vm/vm_compressor_algorithms.c b/osfmk/vm/vm_compressor_algorithms.c
+index d6052b17c08dd650ece73beef57a2b84b63cb76f..29089e700785a51f80b5d5eb749533b9502511f4 100644
+--- a/osfmk/vm/vm_compressor_algorithms.c
++++ b/osfmk/vm/vm_compressor_algorithms.c
+@@ -46,12 +46,12 @@
+ #define WKC_SCRATCH_ALIGN (64)
+ 
+ typedef union {
+-	uint8_t lz4state[lz4_encode_scratch_size]__attribute((aligned(LZ4_SCRATCH_ALIGN)));
++	uint8_t lz4state[LZ4_ENCODE_SCRATCH_SIZE]__attribute((aligned(LZ4_SCRATCH_ALIGN)));
+ 	uint8_t wkscratch[0] __attribute((aligned(WKC_SCRATCH_ALIGN))); // TODO
+ } compressor_encode_scratch_t;
+ 
+ typedef union {
+-	uint8_t lz4decodestate[lz4_encode_scratch_size]__attribute((aligned(64)));
++	uint8_t lz4decodestate[LZ4_ENCODE_SCRATCH_SIZE]__attribute((aligned(64)));
+ 	uint8_t wkdecompscratch[0] __attribute((aligned(64)));
+ } compressor_decode_scratch_t;
+ 
+diff --git a/osfmk/vm/vm_entry_lock.c b/osfmk/vm/vm_entry_lock.c
+index 6acf97c7742149b607a307cd3f513af9ca1f861b..e203a93b95159ab5631accb233a3cb4c1a9de60c 100644
+--- a/osfmk/vm/vm_entry_lock.c
++++ b/osfmk/vm/vm_entry_lock.c
+@@ -120,9 +120,10 @@ static const vm_entry_lock_t VMEL_ONE_READ_COUNT = {
+ static_assert(sizeof(vm_entry_lock_t) == sizeof(uint32_t));
+ 
+ static LCK_GRP_DECLARE(vm_entry_lock_grp, "vm_entry_lock");
++#define VME_XTAIL_HASH_SIZE (8u << (32 - __builtin_clz(MAX_CPUS)))
+ __used
+-static const uint32_t vme_xtail_hash_size = 8u << (32 - __builtin_clz(MAX_CPUS));
+-static lck_mcs_id_t vme_xtail_hash[vme_xtail_hash_size];
++static const uint32_t vme_xtail_hash_size = VME_XTAIL_HASH_SIZE;
++static lck_mcs_id_t vme_xtail_hash[VME_XTAIL_HASH_SIZE];
+ 
+ 
+ #pragma mark helpers
+diff --git a/osfmk/vm/vm_map_lock_tests.c b/osfmk/vm/vm_map_lock_tests.c
+index bc64b0688e299224cadb15144a819005725581f6..e1bb6b88002c71b988bd71ea807f5fe17fc22c92 100644
+--- a/osfmk/vm/vm_map_lock_tests.c
++++ b/osfmk/vm/vm_map_lock_tests.c
+@@ -1144,7 +1144,8 @@ struct test_preflight_entry_config {
+ 	bool            create;
+ };
+ 
+-const unsigned int n_preflight_results = 8;
++enum { PREFLIGHT_RESULT_CAPACITY = 8 };
++const unsigned int n_preflight_results = PREFLIGHT_RESULT_CAPACITY;
+ 
+ struct test_map_spec {
+ 	const char            *name;
+@@ -1154,7 +1155,7 @@ struct test_map_spec {
+ 	vm_map_offset_t        range_end;
+ 
+ 	// Results updated by the test
+-	struct test_preflight_result    preflight_results[n_preflight_results];
++	struct test_preflight_result    preflight_results[PREFLIGHT_RESULT_CAPACITY];
+ 	unsigned int           n_valid_preflight_results;
+ 
+ 	// Adjustment for how many preflights were called twice

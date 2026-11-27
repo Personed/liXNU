@@ -267,10 +267,14 @@ The paired run #186 inputs are [guest ZIP](https://github.com/Personed/liXNU/act
 (SHA-256 `6edd870db5d8cfd23fc45bb2fd02c9489c98a0d792e49d29ef22a57d46faf687`) and
 [disk ZIP](https://github.com/Personed/liXNU/actions/runs/46004186107/artifacts/15202825945)
 (SHA-256 `5948892ba98e89bdaaa3ea6a0e9289faf423bcfd15a034818519ac8198bb25a8`). These archive
-digests verify the complete ZIPs, not individual files inside them. The retained #186 boot
-logs do not print separate SHA-256 values for `Image`, `initramfs.cpio.gz`, and `pd.img`;
-those file-level values remain unverified here. A future run should emit the extracted-file
-hashes alongside the host-capacity snapshot.
+digests verify the complete ZIPs, not individual files inside them. The guest manifest
+records the ARM64 Linux `Image` SHA-256
+`02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6` and
+`initramfs.cpio.gz` SHA-256
+`2b20a4e96765e8b20033682fa510c20535957b296ebc0ac44821cf5f2a5b5715`. The individual
+`pd.img` SHA-256 was not available in the retained boot logs or artifact metadata for this
+update; the disk ZIP digest does not substitute for it. A future run should emit all three
+extracted-file hashes alongside the host-capacity snapshot.
 
 The local run used `tests/puredarwin/run-tcg-e2e.py` at PR #99's rebased head
 [`e1b70f8`](https://github.com/Personed/xnulinux/commit/e1b70f8e35a944eb374e2d37653d0b8cd6bc7420).

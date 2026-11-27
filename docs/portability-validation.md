@@ -598,11 +598,25 @@ Report the profile alongside the stage:
      expected_base="$carve_base" expected_mb="$carve_mb" request_mb=16; then
      sudo rmmod fki-carve-probe
    fi
-   sudo dmesg | sed -n "/$probe_mark/,\$p" | grep -F 'fki-carve-probe:'
+   if ! probe_log=$(sudo dmesg); then
+     echo "FKI probe evidence unverified: could not read the kernel log" >&2
+   elif ! printf '%s\n' "$probe_log" | grep -Fq -- "$probe_mark"; then
+     echo "FKI probe evidence unverified: marker missing (logging disabled or record evicted)" >&2
+   else
+     probe_lines=$(printf '%s\n' "$probe_log" | sed -n "/$probe_mark/,\$p" | grep -F 'fki-carve-probe:' || true)
+     if [ -n "$probe_lines" ]; then
+       printf '%s\n' "$probe_lines"
+     else
+       echo "FKI probe evidence unverified: marker present but no probe messages follow it" >&2
+     fi
+   fi
    ```
    Record the two returned intervals and the `same-pa-reuse` result separately. If `insmod` fails after both
    in-bounds markers and `same-pa-reuse: no`, record allocation-in-bounds as passed and reuse as failed. Otherwise
-   report the last completed stage and the probe's failure reason; do not infer a full allocation/reuse pass.
+   report the last completed stage and the probe's failure reason; do not infer a full allocation/reuse pass. If the
+   UUID is missing from the captured kernel log, or no probe messages follow it, mark allocation and reuse evidence
+   for this attempt as unverified. This includes systems with `printk.devkmsg=off` and logs where the marker or
+   subsequent probe records were evicted; do not use unscoped lines from an earlier attempt as evidence.
    Inside that ARM64 Linux instance, collect
    `uname -rm`, `getconf PAGE_SIZE`, `lscpu` (including PAC features) and the FKI
    carve-out values. Record the outer host, hypervisor and accelerator separately

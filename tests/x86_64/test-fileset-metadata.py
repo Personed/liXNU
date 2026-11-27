@@ -14,6 +14,7 @@ CPU_TYPE_X86_64 = 0x01000007
 CPU_SUBTYPE_X86_64_ALL = 3
 MH_EXECUTE = 2
 MH_FILESET = 12
+LC_SEGMENT_64 = 0x19
 LC_UUID = 0x1B
 LC_FILESET_ENTRY = 0x80000035
 
@@ -52,6 +53,77 @@ def verify(binary, image, expected):
         assert path.read_bytes() == image
 
 
+def verify_segment_bounds(binary):
+    image = make_fileset()
+    image.extend(bytes(0x120 - len(image)))
+    member = 128
+    command = member + 32
+    struct.pack_into("<II", image, member + 16, 1, 72)
+    name = b"__TEXT"
+    struct.pack_into(
+        "<II16sQQQQIIII", image, command, LC_SEGMENT_64, 72, name,
+        0xFFFFFF8000200000, 0x1000, 0x100, 0x20, 5, 5, 0, 0,
+    )
+    expected = {
+        "status": "accepted",
+        "parser_result": 0,
+        "file_type": 12,
+        "cpu_subtype": 3,
+        "load_command_count": 1,
+        "load_command_bytes": 56,
+        "fileset_entry_count": 1,
+        "kernel": {
+            "file_type": 2,
+            "cpu_subtype": 3,
+            "load_command_count": 1,
+            "load_command_bytes": 72,
+            "fileoff": "0x0000000000000080",
+            "vmaddr": "0xffffff8000200000",
+            "segments": [{
+                "name_bytes_hex": name.ljust(16, b"\0").hex(),
+                "vmaddr": "0xffffff8000200000",
+                "vmsize": "0x0000000000001000",
+                "fileoff": "0x0000000000000100",
+                "filesize": "0x0000000000000020",
+                "section_count": 0,
+            }],
+        },
+    }
+    # This range ends exactly at EOF only with container-relative fileoff.
+    verify(binary, image, expected)
+
+    # Insert one section_64 record before the original segment bytes.
+    sectioned = bytearray(image)
+    section_offset = command + 72
+    sectioned[section_offset:section_offset] = bytes(80)
+    struct.pack_into("<I", sectioned, member + 20, 152)
+    struct.pack_into("<I", sectioned, command + 4, 152)
+    struct.pack_into("<Q", sectioned, command + 40, 0x150)
+    struct.pack_into("<I", sectioned, command + 64, 1)
+    struct.pack_into(
+        "<16s16sQQIIIIIIII", sectioned, section_offset,
+        b"__text", name, 0xFFFFFF8000200000, 0x20, 0x150, 0, 0, 0, 0, 0, 0, 0,
+    )
+    kernel = expected["kernel"]
+    kernel["load_command_bytes"] = 152
+    kernel["segments"][0].update(fileoff="0x0000000000000150", section_count=1)
+    verify(binary, sectioned, expected)
+
+    rejected = {"status": "parser_rejected", "parser_result": -8}
+    verify(binary, image[:-1], rejected)
+    invalid = bytearray(image)
+    struct.pack_into("<I", invalid, command + 64, 1)  # missing section record
+    verify(binary, invalid, rejected)
+    invalid = bytearray(image)
+    struct.pack_into("<Q", invalid, command + 24, 0xFFFFFFFFFFFFFFF0)
+    verify(binary, invalid, rejected)
+
+    count = 25  # Above the fixed descriptor table capacity.
+    expanded = image[:command] + image[command : command + 72] * count
+    struct.pack_into("<II", expanded, member + 16, count, 72 * count)
+    verify(binary, expanded, {"status": "parser_rejected", "parser_result": -95})
+
+
 def main():
     binary = sys.argv[1]
     image = make_fileset()
@@ -72,6 +144,7 @@ def main():
                 "load_command_bytes": 24,
                 "fileoff": "0x0000000000000080",
                 "vmaddr": "0xffffff8000200000",
+                "segments": [],
             },
         },
     )
@@ -83,6 +156,7 @@ def main():
 
     struct.pack_into("<I", image, 12, MH_EXECUTE)
     verify(binary, image, {"status": "not_fileset", "parser_result": None})
+    verify_segment_bounds(binary)
     print("Recovery fileset metadata fixtures passed")
 
 

@@ -114,17 +114,20 @@ static bool legacy_sentinels_present(const void *image)
 	const unsigned char *bytes = image;
 	uint64_t st0_significand, xstate_bv;
 	uint32_t mxcsr;
-	uint16_t fcw, st0_exponent;
+	uint16_t fcw, fsw, st0_exponent;
 
 	/* In the standard XSAVE format, the legacy area holds FCW, FTW,
 	 * MXCSR, and 80-bit ST(0). After FNINIT, FLD1 pushes onto physical
-	 * register 7, sets its abridged tag, and stores the encoding of 1.0. */
+	 * register 7 (FSW.TOP=7), sets its abridged tag, and stores the encoding
+	 * of 1.0. */
 	memcpy(&fcw, bytes, sizeof(fcw));
+	memcpy(&fsw, bytes + 2, sizeof(fsw));
 	memcpy(&mxcsr, bytes + 24, sizeof(mxcsr));
 	memcpy(&st0_significand, bytes + 32, sizeof(st0_significand));
 	memcpy(&st0_exponent, bytes + 40, sizeof(st0_exponent));
 	memcpy(&xstate_bv, bytes + LEGACY_XSTATE_SIZE, sizeof(xstate_bv));
-	return (xstate_bv & 3) == 3 && fcw == x87_control && bytes[4] == 0x80 &&
+	return (xstate_bv & 3) == 3 && fcw == x87_control &&
+	       ((fsw >> 11) & 7) == 7 && bytes[4] == 0x80 &&
 	       mxcsr == mxcsr_control &&
 	       st0_significand == UINT64_C(0x8000000000000000) &&
 	       st0_exponent == 0x3fff;

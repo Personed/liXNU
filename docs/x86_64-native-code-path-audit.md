@@ -40,12 +40,16 @@ end-exclusive address may equal 4 GiB: the interval `[0xfffff000, 0x100000000)`
 contains only representable 32-bit physical addresses. The kernel interval is
 stricter: `osfmk/i386/i386_init.c` first evaluates
 `uint32_t lphysfree = kaddr + ksize`, and `osfmk/i386/pmap_common.c` also adds
-those fields before widening. Therefore its end-exclusive sum must not exceed
-`UINT32_MAX`; allowing 4 GiB would wrap XNU's intermediate addition. Synthetic
-tests cover the final 4 KiB page for the memory map and device tree, rejection
-of the same wrapping kernel interval, malformed lengths, unsupported
-versions/modes, unterminated command lines, and intervals extending past the
-32-bit physical-address space.
+those fields before widening. XNU then rounds the initial `physfree` up to a
+4 KiB page and later uses `ID_MAP_VTOP()` to keep the low 32 bits of the
+identity-mapped address. The validator accepts a kernel end at most
+`0xfffff000`. A higher end rounds to 4 GiB and loses the address. This bound
+does not reserve space for bootstrap allocations.
+
+Synthetic tests cover the final 4 KiB page for the memory map and device
+tree, the kernel endpoint at `0xfffff000` and one byte above it, malformed
+lengths, unsupported versions/modes, unterminated command lines, and intervals
+extending past the 32-bit physical-address space.
 
 The builder initializes only a core subset. EFI system-table, runtime-service,
 video, security, and target-specific entry fields remain unset. The helper is

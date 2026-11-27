@@ -13,9 +13,14 @@ fi
 
 P=$(cd "$(dirname "$0")/.." && pwd)
 U=$(id -un)
-[ -f /var/tmp/mac.conf ] || { echo "no /var/tmp/mac.conf: make the disk first (scripts/mk-macvm-disk.sh)" >&2; exit 1; }
-[ -f /etc/xnulinux.conf ] || sudo tee /etc/xnulinux.conf >/dev/null <<'CONF'
-# The hosted macOS (scripts/xnulinux-boot.sh reads this, then /var/tmp/mac.conf for the disk's UUIDs); the environment
+# A configured service can use a custom disk configuration such as PureDarwin's pd.conf.
+if [ ! -f /etc/xnulinux.conf ]; then
+  if [ ! -f /var/tmp/mac.conf ]; then
+    echo "No default disk configuration at /var/tmp/mac.conf. Run scripts/mk-macvm-disk.sh or create /etc/xnulinux.conf for a custom disk." >&2
+    exit 1
+  fi
+  sudo tee /etc/xnulinux.conf >/dev/null <<'CONF'
+# The hosted system (xnulinux-boot.sh reads this file, then MAC_CONF for the disk UUIDs); the environment
 # overrides what is written as ${NAME:-default}
 CPUS=${CPUS:-2}		# its CPUs (the Linux CPUs from 0 up; Linux keeps the rest and its device interrupts)
 RAM_MB=${RAM_MB:-7900}	# its memory, within fki's carve-out
@@ -24,6 +29,7 @@ GPU=${GPU:-auto}	# auto: start the GPU bridge when possible, with CPU rendering 
 #XNU_ARGS="model=VirtualMac2,1"
 #BOOTARGS="amfi_get_out_of_my_way=1 lp-sip0=2050 bt-transport-override=10"
 CONF
+fi
 sudo tee /etc/systemd/system/xnulinux.service >/dev/null <<UNIT
 [Unit]
 Description=xnulinux: the hosted macOS

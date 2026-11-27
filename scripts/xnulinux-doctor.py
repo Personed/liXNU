@@ -9,6 +9,8 @@ certification or a physical-hardware test.
 
 import argparse
 import ctypes
+import gzip
+import hashlib
 import json
 import os
 import platform
@@ -16,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import zlib
 
 GIB = 1024 ** 3
 X86_64H_FEATURES = (
@@ -116,15 +119,54 @@ def qemu_facts(executable="qemu-system-aarch64"):
     return facts
 
 
-def linux_cpu_flags(path="/proc/cpuinfo"):
+def linux_cpu_info(path="/proc/cpuinfo"):
+    """Read selected fields from the first CPU entry Linux reports."""
+    fields = {}
     try:
         with open(path, encoding="utf-8") as cpuinfo:
             for line in cpuinfo:
-                if line.lower().startswith("flags") or line.lower().startswith("features"):
-                    return set(line.partition(":")[2].strip().split())
+                if not line.strip() and fields:
+                    break
+                name, separator, value = line.partition(":")
+                key = name.strip().lower()
+                if separator and key in {"vendor_id", "model name", "flags", "features"}:
+                    fields[key] = value.strip()
     except OSError:
-        pass
-    return set()
+        return {}
+    return fields
+
+
+def linux_kernel_config_facts(release, proc_config_path="/proc/config.gz", boot_config_dir="/boot"):
+    """Hash the Linux config bytes, preferring the running kernel's gzip export.
+
+    The /boot fallback identifies a file associated with the kernel release,
+    which can be shared by multiple kernel builds. The digest covers the plain
+    .config bytes. If there is no readable, nonblank config, the status is
+    "unavailable" and the hash and source are null.
+    """
+    candidates = [(proc_config_path, True)]
+    if release and os.path.basename(release) == release:
+        candidates.append((os.path.join(boot_config_dir, f"config-{release}"), False))
+
+    for path, compressed in candidates:
+        try:
+            if compressed:
+                with gzip.open(path, "rb") as config_file:
+                    config = config_file.read()
+            else:
+                with open(path, "rb") as config_file:
+                    config = config_file.read()
+        except (OSError, EOFError, zlib.error):
+            continue
+        if not config.strip():
+            continue
+        return {
+            "status": "available",
+            "source": path,
+            "sha256": hashlib.sha256(config).hexdigest(),
+        }
+
+    return {"status": "unavailable", "source": None, "sha256": None}
 
 
 def collect_facts():
@@ -132,7 +174,14 @@ def collect_facts():
     machine = platform.machine() or "unknown"
     total, available = memory_facts(system)
     qemu = qemu_facts()
-    flags = linux_cpu_flags() if system == "Linux" else set()
+    cpu_info = linux_cpu_info() if system == "Linux" else {}
+    flags = set(cpu_info.get("flags", cpu_info.get("features", "")).split())
+    linux_page_size = os.sysconf("SC_PAGE_SIZE") if system == "Linux" else None
+    kernel_config = (
+        linux_kernel_config_facts(platform.release())
+        if system == "Linux"
+        else {"status": "not_applicable", "source": None, "sha256": None}
+    )
     try:
         free_disk = shutil.disk_usage(os.getcwd()).free
     except OSError:
@@ -148,6 +197,12 @@ def collect_facts():
         "free_disk_bytes": free_disk,
         "qemu": qemu,
         "linux_cpu_flags": sorted(flags.intersection(X86_64H_FEATURES)),
+        "linux_cpu_vendor": cpu_info.get("vendor_id"),
+        "linux_cpu_model": cpu_info.get("model name"),
+        "linux_page_size_bytes": linux_page_size,
+        "linux_kernel_config_status": kernel_config["status"],
+        "linux_kernel_config_source": kernel_config["source"],
+        "linux_kernel_config_sha256": kernel_config["sha256"],
     }
 
 
@@ -243,11 +298,10 @@ def evaluate(facts):
         flags = set(facts["linux_cpu_flags"])
         missing = [feature for feature in X86_64H_FEATURES if feature not in flags]
         details = {"missing_features": missing, "note": "informational for the experimental native x86_64 port; not required by QEMU TCG"}
-        checks.append(check(
-            "native-x86-feature-floor", "info",
-            "native x86_64 feature floor is " + ("present" if not missing else "missing " + " ".join(missing)),
-            details,
-        ))
+        summary = "First Linux CPU entry reports all listed x86_64h flags"
+        if missing:
+            summary = "Flags missing from the first Linux CPU entry: " + " ".join(missing)
+        checks.append(check("native-x86-feature-floor", "info", summary, details))
         kvm_access = os.access("/dev/kvm", os.R_OK | os.W_OK)
         checks.append(check(
             "kvm", "info",
@@ -267,6 +321,12 @@ def human_report(report):
         "xnulinux doctor (diagnostic only; not a compatibility certification)",
         f"Host: {report['facts']['system']} {report['facts']['release']} ({report['facts']['machine']}), logical CPUs: {report['facts']['logical_cpus']}",
     ]
+    facts = report["facts"]
+    cpu_parts = (facts.get("linux_cpu_vendor"), facts.get("linux_cpu_model"))
+    if any(cpu_parts):
+        lines.append("Linux CPU: " + ", ".join(part for part in cpu_parts if part))
+    if facts.get("linux_page_size_bytes") is not None:
+        lines.append(f"Linux page size: {facts['linux_page_size_bytes']} bytes")
     for item in report["checks"]:
         lines.append(f"{item['status'].upper()}: {item['name']}: {item['summary']}")
     lines.append(f"Overall: {report['overall']}")

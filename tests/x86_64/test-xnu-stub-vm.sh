@@ -183,6 +183,13 @@ if grep -E 'xnu: (CPU is missing required x86_64 features:|pinned XNU source doe
   exit 1
 fi
 
+HASWELL_LOG="$STAGE/qemu-serial-haswell.log"
+run_stub_vm tcg Haswell "$HASWELL_LOG"
+grep -F 'xnu: native x86_64 world switch is not implemented; refusing to load' "$HASWELL_LOG" >/dev/null || {
+  echo "feature-complete Haswell VM did not reach the world-switch refusal" >&2
+  exit 1
+}
+
 AVX2_LOG="$STAGE/qemu-serial-avx2-disabled.log"
 run_stub_vm tcg 'Haswell,-avx2' "$AVX2_LOG"
 grep -F 'xnu: CPU is missing required x86_64 features: AVX2' "$AVX2_LOG" >/dev/null || {

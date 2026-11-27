@@ -64,6 +64,7 @@ bash tests/x86_64/test-launcher.sh
 bash tests/x86_64/test-tcg-smoke.sh
 tests/x86_64/tcg-smoke.sh /path/to/x86_64/vmlinuz /path/to/initrd.cpio.gz
 tests/x86_64/test-boundary-probe-vm.sh /path/to/x86_64/kernel-headers
+tests/x86_64/exception-recovery/test-vm.sh /path/to/x86_64/kernel-headers
 ```
 
 The smoke initramfs must print `XNU_LINUX_TCG_BOOTED` on its serial console and shut down before the timeout. TCG boots
@@ -98,6 +99,11 @@ setting `X86_BOUNDARY_ALLOW_KVM_ONLY=1` skips the unsupported TCG profile and in
 the KVM/host run. That explicit fallback is complementary local validation only; it is not a
 substitute for the CI TCG profile.
 
+The boundary probe described above is a host-only call/return test. It does not enter XNU, change `fki.h`, enable FKI
+capabilities, change CR3 or GS, inspect supervisor XSS state, install or replace an IDT or exception handler, or run C
+under foreign host state. Passing it does not establish native XNU runtime support or prove the proposed early
+exception/syscall bridge.
+
 The same disposable VM also runs a synthetic task-stack continuation model. It covers a reply
 published after the owner's initial completion check but before its first wait, a delayed reply
 while the owner sleeps and a second task on that CPU is refused entry to the reserved stack/context,
@@ -112,10 +118,17 @@ proposed ownership rules. The synthetic callback runs with local interrupts and 
 both are restored after returning to the owner's task stack and before any wait. It does not call
 `fki_arch_linux_runs()` or validate a production FKI continuation.
 
-This is a host-only call/return test. It does not enter XNU, change `fki.h`, enable FKI capabilities, change CR3 or GS,
-inspect supervisor XSS state, install or replace Linux IDT, page-fault, general-protection, or syscall handlers, or run C under foreign host state.
-The continuation scenario is also synthetic test code rather than a production FKI path. Passing either test does not
-establish native XNU runtime support or prove the proposed early exception/syscall bridge.
+The separate exception-recovery probe runs only in a disposable x86_64 VM and temporarily loads a test-owned shadow
+IDT on the selected vCPU to test controlled `#PF`/`#GP` recovery. It needs the same kind of matching x86_64 kernel
+headers passed as `KDIR`, QEMU 8.2 or newer, `busybox-static`, `cpio` and the normal module-build tools. When not
+running as root, `sudo` must be installed and usable because the script uses it to create and set permissions on
+`/dev/console` and `/dev/null` in the temporary initramfs; running as root skips that `sudo` path. CI selects a generic
+Ubuntu header package with `apt-cache search`; the VM script reads
+`include/config/kernel.release` under `KDIR` and uses `apt-get download` plus `dpkg-deb` to extract the matching
+`linux-image-unsigned-$KERNEL_RELEASE` package and `busybox-static` into its temporary initramfs. On Debian/Ubuntu,
+therefore, the configured APT indexes must contain both the unsigned kernel image for the exact `KDIR` release and
+`busybox-static`; missing or mismatched packages are a not-run environment failure, not a recovery pass.
+
 The separate [test-only entry/return contract](../../docs/x86_64-entry-return-contract.md) defines the remaining gates
 and lists the Tahoe artifact and ABI evidence still required before any XNU handoff can be considered.
 
@@ -161,8 +174,9 @@ the x86_64 parser job. No Tahoe artifact has yet been confirmed against this sub
   run validates native execution.
 - ARM64 `fki.ko` and `xnu.ko` cross-compiled against Debian 6.12.118 ARM64 headers. This is a build check, not an ARM64
   runtime smoke test.
-- The disposable feature-complete XNU-stub VM can use `/dev/kvm` where available, but there is still no Tahoe disk and
-  no physical Intel/AMD/ARM hardware acceptance. No macOS boot or hardware-integrity acceptance has been recorded.
+- The XNU-stub test boots a feature-complete Intel Haswell profile in TCG and requires the final world-switch refusal.
+  The optional KVM probe requires write access to `/dev/kvm` and all CPU features checked by the script. Tahoe boot,
+  host-integrity checks, and physical Intel/AMD/ARM acceptance are still pending.
 
 ## Acceptance evidence still required
 

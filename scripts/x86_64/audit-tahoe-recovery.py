@@ -26,7 +26,9 @@ RECOVERY_BASENAME = "verified-recovery"
 BOOT_KERNEL_COLLECTION = Path("System/Library/KernelCollections/BootKernelExtensions.kc")
 TARGET_RUNTIME_VERSION = "26.7.3"
 TARGET_RUNTIME_BUILD = "25G342"
-XNU_RELEASE_PATTERN = re.compile(rb"xnu-([0-9]+\.[0-9]+\.[0-9]+(?:~[0-9]+)?)/RELEASE_X86_64\b")
+# Public source releases use three components, but shipping build trains
+# can append more. These strings are observations, not artifact identities.
+XNU_RELEASE_PATTERN = re.compile(rb"xnu-([0-9]+(?:\.[0-9]+){2,}(?:~[0-9]+)?)/RELEASE_X86_64\b")
 
 
 def run(command: list[str], *, timeout: int = 300) -> subprocess.CompletedProcess[str]:
@@ -502,6 +504,9 @@ def main() -> int:
     fileset = report.get("recovery_image", {}).get("boot_kernel_collection_fileset")
     if fileset:
         print(f"Fileset inspection: {fileset['status']} (parser result: {fileset.get('parser_result')})")
+        segments = fileset.get("kernel", {}).get("segments")
+        if fileset["status"] == "accepted" and isinstance(segments, list):
+            print(f"Fileset kernel segments reported: {len(segments)}")
     print(f"Recovery detached: {report.get('recovery_detached')}")
     print(f"Temporary Recovery files removed: {report['temporary_recovery_files_removed']}")
     if not report["temporary_recovery_files_removed"]:

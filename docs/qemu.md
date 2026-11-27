@@ -94,17 +94,18 @@ This direct-boot profile uses the x86-64 host to run the ARM64 Linux guest under
 then loads FKI/XNU and reaches the PureDarwin console. It is separate from the UEFI
 installer-based Linux VM above. It does not require VT-x or AMD-V.
 
-For the exact tested input set, check out the CI merge revision
-[`1b3beb5`](https://github.com/Personed/xnulinux/commit/1b3beb5088c5f29be0888b41a526ff1fadd83aef)
-from PR #115 run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996).
-It combines PR #115 head `0daaa50` with #89 base `763aef9`. From a clone of this
-repository, fetch and check out that tested revision:
+For the exact input tree used by the synthetic CI merge revision
+[`1b3beb5`](https://github.com/Personed/xnulinux/commit/1b3beb5088c5f29be0888b41a526ff1fadd83aef) in PR #115 run
+[#172](https://github.com/Personed/xnulinux/actions/runs/45989875996), the merge combined PR #115 head
+[`0daaa50`](https://github.com/Personed/xnulinux/commit/0daaa50e4d2d363bd8d775131b3a298663cf26a2) with #89 base `763aef9`.
+The synthetic merge object may not be fetchable from a fresh clone. The reachable #115 head has
+Git tree `5f9b1e5`, the tree used by the tested merge. Fetch the PR head ref and check out its
+fixed SHA:
 
 ```sh
-git fetch origin 1b3beb5088c5f29be0888b41a526ff1fadd83aef
-git checkout --detach 1b3beb5088c5f29be0888b41a526ff1fadd83aef
+git fetch origin refs/pull/115/head:refs/remotes/origin/pr-115
+git checkout --detach 0daaa50e4d2d363bd8d775131b3a298663cf26a2
 ```
-
 Download and extract the paired
 [`puredarwin-e2e-guest` artifact](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196743551) and
 [`puredarwin-e2e-disk` artifact](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196177348) from [run #172](https://github.com/Personed/xnulinux/actions/runs/45989875996).

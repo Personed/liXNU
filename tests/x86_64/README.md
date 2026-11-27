@@ -76,9 +76,9 @@ compare task/CPU identity, task stack bounds/RSP, CR3 root plus PCID, FS/GS/KERN
 XCR0. The preemption-count check is nonzero only when the kernel is built with `CONFIG_PREEMPT_COUNT`; all builds still
 compare its before/after value. The shim entry uses the SysV 16-byte stack rule; the Linux kernel call frame is checked
 for bounds and restoration without imposing that user ABI on internal kernel calls. Userspace captures and compares
-the full standard XSAVE image for all XCR0-enabled user components around the raw ioctl syscall. Only YMM0–YMM7 are
-deliberately seeded and clobbered; other enabled components have passive before/after comparison, not an active
-pattern test. The test also checks Linux syscalls before and after each ioctl. The VM must unload both modules and
+the full standard XSAVE image for all XCR0-enabled user components around the raw ioctl syscall. The probe deliberately
+seeds and overwrites x87 ST(0), the x87 control word, MXCSR, and YMM0–YMM7. Other enabled user components have passive
+before/after comparison. The test also checks Linux syscalls before and after each ioctl. The VM must unload both modules and
 power off cleanly. TCG runs on every CI attempt; the script adds a KVM run when
 `/dev/kvm` and host XSAVE/AVX are available.
 

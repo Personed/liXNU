@@ -8,6 +8,8 @@ The disposable-VM boundary probe (PR #71 and its test-only contract extension) v
 
 The contract extension strengthens the existing #71 probe in place with explicit stack, preemption/IRQ, XCR0 and complete enabled-user-XSAVE oracles. It remains a disposable-VM test artifact and does not add a production FKI interface or an XNU transition.
 
+QEMU 8.2.2 TCG writes zero for the x87 instruction and data pointers (FIP/FDP) in XSAVE snapshots. The TCG evidence covers the seeded x87 value and control word, MXCSR, and YMM values. FIP/FDP preservation requires separate evidence. [QEMU TCG XSAVE implementation](https://github.com/qemu/qemu/blob/v8.2.2/target/i386/tcg/fpu_helper.c#L2507-L2533)
+
 ## Non-negotiable safety rules
 
 - The first entry-envelope implementation, when its prerequisites are met, must be a separately named test artifact loaded only in a disposable x86_64 Linux VM. It must not be packaged, autoloaded, or enabled by a runtime parameter on normal artifacts.

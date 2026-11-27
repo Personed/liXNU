@@ -10,14 +10,85 @@ The launcher needs Python 3, `qemu-system-aarch64`, and a matching pair of AArch
 variable-store images. Use one writable copy of the variables image per VM. The defaults are 4
 guest CPUs and 16 GiB of guest RAM. Allow additional RAM for the physical host.
 
-The current complete PureDarwin reference profile assigns 16 GiB to the ARM64 guest. Before
-preparing its artifacts, record the total and available RAM visible to the operating system that
-will run QEMU. The CI planning screen is at least 20 GiB total and 4 GiB available. On a
-virtualized host, these values describe the runner OS and do not establish the outer machine's
-physical RAM. This is a planning screen, not a measured minimum; the physical RAM floor is unknown.
-See the [validation matrix](portability-validation.md) for the evidence and limits.
+This persistent, UEFI-installed Linux VM path is distinct from the **headless full-route TCG test** documented below. The tested x86-64 route uses `tests/puredarwin/run-tcg-e2e.py` with the `puredarwin-e2e-guest` and `puredarwin-e2e-disk` artifacts from one successful workflow run. It boots an ARM64 Linux guest directly into the PureDarwin console; it does not use this persistent VM installer or provide a macOS desktop.
 
-## Tested host and guest architectures
+The persistent VM example below uses a 16 GiB guest by default. That is separate from the
+validated headless cross-host profile, which assigns 6 GiB to its ARM64 guest. No physical host
+RAM minimum has been established. Measure available RAM before starting QEMU and leave headroom
+for the host OS; hosted-runner measurements and their limits are in the
+[validation matrix](portability-validation.md).
+
+## Reproduce the validated headless TCG route
+
+The successful cross-host workflow builds a matching ARM64 Linux kernel and initramfs, FKI/XNU
+modules, a free kernel collection, and a PureDarwin system disk. To reproduce its full console
+and shutdown route on an x86-64 host:
+
+1. Use one successful run of the **PureDarwin ARM64 image** workflow, such as [run #158](https://github.com/Personed/xnulinux/actions/runs/45911026412). Download the `puredarwin-e2e-guest` and `puredarwin-e2e-disk` artifacts from that same run. Extract them into these directories; the guest artifact must keep both manifests beside `Image`:
+
+   ```text
+   artifacts/
+   ├── puredarwin-e2e-guest/
+   │   ├── Image
+   │   ├── initramfs.cpio.gz
+   │   ├── guest-manifest.txt
+   │   └── build-manifest.txt
+   └── puredarwin-e2e-disk/
+       └── pd.img
+   ```
+
+   The two artifacts are retained for 30 days. The harness checks that Image, initramfs, and disk match their manifests before it starts QEMU. Always obtain both artifacts from one workflow run.
+
+2. Install Python 3.12 and a QEMU build with AArch64 system emulation (QEMU 8.2 or newer for the tested `cortex-a710` CPU model):
+
+   - Ubuntu/Debian: `sudo apt-get install qemu-system-arm python3`
+   - macOS: `brew install qemu python3`
+   - Windows: install QEMU with `choco install qemu --yes` or the [official Windows QEMU build](https://www.qemu.org/download/#windows), add its executable directory to `PATH`, and use the Python launcher `py -3`.
+
+3. From a checkout of the same repository revision that produced the artifacts, run the headless boot with the tested 6 GiB profile. The script defaults to QEMU's `cortex-a710` TCG CPU model.
+
+   On Linux or macOS:
+
+   ```sh
+   python3 tests/puredarwin/run-tcg-e2e.py \
+     artifacts/puredarwin-e2e-guest/Image \
+     artifacts/puredarwin-e2e-guest/initramfs.cpio.gz \
+     artifacts/puredarwin-e2e-disk/pd.img \
+     puredarwin-tcg-serial.log \
+     --qemu-memory 6G \
+     --linux-memory 2G \
+     --fki-carve-base 0xc0000000 \
+     --fki-carve-mb 3072 \
+     --xnu-ram-mb 2816 \
+     --max-rss-mib 6144
+   ```
+
+   On Windows PowerShell, with the same artifact directory layout:
+
+   ```powershell
+   $env:ARTIFACTS = (Resolve-Path .\artifacts).Path
+   py -3 tests\puredarwin\run-tcg-e2e.py `
+     "$env:ARTIFACTS\puredarwin-e2e-guest\Image" `
+     "$env:ARTIFACTS\puredarwin-e2e-guest\initramfs.cpio.gz" `
+     "$env:ARTIFACTS\puredarwin-e2e-disk\pd.img" `
+     puredarwin-tcg-serial.log `
+     --qemu-memory 6G `
+     --linux-memory 2G `
+     --fki-carve-base 0xc0000000 `
+     --fki-carve-mb 3072 `
+     --xnu-ram-mb 2816 `
+     --max-rss-mib 6144
+   ```
+
+The command uses QEMU TCG, so VT-x/AMD-V is not required. It requires 6 GiB of guest address
+space plus host memory for QEMU and the host OS. The tested hosted runners had 10.5–15.2 GB
+available before QEMU; peak QEMU RSS was 3.47 GiB on Intel macOS and 3.67 GiB on Ubuntu, and
+was not measured on Windows. Those are hosted-runner observations, not a physical RAM minimum.
+No physical-PC compatibility or minimum RAM has been established. This headless route reaches
+the PureDarwin shell and verifies guest halt, module unload, Linux power-off, and QEMU exit; it
+does not test a desktop, networking, or graphics.
+
+## Persistent VM launcher host checks
 
 CI starts the ARM64 guest through UEFI on Ubuntu 24.04 x86-64 and ARM64, Windows Server 2025
 x86-64, macOS 15 on Intel, and macOS 15 on Apple Silicon. Ubuntu x86-64 also starts the graphical
@@ -79,9 +150,7 @@ For the experimental 16 GiB VM profile, the QEMU `virt` RAM starts at `0x4000000
 `0x200000000` for XNU. Build `fki.ko` first, then install that service and reboot inside the VM.
 Use `GPU=off` for the hosted system. The optional QEMU graphical display is for Linux's console.
 
-The QEMU launcher has been exercised from x86-64 Linux through the ARM64 Debian installer and in
-CI by starting ARM64 guests through UEFI on the Linux, Windows, Intel macOS, and Apple Silicon
-macOS hosts listed above. Ubuntu x86-64 also exercises the graphical path. Its argument
-construction is checked on all host systems.
-A test module allocated 2 MiB at the documented address in a 16 GiB guest booted directly
-into Linux. A complete hosted PureDarwin or macOS boot using the UEFI profile remains unverified.
+The persistent UEFI VM launcher has been exercised through the firmware shell and a Linux boot
+on the host profiles listed above; a 2 MiB test module allocation also passed in its 16 GiB guest.
+Those checks do not validate a complete PureDarwin boot through this persistent-install route. Use
+the headless artifact-based TCG route above for the validated x86-64-to-PureDarwin-shell flow.

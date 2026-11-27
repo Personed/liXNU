@@ -108,7 +108,7 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL):
     return data
 
 
-def make_hib_image():
+def make_hib_image(flags=S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS):
     data = make_valid_image()
     put_name(data, TEXT_OFF + 8, "__HIB")
     # Keep the HIB bytes separate from the header and load commands.
@@ -117,7 +117,7 @@ def make_hib_image():
     put_u32(data, TEXT_OFF + 60, 3)
     put_name(data, SECTION_OFF + 16, "__HIB")
     put_u32(data, SECTION_OFF + 48, 0x300)
-    put_u32(data, SECTION_OFF + 64, S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS)
+    put_u32(data, SECTION_OFF + 64, flags)
     put_u64(data, RIP_OFF, 0x1110)
     return data
 
@@ -569,6 +569,10 @@ def main():
     hib_mode = ("--hib-entry-metadata",)
     run_case(binary, "HIB requires opt-in", make_hib_image(), 3)
     run_case(binary, "HIB text entry", make_hib_image(), 0, expect_hib_entry, options=hib_mode)
+    run_case(
+        binary, "HIB with only pure instructions", make_hib_image(S_ATTR_PURE_INSTRUCTIONS),
+        0, expect_hib_entry, options=hib_mode,
+    )
     run_case(binary, "normal executable entry does not qualify", make_valid_image(), 3,
              options=hib_mode)
     for name, offset, value in (

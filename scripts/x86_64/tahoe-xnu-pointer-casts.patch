@@ -285,3 +285,54 @@ index 75d172f13d69239a60e80f13bd01efa1a6de304e..a07d49be31a80df66f05c4bb823540a3
  
  	if (arg2 & CTLHW_PERFLEVEL) {
  		if ((perflevel < 0) || (perflevel >= n_perflevels)) {
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7009,9 +7009,9 @@
+     const char *key,
+     int values,
+     boolean_t embedNUL)
+ {
+-	const int limit = 8;
++	enum { limit = 8 };
+ 	uint64_t entropy[limit];
+ 	char str[strlen(key) + (HEX_STR_LEN + 1) * limit + 1];
+ 	if (values > limit) {
+ 		values = limit;
+@@ -8447,9 +8447,9 @@
+ 	}
+ }
+ 
+ // Includes the 0-byte (therefore "SIZE" instead of "LEN").
+-static const size_t CS_CDHASH_STRING_SIZE = CS_CDHASH_LEN * 2 + 1;
++enum { CS_CDHASH_STRING_SIZE = CS_CDHASH_LEN * 2 + 1 };
+ 
+ static void
+ cdhash_to_string(char str[CS_CDHASH_STRING_SIZE], uint8_t const * const cdhash)
+ {
+--- a/bsd/kern/kern_sig.c
++++ b/bsd/kern/kern_sig.c
+@@ -1978,9 +1978,9 @@
+ build_signal_reason(int signum, const char *procname)
+ {
+ 	os_reason_t signal_reason = OS_REASON_NULL;
+ 	proc_t sender_proc = current_proc();
+-	const uint32_t proc_name_length = sizeof(sender_proc->p_name);
++	enum { proc_name_length = sizeof(sender_proc->p_name) };
+ 	uint32_t reason_buffer_size_estimate = 0;
+ 	const char *default_sender_procname = "unknown";
+ 	mach_vm_address_t data_addr;
+ 	int ret;
+--- a/osfmk/vm/vm_entry_lock.c
++++ b/osfmk/vm/vm_entry_lock.c
+@@ -121,9 +121,10 @@
+ 
+ static LCK_GRP_DECLARE(vm_entry_lock_grp, "vm_entry_lock");
+ __used
+ static const uint32_t vme_xtail_hash_size = 8u << (32 - __builtin_clz(MAX_CPUS));
+-static lck_mcs_id_t vme_xtail_hash[vme_xtail_hash_size];
++#define VME_XTAIL_HASH_SIZE (8u << (32 - __builtin_clz(MAX_CPUS)))
++static lck_mcs_id_t vme_xtail_hash[VME_XTAIL_HASH_SIZE];
+ 
+ 
+ #pragma mark helpers
+ 

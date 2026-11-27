@@ -16,6 +16,23 @@ done
 if [ "$(id -u)" -ne 0 ]; then
   command -v sudo >/dev/null || { echo "missing required tool: sudo" >&2; exit 1; }
 fi
+if ! QEMU_VERSION_OUTPUT=$(qemu-system-x86_64 --version 2>&1); then
+  echo "unable to determine qemu-system-x86_64 version" >&2
+  exit 1
+fi
+if [[ ! $QEMU_VERSION_OUTPUT =~ [Vv]ersion[[:space:]]+([0-9]+)\.([0-9]+) ]]; then
+  echo "unable to parse qemu-system-x86_64 version: $QEMU_VERSION_OUTPUT" >&2
+  exit 1
+fi
+QEMU_MAJOR=${BASH_REMATCH[1]}
+QEMU_MINOR=${BASH_REMATCH[2]}
+QEMU_VERSION="$QEMU_MAJOR.$QEMU_MINOR"
+if (( QEMU_MAJOR < 8 || (QEMU_MAJOR == 8 && QEMU_MINOR < 2) )); then
+  echo "QEMU >= 8.2 is required for the TCG boundary-probe XSAVE/AVX profile; older TCG versions (including 6.2) may omit this state (detected $QEMU_VERSION)" >&2
+  exit 1
+fi
+echo "Using QEMU $QEMU_VERSION for the x86 boundary-probe VM" >&2
+
 KERNEL_RELEASE=$(cat "$KDIR/include/config/kernel.release")
 test -n "$KERNEL_RELEASE" || { echo "kernel release metadata is missing from KDIR" >&2; exit 1; }
 STAGE=$(mktemp -d)

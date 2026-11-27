@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-"""Inspect Apple's latest Tahoe Internet Recovery image without retaining it."""
+"""Inspect the Intel Internet Recovery image returned by the catalog."""
 
 from __future__ import annotations
 
@@ -22,9 +22,13 @@ OPENCORE_COMMIT = "ebea824880706ac9faa8ee45604245de62be658b"
 OPENCORE_URL = "https://github.com/acidanthera/OpenCorePkg.git"
 BOARD_ID = "Mac-CFF7D910A743CAAF"
 MLB = "00000000000000000"
+RECOVERY_BASENAME = "verified-recovery"
+BOOT_KERNEL_COLLECTION = Path("System/Library/KernelCollections/BootKernelExtensions.kc")
 TARGET_RUNTIME_VERSION = "26.7.3"
 TARGET_RUNTIME_BUILD = "25G342"
-XNU_RELEASE_PATTERN = re.compile(rb"xnu-([0-9]+\.[0-9]+\.[0-9]+(?:~[0-9]+)?)/RELEASE_X86_64\b")
+# Public source releases use three components, but shipping build trains
+# can append more. These strings are observations, not artifact identities.
+XNU_RELEASE_PATTERN = re.compile(rb"xnu-([0-9]+(?:\.[0-9]+){2,}(?:~[0-9]+)?)/RELEASE_X86_64\b")
 
 
 def run(command: list[str], *, timeout: int = 300) -> subprocess.CompletedProcess[str]:
@@ -34,6 +38,8 @@ def run(command: list[str], *, timeout: int = 300) -> subprocess.CompletedProces
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as error:
@@ -164,7 +170,7 @@ def host_metadata() -> dict[str, Any]:
     return result
 
 
-def inspect_mounted_image(mount: Path, image: Path) -> dict[str, Any]:
+def inspect_mounted_image(mount: Path, image: Path, fileset_helper: Path) -> dict[str, Any]:
     image_root = mount.resolve()
     result: dict[str, Any] = {
         "image_filename": image.name,
@@ -288,7 +294,170 @@ def inspect_mounted_image(mount: Path, image: Path) -> dict[str, Any]:
         result["xnu_version_source"] = "BootKernelExtensions.kc"
     result["trustcache_api_headers"] = sorted(set(trusted_headers))
     result["trustcache_api_header_present"] = bool(trusted_headers)
+    collection = resolve_image_target(mount / BOOT_KERNEL_COLLECTION, mount)
+    fileset: dict[str, Any] = {"path": str(BOOT_KERNEL_COLLECTION)}
+    if collection is None or not collection.is_file():
+        fileset["status"] = "collection_missing"
+    else:
+        inspection = run([str(fileset_helper), str(collection)], timeout=120)
+        if inspection.returncode == 0:
+            fileset.update(json.loads(inspection.stdout))
+        else:
+            fileset.update(status="helper_failed", helper_exit_code=inspection.returncode)
+    result["boot_kernel_collection_fileset"] = fileset
     return result
+
+
+def attached_image_devices(hdiutil: str, image: Path) -> list[str] | None:
+    info = run([hdiutil, "info", "-plist"], timeout=30)
+    if info.returncode != 0:
+        return None
+    try:
+        images = plistlib.loads(info.stdout.encode("utf-8"))["images"]
+        devices = []
+        for attachment in images:
+            image_path = attachment.get("image-path")
+            if not image_path or Path(image_path).resolve() != image.resolve():
+                continue
+            entries = [
+                entry.get("dev-entry", "")
+                for entry in attachment["system-entities"]
+            ]
+            whole_devices = [
+                entry for entry in entries
+                if isinstance(entry, str) and re.fullmatch(r"/dev/disk[0-9]+", entry)
+            ]
+            if not whole_devices:
+                return None
+            devices.extend(whole_devices)
+        return devices
+    except (KeyError, TypeError, ValueError, plistlib.InvalidFileException):
+        return None
+
+
+def detach_recovery(hdiutil: str, image: Path, mount: Path) -> bool:
+    for options in ([], ["-force"]):
+        devices = attached_image_devices(hdiutil, image)
+        if devices == [] and not mount.is_mount():
+            return True
+        # This mount point is private to the audit, including on attach timeout.
+        for target in devices or ([str(mount)] if mount.is_mount() else []):
+            run([hdiutil, "detach", "-quiet", *options, target], timeout=60)
+    return attached_image_devices(hdiutil, image) == [] and not mount.is_mount()
+
+
+def inspect_recovery(
+    report: dict[str, Any], image: Path, fileset_helper: Path, temporary_path: Path
+) -> None:
+    hdiutil = shutil.which("hdiutil")
+    if not hdiutil:
+        report["audit_status"] = "recovery_downloaded_but_hdiutil_missing"
+        return
+
+    # Keep the mount point outside TemporaryDirectory's recursive cleanup.
+    mount = Path(tempfile.mkdtemp(prefix="xnulinux-recovery-mount-", dir=temporary_path.parent))
+    try:
+        attach = run(
+            [hdiutil, "attach", "-readonly", "-nobrowse", "-quiet", "-mountpoint", str(mount), str(image)],
+            timeout=600,
+        )
+        if attach.returncode != 0 or not mount.is_mount():
+            report["audit_status"] = "recovery_downloaded_but_mount_failed"
+            report["failure_class"] = error_class(attach.stdout + attach.stderr)
+            return
+        try:
+            mounted = inspect_mounted_image(mount, image, fileset_helper)
+            report["recovery_image"] = mounted
+            status = mounted["boot_kernel_collection_fileset"]["status"]
+            report["audit_status"] = (
+                "recovery_downloaded_and_inspected"
+                if status in ("accepted", "parser_rejected", "not_fileset")
+                else "recovery_downloaded_but_inspection_failed"
+            )
+        except (OSError, plistlib.InvalidFileException, ValueError) as error:
+            report["audit_status"] = "recovery_downloaded_but_inspection_failed"
+            report["failure_class"] = type(error).__name__
+    finally:
+        try:
+            report["recovery_detached"] = detach_recovery(hdiutil, image, mount)
+        except OSError:
+            report["recovery_detached"] = False
+        try:
+            mount.rmdir()
+            report["temporary_mount_directory_removed"] = True
+        except OSError:
+            report["temporary_mount_directory_removed"] = False
+        if not report["recovery_detached"] or not report["temporary_mount_directory_removed"]:
+            report["audit_status"] = "recovery_mount_cleanup_failed"
+
+
+def audit_temporary_recovery(report: dict[str, Any], temporary_path: Path) -> None:
+    repo = Path(__file__).resolve().parents[2]
+    fileset_helper = temporary_path / "xnu-fileset-metadata"
+    compiler = run(
+        [
+            "clang", "-std=c11", "-Wall", "-Wextra", "-Werror",
+            str(repo / "tools/dev/x86_64/xnu-fileset-metadata.c"),
+            str(repo / "xnu-ko/macho_parse_x86_64.c"),
+            "-o", str(fileset_helper),
+        ],
+        timeout=120,
+    )
+    if compiler.returncode != 0:
+        report["audit_status"] = "fileset_helper_build_failed"
+        report["failure_class"] = error_class(compiler.stdout + compiler.stderr)
+        print(compiler.stderr, file=sys.stderr, end="")
+        return
+
+    source = temporary_path / "OpenCorePkg"
+    fetch = run(["git", "init", str(source)])
+    if fetch.returncode == 0:
+        fetch = run(["git", "-C", str(source), "remote", "add", "origin", OPENCORE_URL])
+    if fetch.returncode == 0:
+        fetch = run(
+            ["git", "-C", str(source), "fetch", "--depth=1", "origin", OPENCORE_COMMIT],
+            timeout=600,
+        )
+    if fetch.returncode == 0:
+        fetch = run(["git", "-C", str(source), "checkout", "--detach", "FETCH_HEAD"])
+    if fetch.returncode != 0:
+        report["audit_status"] = "opencore_source_fetch_failed"
+        report["failure_class"] = error_class(fetch.stdout + fetch.stderr)
+        return
+    resolved = run(["git", "-C", str(source), "rev-parse", "HEAD"])
+    if resolved.returncode != 0 or resolved.stdout.strip() != OPENCORE_COMMIT:
+        report["audit_status"] = "opencore_source_pin_mismatch"
+        return
+
+    downloader = source / "Utilities/macrecovery/macrecovery.py"
+    download_dir = temporary_path / "recovery"
+    download_dir.mkdir()
+    download = run(
+        [
+            sys.executable, "-E", str(downloader),
+            "-o", str(download_dir),
+            "-n", RECOVERY_BASENAME,
+            "-b", BOARD_ID,
+            "-m", MLB,
+            "-os", "latest",
+            "download",
+        ],
+        timeout=3000,
+    )
+    if download.returncode != 0:
+        report["audit_status"] = "recovery_download_or_chunklist_verification_failed"
+        report["failure_class"] = error_class(download.stdout + download.stderr)
+        report["macrecovery_exit_code"] = download.returncode
+        return
+
+    image = download_dir / f"{RECOVERY_BASENAME}.dmg"
+    chunklist = download_dir / f"{RECOVERY_BASENAME}.chunklist"
+    if not image.is_file() or not chunklist.is_file():
+        report["audit_status"] = "verified_recovery_pair_missing"
+        return
+
+    report["apple_chunklist_verified"] = True
+    inspect_recovery(report, image, fileset_helper, temporary_path)
 
 
 def main() -> int:
@@ -299,7 +468,7 @@ def main() -> int:
     report_path = Path(sys.argv[1]).resolve()
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "audit_status": "started",
         "recovery_source": "OpenCorePkg Utilities/macrecovery",
         "opencore_commit": OPENCORE_COMMIT,
@@ -308,101 +477,46 @@ def main() -> int:
         "target_runtime_goal": f"macOS Tahoe {TARGET_RUNTIME_VERSION}",
         "target_runtime_build": TARGET_RUNTIME_BUILD,
         "catalog_transport": "HTTP (OpenCore Internet Recovery protocol)",
+        # Chunklist validation authenticates image bytes, not catalog selection.
         "catalog_selection_authenticated": False,
         "recovery_product_identity_verified": False,
+        "apple_chunklist_verified": False,
         "host": host_metadata(),
         "recovery_image_uploaded": False,
         "kdk_supplied": False,
     }
 
-    with tempfile.TemporaryDirectory(prefix="tahoe-recovery-audit-") as temporary:
-        temporary_path = Path(temporary)
-        source = temporary_path / "OpenCorePkg"
-        fetch = run(["git", "init", str(source)])
-        if fetch.returncode == 0:
-            fetch = run(["git", "-C", str(source), "remote", "add", "origin", OPENCORE_URL])
-        if fetch.returncode == 0:
-            fetch = run(
-                ["git", "-C", str(source), "fetch", "--depth=1", "origin", OPENCORE_COMMIT],
-                timeout=600,
-            )
-        if fetch.returncode == 0:
-            fetch = run(["git", "-C", str(source), "checkout", "--detach", "FETCH_HEAD"])
-        if fetch.returncode == 0:
-            resolved = run(["git", "-C", str(source), "rev-parse", "HEAD"])
-            if resolved.returncode != 0 or resolved.stdout.strip() != OPENCORE_COMMIT:
-                fetch = subprocess.CompletedProcess(
-                    resolved.args,
-                    1,
-                    resolved.stdout,
-                    "pinned OpenCore commit mismatch",
-                )
-        if fetch.returncode != 0:
-            report["audit_status"] = "opencore_source_fetch_failed"
-            report["failure_class"] = error_class(fetch.stdout + fetch.stderr)
-        else:
-            downloader = source / "Utilities/macrecovery/macrecovery.py"
-            download_dir = temporary_path / "recovery"
-            download_dir.mkdir()
-            download = run(
-                [
-                    sys.executable,
-                    str(downloader),
-                    "-o",
-                    str(download_dir),
-                    "-b",
-                    BOARD_ID,
-                    "-m",
-                    MLB,
-                    "-os",
-                    "latest",
-                    "download",
-                ],
-                timeout=5400,
-            )
-            if download.returncode != 0:
-                report["audit_status"] = "recovery_download_or_chunklist_verification_failed"
-                report["failure_class"] = error_class(download.stdout + download.stderr)
-                report["macrecovery_exit_code"] = download.returncode
-                report["apple_chunklist_verified"] = False
-            else:
-                report["apple_chunklist_verified"] = True
-                images = sorted(download_dir.glob("*.dmg"))
-                if not images:
-                    report["audit_status"] = "recovery_image_missing_after_download"
-                else:
-                    image = images[0]
-                    mount = temporary_path / "mounted-recovery"
-                    mount.mkdir()
-                    hdiutil = shutil.which("hdiutil")
-                    if not hdiutil:
-                        report["audit_status"] = "recovery_downloaded_but_hdiutil_missing"
-                        report["image_sha256"] = sha256(image)
-                        report["image_bytes"] = image.stat().st_size
-                    else:
-                        attach = run(
-                            [hdiutil, "attach", "-readonly", "-nobrowse", "-quiet", "-mountpoint", str(mount), str(image)],
-                            timeout=900,
-                        )
-                        if attach.returncode != 0:
-                            report["audit_status"] = "recovery_downloaded_but_mount_failed"
-                            report["failure_class"] = error_class(attach.stdout + attach.stderr)
-                            report["image_sha256"] = sha256(image)
-                            report["image_bytes"] = image.stat().st_size
-                        else:
-                            try:
-                                report["recovery_image"] = inspect_mounted_image(mount, image)
-                                report["audit_status"] = "recovery_downloaded_and_inspected"
-                            except (OSError, plistlib.InvalidFileException, ValueError) as error:
-                                report["audit_status"] = "recovery_downloaded_but_inspection_failed"
-                                report["failure_class"] = type(error).__name__
-                            finally:
-                                run([hdiutil, "detach", "-quiet", str(mount)], timeout=300)
+    temporary_path = None
+    try:
+        with tempfile.TemporaryDirectory(prefix="tahoe-recovery-audit-") as temporary:
+            temporary_path = Path(temporary)
+            audit_temporary_recovery(report, temporary_path)
+    except OSError as error:
+        report["audit_status"] = "recovery_temporary_workspace_failed"
+        report["failure_class"] = type(error).__name__
+    report["temporary_recovery_files_removed"] = (
+        temporary_path is not None and not temporary_path.exists()
+    )
 
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"Recovery audit report written: {report_path}")
     print(f"Audit status: {report['audit_status']}")
-    return 0
+    fileset = report.get("recovery_image", {}).get("boot_kernel_collection_fileset")
+    if fileset:
+        print(f"Fileset inspection: {fileset['status']} (parser result: {fileset.get('parser_result')})")
+        segments = fileset.get("kernel", {}).get("segments")
+        if fileset["status"] == "accepted" and isinstance(segments, list):
+            print(f"Fileset kernel segments reported: {len(segments)}")
+        if fileset["status"] == "accepted":
+            for scope, header in (("outer", fileset), ("kernel", fileset.get("kernel", {}))):
+                if "chained_fixups" in header:
+                    status = "bounded" if header["chained_fixups"] else "absent"
+                    print(f"Fileset {scope} chained-fixups extent: {status}")
+    print(f"Recovery detached: {report.get('recovery_detached')}")
+    print(f"Temporary Recovery files removed: {report['temporary_recovery_files_removed']}")
+    if not report["temporary_recovery_files_removed"]:
+        return 1
+    return 0 if report["audit_status"] == "recovery_downloaded_and_inspected" else 1
 
 
 if __name__ == "__main__":

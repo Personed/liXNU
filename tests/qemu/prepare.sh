@@ -71,7 +71,79 @@ dmesg | grep -Fq 'fki-carve-probe: allocation 2 got 16777216 bytes at physical 0
   echo "FKI did not reuse the freed physical carve-out on pass 2"
   exit 1
 }
+dmesg | grep -Fq 'fki-carve-probe: allocation 1 within expected carve-out [0x70000000, 0x80000000)' || {
+  echo "FKI probe did not confirm pass 1 is inside the expected carve-out"
+  exit 1
+}
+dmesg | grep -Fq 'fki-carve-probe: allocation 2 within expected carve-out [0x70000000, 0x80000000)' || {
+  echo "FKI probe did not confirm pass 2 is inside the expected carve-out"
+  exit 1
+}
+dmesg | grep -Fq 'fki-carve-probe: same-pa-reuse: yes (0x70000000)' || {
+  echo "FKI probe did not confirm same-PA reuse after freeing"
+  exit 1
+}
 rmmod fki-carve-probe
+
+# Exercise an explicit smaller expected interval and a non-aligned request;
+# FKI rounds 19 MiB up to its 2 MiB allocation granularity.
+insmod /fki-carve-probe.ko expected_base=0x70000000 expected_mb=20 request_mb=19
+dmesg | grep -Fq 'fki-carve-probe: expect [0x70000000, 0x71400000), request 19 MiB, aligned allocation 20971520 bytes' || {
+  echo "FKI probe did not apply the explicit interval and request size"
+  exit 1
+}
+dmesg | grep -Fq 'fki-carve-probe: allocation 1 got 20971520 bytes at physical 0x70000000' || {
+  echo "FKI probe did not honor the explicit 19 MiB request size"
+  exit 1
+}
+dmesg | grep -Fq 'fki-carve-probe: allocation 1 within expected carve-out [0x70000000, 0x71400000)' || {
+  echo "FKI probe did not accept an allocation inside the explicit 20 MiB interval"
+  exit 1
+}
+# A successful insmod also requires the probe's second allocation to reuse the
+# same PA; the default-parameter run above checks the distinct reuse log marker.
+rmmod fki-carve-probe
+
+# Deliberately set the expected base above the actual allocation: the returned
+# interval is outside these aligned expected bounds and must be rejected.
+if insmod /fki-carve-probe.ko expected_base=0x70200000 expected_mb=256 request_mb=16; then
+  echo "FKI probe unexpectedly accepted an allocation outside the expected interval"
+  exit 1
+fi
+dmesg | grep -Fq 'fki-carve-probe: allocation 1 at 0x70000000 with size 16777216 is outside expected carve-out [0x70200000, 0x80200000)' || {
+  echo "FKI probe did not reject an allocation outside the expected carve-out"
+  exit 1
+}
+
+# The allocation starts inside these bounds but extends beyond their end.
+if insmod /fki-carve-probe.ko expected_base=0x6f000000 expected_mb=17 request_mb=16; then
+  echo "FKI probe unexpectedly accepted an allocation extending past the expected carve-out"
+  exit 1
+fi
+dmesg | grep -Fq 'fki-carve-probe: allocation 1 at 0x70000000 with size 16777216 is outside expected carve-out [0x6f000000, 0x70100000)' || {
+  echo "FKI probe did not reject an allocation extending past the expected carve-out"
+  exit 1
+}
+
+# A later valid request must still work after the rejected allocations, proving
+# that the failure paths released their FKI carve-out reservation.
+insmod /fki-carve-probe.ko request_mb=15
+dmesg | grep -Fq 'fki-carve-probe: expect [0x70000000, 0x80000000), request 15 MiB, aligned allocation 16777216 bytes' || {
+  echo "FKI probe did not run the post-rejection valid request"
+  exit 1
+}
+rmmod fki-carve-probe
+
+# A request above the fallback allocator's largest representable power-of-two
+# size must be rejected before it reaches fki_contig_alloc.
+if insmod /fki-carve-probe.ko request_mb=8796093022209; then
+  echo "FKI probe unexpectedly accepted an unrepresentable request size"
+  exit 1
+fi
+dmesg | grep -Fq 'fki-carve-probe: request size 9223372036855824384 exceeds the contiguous allocation limit 9223372036854775808' || {
+  echo "FKI probe did not reject a request above the contiguous allocation limit"
+  exit 1
+}
 
 # xnu.ko should resolve its FKI symbols and get as far as requesting firmware.
 # This image is deliberately absent so the test needs no kernel collection.

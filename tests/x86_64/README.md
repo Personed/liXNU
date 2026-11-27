@@ -7,6 +7,15 @@ separately in PR #47; it is not part of this FKI change and does not execute XNU
 context switch, address-space and fault paths remain to be implemented and verified before macOS can run natively on
 x86_64.
 
+The source-pinned boot argument fixtures also check EFI map contents. The preflight reads the caller's byte
+buffer using the declared descriptor stride and rejects physical page ranges that would truncate in XNU.
+Pages 0 and UINT32_MAX pass the representation check, but the pinned XNU ignores them. Firmware memory
+types, physical ownership, usable ranges, and placement in the host carve-out need separate validation.
+
+```sh
+bash tests/x86_64/test-x86-boot-args.sh
+```
+
 ## Supplemental QEMU/KVM guest path
 
 The optional x86_64 launcher runs a user-prepared macOS Tahoe 26 guest through QEMU/KVM. This guest path complements
@@ -59,15 +68,37 @@ directory to fork it intentionally.
 
 ## Development tests
 
+To reproduce the Debian 13 CI module pair, install `build-essential`, `git`, `linux-headers-amd64`, and `pahole`.
+Use the same commit, kernel headers, and tool versions as the artifact's build manifest. The builder checks both
+modules byte for byte across two clean build directories before writing them to the new output directory.
+
+```sh
+bash scripts/ci/build-debian-x86-module-pair.sh /path/to/headers HEAD /usr/src/lixnu ./debian-x86-modules
+```
+
 ```sh
 bash tests/x86_64/test-launcher.sh
 bash tests/x86_64/test-tcg-smoke.sh
 tests/x86_64/tcg-smoke.sh /path/to/x86_64/vmlinuz /path/to/initrd.cpio.gz
 tests/x86_64/test-boundary-probe-vm.sh /path/to/x86_64/kernel-headers
+tests/x86_64/exception-recovery/test-vm.sh /path/to/x86_64/kernel-headers
 ```
 
 The smoke initramfs must print `XNU_LINUX_TCG_BOOTED` on its serial console and shut down before the timeout. TCG boots
 only a disposable Linux guest; it does not demonstrate macOS boot, KVM, Intel/AMD compatibility or useful performance.
+
+The one-argument boundary probe command uses APT on Debian or Ubuntu. It needs an unsigned kernel image package
+matching the kernel headers and a `busybox-static` package in the configured repositories. To use local files on
+another x86_64 Linux distribution, pass a bootable kernel image for those headers and a static x86_64 BusyBox:
+
+```sh
+tests/x86_64/test-boundary-probe-vm.sh /path/to/kernel-headers /path/to/vmlinuz /path/to/busybox-static
+```
+
+The runner builds its own initramfs and checks the booted kernel release against the headers before loading a module.
+The BusyBox binary must support `--install -s` and include `sh`, `cat`, `uname`, `mount`, `insmod`, `rmmod`,
+`dmesg`, `sync`, and `poweroff`. Both modes require compiler and kernel build tools, static C libraries, `cpio`, and
+QEMU. Use the kernel configuration that produced the headers so the disposable guest can load the test modules.
 
 The boundary probe builds a separate test module and boots it only in a disposable x86_64 Linux VM. It runs a synthetic
 assembly call on each requested online CPU via `work_on_cpu`, switches to a temporary stack with low/high canaries,
@@ -76,15 +107,50 @@ compare task/CPU identity, task stack bounds/RSP, CR3 root plus PCID, FS/GS/KERN
 XCR0. The preemption-count check is nonzero only when the kernel is built with `CONFIG_PREEMPT_COUNT`; all builds still
 compare its before/after value. The shim entry uses the SysV 16-byte stack rule; the Linux kernel call frame is checked
 for bounds and restoration without imposing that user ABI on internal kernel calls. Userspace captures and compares
-the full standard XSAVE image for all XCR0-enabled user components around the raw ioctl syscall. Only YMM0–YMM7 are
-deliberately seeded and clobbered; other enabled components have passive before/after comparison, not an active
-pattern test. The test also checks Linux syscalls before and after each ioctl. The VM must unload both modules and
+the full standard XSAVE image for all XCR0-enabled user components around the raw ioctl syscall. The probe deliberately
+seeds and overwrites x87 ST(0), the x87 control word, MXCSR, and YMM0–YMM7. Other enabled user components have passive
+before/after comparison. The test also checks Linux syscalls before and after each ioctl. The VM must unload both modules and
 power off cleanly. TCG runs on every CI attempt; the script adds a KVM run when
-`/dev/kvm` and host XSAVE/AVX are available.
+`/dev/kvm` and host XSAVE/AVX are available. On a local host whose QEMU is older than 8.2,
+setting `X86_BOUNDARY_ALLOW_KVM_ONLY=1` skips the unsupported TCG profile and instead requires
+the KVM/host run. That explicit fallback is complementary local validation only; it is not a
+substitute for the CI TCG profile.
 
-This is a host-only call/return test. It does not enter XNU, change `fki.h`, enable FKI capabilities, change CR3 or GS,
-inspect supervisor XSS state, install or replace Linux IDT, page-fault, general-protection, or syscall handlers, or run C under foreign host state.
-Passing it does not establish native XNU runtime support or prove the proposed early exception/syscall bridge.
+The boundary probe described above is a host-only call/return test. It does not enter XNU, change `fki.h`, enable FKI
+capabilities, change CR3 or GS, inspect supervisor XSS state, install or replace an IDT or exception handler, or run C
+under foreign host state. Passing it does not establish native XNU runtime support or prove the proposed early
+exception/syscall bridge.
+
+The same disposable VM also runs a synthetic task-stack continuation model. It covers a reply
+published after the owner's initial completion check but before its first wait, a delayed reply
+while the owner sleeps and a second task on that CPU is refused entry to the reserved stack/context,
+a timeout followed by a rejected late reply, and cancellation acknowledged by the owner before a
+late reply is rejected. The checks include the owner and responder task stacks, one resume with the
+exact reply payload/generation/request ID, unchanged alternate-stack canaries, and a voluntary
+context switch on the delayed/timeout/cancellation paths. The reply timer starts after the
+contender has been refused. For immediate and delayed replies, the owner resumes after the
+responder checks for a duplicate reply. Request and reply storage remains allocated until the
+responder acknowledges completion, timeout handling, or cancellation. This models the
+proposed ownership rules. The synthetic callback runs with local interrupts and preemption disabled;
+both are restored after returning to the owner's task stack and before any wait. It does not call
+`fki_arch_linux_runs()` or validate a production FKI continuation.
+
+The separate exception-recovery probe runs in a disposable x86_64 VM and temporarily loads a test-owned shadow IDT on
+the selected vCPU to test controlled `#PF`/`#GP` recovery. It needs matching x86_64 kernel headers as `KDIR`, QEMU 8.2
+or newer, `cpio`, static C libraries and the normal module build tools. Run it as root or with usable `sudo` so it can
+create `/dev/console` and `/dev/null` in the temporary initramfs.
+
+The one-argument command reads the release from `KDIR/include/config/kernel.release` and downloads the matching
+unsigned kernel image (`linux-image-unsigned-$KERNEL_RELEASE` on Ubuntu or `linux-image-$KERNEL_RELEASE-unsigned` on
+Debian) and `busybox-static` through APT. To use local boot inputs, pass both files:
+
+```sh
+tests/x86_64/exception-recovery/test-vm.sh /path/to/kernel-headers /path/to/vmlinuz /path/to/busybox-static
+```
+
+Supply a static x86_64 BusyBox with `--install -s`, `sh`, `cat`, `cut`, `grep`, `uname`, `mount`, `insmod`, `rmmod`,
+`dmesg`, `sync` and `poweroff`. The guest verifies that its kernel release matches the headers before loading a module.
+
 The separate [test-only entry/return contract](../../docs/x86_64-entry-return-contract.md) defines the remaining gates
 and lists the Tahoe artifact and ABI evidence still required before any XNU handoff can be considered.
 
@@ -130,8 +196,9 @@ the x86_64 parser job. No Tahoe artifact has yet been confirmed against this sub
   run validates native execution.
 - ARM64 `fki.ko` and `xnu.ko` cross-compiled against Debian 6.12.118 ARM64 headers. This is a build check, not an ARM64
   runtime smoke test.
-- The disposable feature-complete XNU-stub VM can use `/dev/kvm` where available, but there is still no Tahoe disk and
-  no physical Intel/AMD/ARM hardware acceptance. No macOS boot or hardware-integrity acceptance has been recorded.
+- The XNU-stub test boots a feature-complete Intel Haswell profile in TCG and requires the final world-switch refusal.
+  The optional KVM probe requires write access to `/dev/kvm` and all CPU features checked by the script. Tahoe boot,
+  host-integrity checks, and physical Intel/AMD/ARM acceptance are still pending.
 
 ## Acceptance evidence still required
 

@@ -1,0 +1,119 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/* Read-only MH_FILESET metadata for the Intel Recovery audit. */
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE 1 /* expose O_NOFOLLOW in Darwin's fcntl.h */
+#else
+#define _POSIX_C_SOURCE 200809L
+#endif
+
+#include <fcntl.h>
+#include <inttypes.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include "../../../xnu-ko/macho_parse_x86_64.h"
+
+#define MAX_COLLECTION_SIZE (1ULL << 30)
+
+static void print_segment(const struct xnu_macho_x86_64_segment *segment)
+{
+	unsigned int i;
+
+	printf("{\"name_bytes_hex\":\"");
+	for (i = 0; i < sizeof(segment->name); i++)
+		printf("%02x", (unsigned int)segment->name[i]);
+	printf("\",\"vmaddr\":\"0x%016" PRIx64 "\",\"vmsize\":\"0x%016" PRIx64 "\","
+	       "\"fileoff\":\"0x%016" PRIx64 "\",\"filesize\":\"0x%016" PRIx64 "\","
+	       "\"section_count\":%u}",
+	       (uint64_t)segment->vmaddr, (uint64_t)segment->vmsize,
+	       (uint64_t)segment->fileoff, (uint64_t)segment->filesize,
+	       segment->section_count);
+}
+
+static void print_fixups(const struct xnu_macho_x86_64_fixup_extent *fixups)
+{
+	if (!fixups->datasize) {
+		printf("null");
+		return;
+	}
+	printf("{\"dataoff\":\"0x%016" PRIx64 "\",\"datasize\":\"0x%016" PRIx64 "\","
+	       "\"linkedit_relative_offset\":\"0x%016" PRIx64 "\","
+	       "\"linkedit\":{\"vmaddr\":\"0x%016" PRIx64 "\",\"vmsize\":\"0x%016" PRIx64 "\","
+	       "\"fileoff\":\"0x%016" PRIx64 "\",\"filesize\":\"0x%016" PRIx64 "\"}}",
+	       (uint64_t)fixups->dataoff, (uint64_t)fixups->datasize,
+	       (uint64_t)(fixups->dataoff - fixups->linkedit_fileoff),
+	       (uint64_t)fixups->linkedit_vmaddr, (uint64_t)fixups->linkedit_vmsize,
+	       (uint64_t)fixups->linkedit_fileoff, (uint64_t)fixups->linkedit_filesize);
+}
+
+static void print_fileset(const struct xnu_macho_x86_64_info *info)
+{
+	unsigned int i;
+
+	printf("{\"status\":\"accepted\",\"parser_result\":0,"
+	       "\"file_type\":%u,\"cpu_subtype\":%u,"
+	       "\"load_command_count\":%u,\"load_command_bytes\":%u,"
+	       "\"fileset_entry_count\":%u,\"chained_fixups\":",
+	       info->file_type, info->cpu_subtype, info->load_command_count,
+	       info->load_command_bytes, info->fileset_entry_count);
+	print_fixups(&info->fileset_fixups);
+	printf(",\"kernel\":{\"file_type\":%u,\"cpu_subtype\":%u,"
+	       "\"load_command_count\":%u,\"load_command_bytes\":%u,"
+	       "\"fileoff\":\"0x%016" PRIx64 "\",\"vmaddr\":\"0x%016" PRIx64 "\",\"chained_fixups\":",
+	       info->kernel_entry_filetype, info->kernel_entry_cpusubtype,
+	       info->kernel_entry_ncmds, info->kernel_entry_sizeofcmds,
+	       (uint64_t)info->kernel_entry_fileoff,
+	       (uint64_t)info->kernel_entry_vmaddr);
+	print_fixups(&info->kernel_entry_fixups);
+	printf(",\"segments\":[");
+	for (i = 0; i < info->kernel_entry_segment_count; i++) {
+		if (i)
+			putchar(',');
+		print_segment(&info->segments[i]);
+	}
+	puts("]}}");
+}
+
+int main(int argc, char **argv)
+{
+	static const unsigned char magic64_le[] = { 0xcf, 0xfa, 0xed, 0xfe };
+	static const unsigned char fileset_le[] = { 0x0c, 0, 0, 0 };
+	struct xnu_macho_x86_64_info info;
+	struct stat st;
+	const unsigned char *file;
+	size_t size;
+	int fd, err;
+
+	if (argc != 2)
+		return 2;
+	fd = open(argv[1], O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW);
+	if (fd < 0)
+		return 2;
+	if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 ||
+	    (uintmax_t)st.st_size > MAX_COLLECTION_SIZE) {
+		close(fd);
+		return 2;
+	}
+	size = (size_t)st.st_size;
+	file = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
+	close(fd);
+	if (file == MAP_FAILED)
+		return 2;
+
+	if (size < 16 || memcmp(file, magic64_le, sizeof(magic64_le)) ||
+	    memcmp(file + 12, fileset_le, sizeof(fileset_le))) {
+		puts("{\"status\":\"not_fileset\",\"parser_result\":null}");
+	} else {
+		err = xnu_macho_x86_64_parse(file, (unsigned long)size, &info);
+		if (err)
+			printf("{\"status\":\"parser_rejected\",\"parser_result\":%d}\n", err);
+		else
+			print_fileset(&info);
+	}
+	munmap((void *)file, size);
+	return fflush(stdout) == EOF || ferror(stdout) ? 2 : 0;
+}

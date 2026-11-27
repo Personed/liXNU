@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import os
 import pathlib
@@ -42,8 +43,22 @@ class ValidationError(Exception):
     pass
 
 
-def canonical(path: str | pathlib.Path) -> pathlib.Path:
+@functools.lru_cache(maxsize=None)
+def canonical_cached(path: str) -> pathlib.Path:
     return pathlib.Path(os.path.realpath(path))
+
+
+def canonical(path: str | pathlib.Path) -> pathlib.Path:
+    return canonical_cached(str(path))
+
+
+@functools.lru_cache(maxsize=None)
+def is_file_cached(path: str) -> bool:
+    return pathlib.Path(path).is_file()
+
+
+def path_is_file(path: pathlib.Path) -> bool:
+    return is_file_cached(str(path))
 
 
 def classify_source(tokens: list[str], source: str) -> tuple[str, str]:
@@ -106,19 +121,27 @@ def parse_commands(objroot: pathlib.Path, expected_compilers: set[pathlib.Path])
             if not tokens or not compiler_path(tokens[0], expected_compilers):
                 raise ValidationError(f"unexpected compiler for XNU target command in {fragment}: {tokens[:1]}")
             directory = canonical(item.get("directory", fragment.parent))
-            source = str(item.get("file", ""))
+            # Clang -MJ writes the input after -x<language> and an optional
+            # --sysroot=... and before -o. The output can also end in .s.
+            argument_input = ""
+            if len(tokens) > 4 and tokens[1].startswith("-x") and tokens[1] != "-x":
+                input_index = 3 if tokens[2].startswith("--sysroot=") else 2
+                if tokens[input_index + 1] == "-o":
+                    argument_input = tokens[input_index]
+            if not argument_input:
+                argument_input = next(
+                    (token for token in reversed(tokens) if pathlib.Path(token).suffix.lower() in SOURCE_SUFFIXES),
+                    "",
+                )
+            source = str(item.get("file", "")) or argument_input
             if not source:
-                source_candidates = [token for token in tokens if pathlib.Path(token).suffix.lower() in SOURCE_SUFFIXES]
-                if not source_candidates:
-                    raise ValidationError(f"XNU -MJ target entry has no source file: {fragment}")
-                source = source_candidates[-1]
+                raise ValidationError(f"XNU -MJ target entry has no source file: {fragment}")
             source_path = pathlib.Path(source)
             if not source_path.is_absolute():
                 source_path = directory / source_path
             source = str(canonical(source_path))
-            argument_sources = [token for token in tokens if pathlib.Path(token).suffix.lower() in SOURCE_SUFFIXES]
-            if argument_sources:
-                argument_source = pathlib.Path(argument_sources[-1])
+            if argument_input:
+                argument_source = pathlib.Path(argument_input)
                 if not argument_source.is_absolute():
                     argument_source = directory / argument_source
                 if canonical(argument_source) != pathlib.Path(source):
@@ -223,11 +246,14 @@ def dependency_entries(path: pathlib.Path) -> list[str]:
 
 
 def path_is_within(path: pathlib.Path, root: pathlib.Path) -> bool:
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False
+    # The verifier walks large compiler dependency closures. Compare canonical
+    # path strings directly instead of constructing pathlib relatives for each
+    # entry; both inputs have already been resolved to absolute canonical paths.
+    path_string = os.fspath(path)
+    root_string = os.fspath(root)
+    if root_string == os.sep:
+        return path_string.startswith(os.sep)
+    return path_string == root_string or path_string.startswith(root_string + os.sep)
 
 
 def resolve_dependency(token: str, depfile: pathlib.Path, source_root: pathlib.Path, objroot: pathlib.Path,
@@ -244,7 +270,7 @@ def resolve_dependency(token: str, depfile: pathlib.Path, source_root: pathlib.P
     ]
     for candidate in candidates:
         resolved = canonical(candidate)
-        if resolved.is_file():
+        if path_is_file(resolved):
             return resolved
     return canonical(candidates[0])
 
@@ -258,14 +284,14 @@ def resolve_depfile(token: str, objroot: pathlib.Path, source_root: pathlib.Path
     direct_candidates = [command_directory / raw, pathlib.Path.cwd() / raw, source_root / raw, objroot / raw]
     for candidate in direct_candidates:
         resolved = canonical(candidate)
-        if resolved.is_file():
+        if path_is_file(resolved):
             return resolved
 
     # XNU's -MF value is commonly relative to the object directory in which
     # Make invoked clang. Recover it under OBJROOT and prefer the path matching
     # the source's directory suffix if basenames are reused in several trees.
     if raw.name not in depfiles_by_name:
-        depfiles_by_name[raw.name] = [canonical(path) for path in objroot.rglob(raw.name) if path.is_file()]
+        depfiles_by_name[raw.name] = [canonical(path) for path in objroot.rglob(raw.name) if path_is_file(path)]
     matches = depfiles_by_name[raw.name]
     if len(matches) == 1:
         return matches[0]
@@ -395,7 +421,7 @@ def verify(log_path: pathlib.Path, objroot: pathlib.Path, sdk_root: pathlib.Path
         raise ValidationError(f"XNU target clang commands lack -MF dependency files: {commands_without_depfile[:10]}")
     if any(excluded_search_paths.values()):
         raise ValidationError(f"XNU target commands still search excluded generic SDK roots: {excluded_search_paths}")
-    missing_depfiles = [path for path in dependency_files if not path.is_file()]
+    missing_depfiles = [path for path in dependency_files if not path_is_file(path)]
     if missing_depfiles:
         raise ValidationError(f"XNU target clang dependency files are missing: {missing_depfiles[:10]}")
     if not dependency_files:
@@ -408,7 +434,7 @@ def verify(log_path: pathlib.Path, objroot: pathlib.Path, sdk_root: pathlib.Path
         for token in dependency_entries(depfile):
             resolved = resolve_dependency(token, depfile, source_root, objroot, command_directory)
             dependency_entries_seen.append((depfile, token, resolved))
-            if not resolved.is_file():
+            if not path_is_file(resolved):
                 missing_dependencies.append((depfile, token, resolved))
             for name, roots in excluded_paths.items():
                 if any(path_is_within(resolved, root) for root in roots):
@@ -567,6 +593,21 @@ def self_test() -> None:
             raise ValidationError(f"self-test expected explicit overlay sysroot mode, got {result['mode']}")
         if result["c_cxx_compile_commands"] != 2 or result["assembly_compile_commands"] != 1:
             raise ValidationError(f"self-test failed to separate C and assembly: {result}")
+
+        asm_fragment = objdir / "start.o.json"
+        asm_entry = json.loads(asm_fragment.read_text().strip().rstrip(","))
+        asm_entry["output"] = str(root / "start-2b823e.s")
+        asm_entry["arguments"] = [
+            str(compiler), "-xassembler-with-cpp", f"--sysroot={sdk_root}", str(source_asm),
+            "-o", asm_entry["output"], *common, *sysroot,
+        ]
+        asm_fragment.write_text(json.dumps(asm_entry) + ",\n")
+        verify(log, objroot, sdk_root, base_sdk_root, source_root, diagnostic, [compiler])
+        asm_entry["arguments"][3] = str(root / "unrelated.s")
+        asm_entry["arguments"].extend(("-include", str(source_asm)))
+        asm_fragment.write_text(json.dumps(asm_entry) + ",\n")
+        _expect_failure(lambda: verify(log, objroot, sdk_root, base_sdk_root, source_root, diagnostic, [compiler]),
+                        "wrong positional -MJ input with matching option value", "source field does not match")
 
         wrong_sysroot_args = [*c_args]
         wrong_sysroot_args[wrong_sysroot_args.index("-Werror"):wrong_sysroot_args.index("-Werror")] = ["-isysroot", str(base_sdk_root)]

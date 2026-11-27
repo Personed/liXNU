@@ -14,11 +14,24 @@ IOMEM
 
 cat >"$FIXTURE_DIR/bin/sudo" <<'STUB'
 #!/usr/bin/env bash
+if [[ -n "${REJECTED_SUDO_LOG:-}" ]]; then
+  printf '%s\n' "$*" >>"$REJECTED_SUDO_LOG"
+  exit 99
+fi
 if [[ "${1:-}" == sh && "${2:-}" == -c ]]; then
   shift 2
   exec env "PATH=$SUDO_SECURE_PATH:/usr/bin:/bin" /bin/sh -c "$@"
 fi
 exec "$@"
+STUB
+
+cat >"$FIXTURE_DIR/bin/uname" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$*" == -sm ]]; then
+  printf '%s\n' "${FIXTURE_HOST:-Linux aarch64}"
+else
+  exec /bin/uname "$@"
+fi
 STUB
 
 cat >"$FIXTURE_DIR/bin/python3" <<'STUB'
@@ -83,7 +96,26 @@ cat >"$FIXTURE_DIR/sbin/update-grub" <<'STUB'
 printf 'called\n' >>"$UPDATE_GRUB_LOG"
 STUB
 chmod +x -- "$FIXTURE_DIR/bin/sudo" "$FIXTURE_DIR/bin/python3" "$FIXTURE_DIR/bin/systemctl" "$FIXTURE_DIR/sbin/grubby"
-chmod +x -- "$FIXTURE_DIR/sbin/update-grub"
+chmod +x -- "$FIXTURE_DIR/bin/uname" "$FIXTURE_DIR/sbin/update-grub"
+
+for host in 'Linux x86_64' 'Darwin arm64'; do
+  for installer in "$INSTALLER" "$ROOT_DIR/scripts/install-service.sh"; do
+    if PATH="$FIXTURE_DIR/bin:/usr/bin:/bin" FIXTURE_HOST="$host" \
+       REJECTED_SUDO_LOG="$FIXTURE_DIR/rejected-sudo.log" \
+       "$installer" >"$FIXTURE_DIR/rejected.out" 2>&1; then
+      printf '%s accepted unsupported host %s\n' "$installer" "$host" >&2
+      exit 1
+    fi
+    grep -Fq "requires ARM64 Linux (detected $host)." "$FIXTURE_DIR/rejected.out" || {
+      cat "$FIXTURE_DIR/rejected.out" >&2
+      exit 1
+    }
+    [[ ! -e "$FIXTURE_DIR/rejected-sudo.log" ]] || {
+      echo 'installer invoked sudo on an unsupported host' >&2
+      exit 1
+    }
+  done
+done
 
 setup_case() {
   local name="$1" initial_options="$2"
@@ -117,8 +149,19 @@ run_installer() {
     XNULINUX_BLS_ENTRIES="$CASE_BLS" \
     XNULINUX_SYSTEMD_RUNTIME_DIR="$CASE_SYSTEMD_DIR" \
     XNULINUX_SYSTEMD_UNIT_FILE="$CASE_UNIT" \
-    "$INSTALLER"
+    "$INSTALLER" "$@"
 }
+
+for preview in --dry-run --print; do
+  setup_case "x86-preview-${preview#--}" 'root=UUID=fixture ro quiet'
+  FIXTURE_HOST='Linux x86_64' run_installer "$preview" >"$CASE_DIR/out" 2>&1
+  grep -Fq 'fki.ko args: carve_base=0x200000000 carve_mb=8156' "$CASE_DIR/out"
+  if [[ -e "$CASE_DROPIN_DIR/99-xnulinux.cfg" || -e "$CASE_LOG" || -e "$CASE_UPDATE_GRUB_LOG" ||
+        -e "$CASE_UNIT" || -e "$CASE_SYSCTL_LOG" ]]; then
+    printf '%s modified bootloader or systemd configuration\n' "$preview" >&2
+    exit 1
+  fi
+done
 
 # 1. Valid RHEL 9-style BLS entry with grubby only in sudo's secure PATH -> installs service
 setup_case good 'root=UUID=fixture ro quiet'

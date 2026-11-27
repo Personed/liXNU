@@ -7,21 +7,24 @@ on:
     branches: [main]
   pull_request:
 concurrency:
-  group: modules-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 jobs:
   cli-installer:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: CLI and installer tests
-        run: sudo python3 -m unittest -v tests.host.test_cli
+        run: |
+          sudo python3 -m unittest -v tests.host.test_cli
+          python3 -m unittest -v tests.host.test_xnulinux_doctor
   build-x86_64-fki:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Kernel headers
         run: |
+          scripts/ci/disable-microsoft-apt-feed.sh
           sudo apt-get update -qq
           pkg=$(apt-cache search --names-only '^linux-headers-[0-9.]+-[0-9]+-generic$' | awk '{print $1}' | sort -V | tail -1)
           test -n "$pkg" || { echo "no x86_64 generic kernel headers found" >&2; exit 1; }
@@ -29,6 +32,87 @@ jobs:
           echo "KDIR=/usr/src/$pkg" >> "$GITHUB_ENV"
       - name: Build x86_64 FKI host backend
         run: tests/x86_64/build-fki.sh "$KDIR"
+      - name: Reject an FKI module for another architecture
+        run: bash tests/x86_64/test-build-fki-arch.sh
+  x86_64-vms-debian13:
+    runs-on: ubuntu-24.04
+    container:
+      image: debian:trixie
+      # The stub VM creates /dev/console and /dev/null in its initramfs.
+      options: --cap-add=MKNOD
+    timeout-minutes: 45
+    steps:
+      - name: Install Git for checkout
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Install Debian 13 headers and VM tools
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq build-essential linux-headers-amd64 qemu-system-x86 busybox-static cpio kmod sudo
+          kdir=$(find /usr/src -mindepth 1 -maxdepth 1 -type d -name 'linux-headers-*-amd64' | sort -V | tail -1)
+          case "$kdir" in */linux-headers-6.12.*-amd64) ;; *) echo "expected Debian 13 Linux 6.12 x86_64 headers; got $kdir" >&2; exit 1;; esac
+          echo "KDIR=$kdir" >> "$GITHUB_ENV"
+      - name: Build and verify Debian 13 x86_64 modules across checkout paths
+        shell: bash
+        run: |
+          export LC_ALL=C
+          release=$(cat "$KDIR/include/config/kernel.release")
+          test -n "$release"
+          source_commit=$(git -c safe.directory="$PWD" rev-parse --verify 'HEAD^{commit}')
+          source_tree=$(git -c safe.directory="$PWD" rev-parse --verify "$source_commit^{tree}")
+          stage="$RUNNER_TEMP/debian13-x86_64-module-build"
+          source_prefix=/usr/src/lixnu
+          bash scripts/ci/build-debian-x86-module-pair.sh "$KDIR" "$source_commit" "$source_prefix" "$stage"
+          (
+            echo 'profile=debian13-x86_64-fail-closed'
+            printf 'source_commit=%s\nsource_tree=%s\n' "$source_commit" "$source_tree"
+            echo "kernel_release=$release"
+            echo 'kbuild_arch=x86_64'
+            echo 'fki_btf_modules=disabled'
+            printf 'kbuild_kcflags=-ffile-prefix-map=<checkout>=%s\n' "$source_prefix"
+            printf 'kbuild_kaflags=-ffile-prefix-map=<checkout>=%s\n' "$source_prefix"
+            echo 'checkout_path_comparison=byte-identical'
+            echo '[os-release]'
+            cat /etc/os-release
+            echo '[build-packages]'
+            dpkg-query -W -f='${binary:Package}=${Version}\n' "${KDIR##*/}" \
+              'linux-headers-*-common' 'linux-kbuild-*' gcc gcc-14 binutils make pahole kmod | sort
+            echo '[kernel-header-checksums]'
+            (cd "$KDIR" && sha256sum include/config/auto.conf Module.symvers)
+            echo '[module-vermagic]'
+            cd "$stage"
+            for module in fki.ko xnu.ko; do
+              elf=$(readelf -h "$module")
+              if ! grep -qE '^[[:space:]]*Class:[[:space:]]+ELF64$' <<< "$elf" ||
+                 ! grep -qE '^[[:space:]]*Type:[[:space:]]+REL[[:space:]]' <<< "$elf" ||
+                 ! grep -qE '^[[:space:]]*Machine:[[:space:]]+Advanced Micro Devices X86-64$' <<< "$elf"; then
+                echo "$module is not an ELF64 x86-64 relocatable file" >&2
+                exit 1
+              fi
+              vermagic=$(modinfo -F vermagic "./$module")
+              if [[ ${vermagic%% *} != "$release" ]]; then
+                echo "$module has vermagic '$vermagic', expected release '$release'" >&2
+                exit 1
+              fi
+              printf '%s=%s\n' "$module" "$vermagic"
+            done
+            sha256sum fki.ko xnu.ko > SHA256SUMS
+          ) > "$stage/build-manifest.txt"
+      - uses: actions/upload-artifact@v4
+        # Keep the build outputs for diagnosis if a later VM check fails.
+        with:
+          name: debian13-x86_64-module-build
+          path: ${{ runner.temp }}/debian13-x86_64-module-build/
+          if-no-files-found: error
+          retention-days: 5
+      - name: Test x86_64 XNU stub refusal on Debian 13
+        run: |
+          cp -- "$RUNNER_TEMP/debian13-x86_64-module-build/xnu.ko" xnu-ko/xnu.ko
+          tests/x86_64/test-xnu-stub-vm.sh "$KDIR"
+      - name: Test x86_64 host-state boundary on Debian 13
+        run: tests/x86_64/test-boundary-probe-vm.sh "$KDIR"
   build:
     runs-on: ubuntu-24.04-arm
     steps:
@@ -36,16 +120,15 @@ jobs:
       - name: Kernel headers
         id: kernel
         run: |
+          scripts/ci/disable-microsoft-apt-feed.sh
           sudo apt-get update -qq
           pkg=$(apt-cache search --names-only '^linux-headers-[0-9.]+-[0-9]+-generic$' | awk '{print $1}' | sort -V | tail -1)
           echo "headers: $pkg"
           sudo apt-get install -y -qq "$pkg" >/dev/null
           echo "KDIR=/usr/src/$pkg" >> "$GITHUB_ENV"
           echo "release=${pkg#linux-headers-}" >> "$GITHUB_OUTPUT"
-      - name: fki.ko
-        run: make -C "$KDIR" M="$PWD/fki-ko" modules
-      - name: xnu.ko
-        run: make -C "$KDIR" M="$PWD/xnu-ko" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
+      - name: Build ARM64 modules through the CLI
+        run: ARCH=x86_64 scripts/xnulinux build-modules
       - name: FKI carve-out probe
         run: make -C "$KDIR" M="$PWD/tests/qemu" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
       - name: Module licenses
@@ -90,15 +173,33 @@ jobs:
       - name: Install QEMU on Linux
         if: runner.os == 'Linux'
         run: |
+          scripts/ci/disable-microsoft-apt-feed.sh
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends qemu-system-arm
       - name: Install QEMU on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install qemu --yes --no-progress
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Join-Path $env:ProgramFiles 'qemu' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $qemuDirectory = Join-Path $env:ProgramFiles 'qemu'
+          $qemuSystem = Join-Path $qemuDirectory 'qemu-system-aarch64.exe'
+          $installed = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            choco install qemu --yes --no-progress
+            $chocoExitCode = $LASTEXITCODE
+            $present = Test-Path -LiteralPath $qemuSystem -PathType Leaf
+            if ($chocoExitCode -eq 0 -and $present) {
+              $installed = $true
+              break
+            }
+            if ($attempt -lt 3) {
+              Write-Warning "QEMU install attempt $attempt did not provide qemu-system-aarch64.exe (Chocolatey exit $chocoExitCode); retrying."
+              Start-Sleep -Seconds (10 * $attempt)
+            }
+          }
+          if (-not $installed) {
+            throw "QEMU install did not provide qemu-system-aarch64.exe after 3 attempts (Chocolatey exit $chocoExitCode)."
+          }
+          $qemuDirectory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install QEMU on macOS
         if: runner.os == 'macOS'
         run: brew install qemu
@@ -137,6 +238,8 @@ jobs:
         run: bash tests/host/test-vm-net-up-sudo-path.sh
       - name: FKI setup applies and verifies BLS memory limits
         run: bash tests/host/test-vm-install-fki-bls.sh
+      - name: Hosted service installer accepts configured disk paths
+        run: bash tests/host/test-install-service.sh
       - name: Every source file has an SPDX-License-Identifier
         run: |
           missing=$(git ls-files '*.c' '*.h' '*.cpp' '*.mm' '*.m' '*.rs' '*.S' '*.s' '*.sh' '*.py' '*.metal' '*.comp' '*Makefile' |

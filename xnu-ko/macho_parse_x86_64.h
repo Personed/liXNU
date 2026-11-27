@@ -96,3 +96,15 @@ struct xnu_macho_x86_64_info {
  */
 int xnu_macho_x86_64_parse(const void *file, unsigned long file_size,
 			   struct xnu_macho_x86_64_info *out);
+
+#ifndef __KERNEL__
+/*
+ * Inspect the standalone XNU __HIB,__text entry variant in userspace.
+ * Report its file offset after finding exactly one file-backed instruction
+ * section under a read-write __HIB segment. The regular parser still
+ * requires an executable segment. Results describe artifact metadata only.
+ */
+int xnu_macho_x86_64_inspect_hib_entry(const void *file, unsigned long file_size,
+				     struct xnu_macho_x86_64_info *out,
+				     xnu_macho_u64 *entry_fileoff);
+#endif

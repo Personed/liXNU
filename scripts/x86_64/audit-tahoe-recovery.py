@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,8 @@ OPENCORE_URL = "https://github.com/acidanthera/OpenCorePkg.git"
 BOARD_ID = "Mac-CFF7D910A743CAAF"
 MLB = "00000000000000000"
 RECOVERY_BASENAME = "verified-recovery"
+RECOVERY_DOWNLOAD_BUDGET_SECONDS = 3000
+RECOVERY_SOCKET_TIMEOUT_SECONDS = 120
 BOOT_KERNEL_COLLECTION = Path("System/Library/KernelCollections/BootKernelExtensions.kc")
 TARGET_RUNTIME_VERSION = "26.7.3"
 TARGET_RUNTIME_BUILD = "25G342"
@@ -31,7 +34,7 @@ TARGET_RUNTIME_BUILD = "25G342"
 XNU_RELEASE_PATTERN = re.compile(rb"xnu-([0-9]+(?:\.[0-9]+){2,}(?:~[0-9]+)?)/RELEASE_X86_64\b")
 
 
-def run(command: list[str], *, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+def run(command: list[str], *, timeout: float = 300) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
             command,
@@ -391,6 +394,68 @@ def inspect_recovery(
             report["audit_status"] = "recovery_mount_cleanup_failed"
 
 
+def download_recovery(report: dict[str, Any], downloader: Path, workspace: Path) -> Path | None:
+    # Bound socket inactivity without changing the pinned downloader or its verifier.
+    launcher = (
+        "import runpy, socket, sys; "
+        f"socket.setdefaulttimeout({RECOVERY_SOCKET_TIMEOUT_SECONDS}); "
+        "sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')"
+    )
+    deadline = time.monotonic() + RECOVERY_DOWNLOAD_BUDGET_SECONDS
+    attempts: list[dict[str, Any]] = []
+    report["recovery_download_attempts"] = attempts
+    for attempt in range(1, 3):
+        timeout = deadline - time.monotonic()
+        if timeout <= 0:
+            break
+        download_dir = workspace / f"recovery-attempt-{attempt}"
+        download_dir.mkdir()
+        result = run(
+            [
+                sys.executable, "-E", "-u", "-c", launcher, str(downloader),
+                "-o", str(download_dir), "-n", RECOVERY_BASENAME,
+                "-b", BOARD_ID, "-m", MLB, "-os", "latest", "download",
+            ],
+            timeout=timeout,
+        )
+        image = download_dir / f"{RECOVERY_BASENAME}.dmg"
+        chunklist = download_dir / f"{RECOVERY_BASENAME}.chunklist"
+        has_image = image.is_file()
+        has_chunklist = chunklist.is_file()
+        # Upstream may print signed URLs. Report only fixed stages and file sizes.
+        if "Verifying image with chunklist..." in result.stdout.splitlines():
+            phase = "chunklist_verification"
+        elif has_image:
+            phase = "image_download"
+        elif has_chunklist:
+            phase = "chunklist_download"
+        else:
+            phase = "session_or_catalog"
+        failure = error_class(result.stdout + result.stderr) if result.returncode else None
+        attempts.append({
+            "phase": phase,
+            "image_bytes": image.stat().st_size if has_image else 0,
+            "chunklist_bytes": chunklist.stat().st_size if has_chunklist else 0,
+            "exit_code": result.returncode,
+            "failure_class": failure,
+        })
+        if result.returncode == 0:
+            if not has_image or not has_chunklist:
+                report["audit_status"] = "verified_recovery_pair_missing"
+                return None
+            report["apple_chunklist_verified"] = True
+            return image
+        if (attempt != 1 or failure != "network_timeout" or result.returncode == 124
+                or phase == "chunklist_verification"):
+            break
+        shutil.rmtree(download_dir)
+
+    report["audit_status"] = "recovery_download_or_chunklist_verification_failed"
+    report["failure_class"] = attempts[-1]["failure_class"] if attempts else "network_timeout"
+    report["macrecovery_exit_code"] = attempts[-1]["exit_code"] if attempts else 124
+    return None
+
+
 def audit_temporary_recovery(report: dict[str, Any], temporary_path: Path) -> None:
     repo = Path(__file__).resolve().parents[2]
     fileset_helper = temporary_path / "xnu-fileset-metadata"
@@ -430,34 +495,9 @@ def audit_temporary_recovery(report: dict[str, Any], temporary_path: Path) -> No
         return
 
     downloader = source / "Utilities/macrecovery/macrecovery.py"
-    download_dir = temporary_path / "recovery"
-    download_dir.mkdir()
-    download = run(
-        [
-            sys.executable, "-E", str(downloader),
-            "-o", str(download_dir),
-            "-n", RECOVERY_BASENAME,
-            "-b", BOARD_ID,
-            "-m", MLB,
-            "-os", "latest",
-            "download",
-        ],
-        timeout=3000,
-    )
-    if download.returncode != 0:
-        report["audit_status"] = "recovery_download_or_chunklist_verification_failed"
-        report["failure_class"] = error_class(download.stdout + download.stderr)
-        report["macrecovery_exit_code"] = download.returncode
-        return
-
-    image = download_dir / f"{RECOVERY_BASENAME}.dmg"
-    chunklist = download_dir / f"{RECOVERY_BASENAME}.chunklist"
-    if not image.is_file() or not chunklist.is_file():
-        report["audit_status"] = "verified_recovery_pair_missing"
-        return
-
-    report["apple_chunklist_verified"] = True
-    inspect_recovery(report, image, fileset_helper, temporary_path)
+    image = download_recovery(report, downloader, temporary_path)
+    if image is not None:
+        inspect_recovery(report, image, fileset_helper, temporary_path)
 
 
 def main() -> int:

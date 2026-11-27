@@ -3,6 +3,7 @@
 """Check Recovery inspection outcomes without mounting an Apple image."""
 
 import importlib.util
+import json
 import subprocess
 import tempfile
 import unittest
@@ -13,6 +14,79 @@ SCRIPT = Path(__file__).resolve().parents[2] / "scripts/x86_64/audit-tahoe-recov
 SPEC = importlib.util.spec_from_file_location("audit_tahoe_recovery", SCRIPT)
 audit = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(audit)
+
+
+class RecoveryDownloadTests(unittest.TestCase):
+    def test_timeout_retry_uses_remaining_budget_and_a_fresh_directory(self):
+        report = {"apple_chunklist_verified": False}
+        steps = []
+
+        def run_attempt(command, *, timeout):
+            directory = Path(command[command.index("-o") + 1])
+            steps.append((directory, timeout))
+            (directory / f"{audit.RECOVERY_BASENAME}.chunklist").write_bytes(b"signed")
+            image = directory / f"{audit.RECOVERY_BASENAME}.dmg"
+            if len(steps) == 1:
+                image.write_bytes(b"partial")
+                return subprocess.CompletedProcess(command, 1, "https://example.test/signed?token=private", "timed out")
+            self.assertFalse(steps[0][0].exists())
+            self.assertFalse(image.exists())
+            image.write_bytes(b"verified")
+            return subprocess.CompletedProcess(command, 0, "Verifying image with chunklist...\n", "")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            with (
+                patch.object(audit, "run", side_effect=run_attempt),
+                patch.object(audit.time, "monotonic", side_effect=[0, 0, 120]),
+            ):
+                image = audit.download_recovery(report, workspace / "macrecovery.py", workspace)
+            self.assertEqual(image.read_bytes(), b"verified")
+            self.assertEqual([timeout for _, timeout in steps], [3000, 2880])
+            self.assertTrue(report["apple_chunklist_verified"])
+            self.assertEqual(report["recovery_download_attempts"], [
+                {"phase": "image_download", "image_bytes": 7, "chunklist_bytes": 6,
+                 "exit_code": 1, "failure_class": "network_timeout"},
+                {"phase": "chunklist_verification", "image_bytes": 8, "chunklist_bytes": 6,
+                 "exit_code": 0, "failure_class": None},
+            ])
+            self.assertNotIn("private", json.dumps(report))
+
+    def test_failure_never_claims_verification(self):
+        cases = (
+            (124, "", "timeout", "network_timeout", "session_or_catalog"),
+            (1, "HTTP Error 403", "", "apple_endpoint_forbidden", "session_or_catalog"),
+            (1, "Verifying image with chunklist...\nImage verification failed", "",
+             "apple_chunklist_verification_failed", "chunklist_verification"),
+        )
+        for code, stdout, stderr, failure, phase in cases:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                workspace = Path(temporary)
+                report = {"apple_chunklist_verified": False}
+                with patch.object(audit, "run", return_value=subprocess.CompletedProcess([], code, stdout, stderr)) as run:
+                    self.assertIsNone(audit.download_recovery(report, workspace / "macrecovery.py", workspace))
+                run.assert_called_once()
+                self.assertFalse(report["apple_chunklist_verified"])
+                self.assertEqual(report["failure_class"], failure)
+                self.assertEqual(report["macrecovery_exit_code"], code)
+                self.assertEqual(report["recovery_download_attempts"][0]["phase"], phase)
+
+    def test_launcher_sets_socket_timeout_and_preserves_downloader_arguments(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            downloader = workspace / "macrecovery.py"
+            downloader.write_text(
+                "import socket, sys\n"
+                f"assert socket.getdefaulttimeout() == {audit.RECOVERY_SOCKET_TIMEOUT_SECONDS}\n"
+                "assert sys.argv[0].endswith('macrecovery.py')\n"
+                "assert sys.argv[-3:] == ['-os', 'latest', 'download']\n"
+                "sys.exit(42)\n",
+                encoding="utf-8",
+            )
+            report = {"apple_chunklist_verified": False}
+            self.assertIsNone(audit.download_recovery(report, downloader, workspace))
+            self.assertEqual(report["macrecovery_exit_code"], 42)
+            self.assertFalse(report["apple_chunklist_verified"])
 
 
 class RecoveryInspectionTests(unittest.TestCase):

@@ -190,7 +190,7 @@ def main() -> int:
 
         direct_pie1_serial = (
             common
-            + "xnu: XNU PIE mapping mode 0x1\n"
+            + "xnu: XNU PIE mapping mode 0x0\n"
             + "xnu: host TCR2_EL1 0x2\n"
             + "xnu: host TCR2_EL1.PIE 0x1\n"
         )
@@ -207,6 +207,27 @@ def main() -> int:
             print(direct_pie1_result.stdout + direct_pie1_result.stderr, file=sys.stderr)
             return 1
         print("PASS: direct profile rejects PIE=1")
+
+        direct_xnu_pie_serial = (
+            common
+            + "xnu: XNU PIE mapping mode 0x1\n"
+            + "xnu: host TCR2_EL1 0x0\n"
+            + "xnu: host TCR2_EL1.PIE 0x0\n"
+        )
+        direct_xnu_pie_result = run_with_serial(
+            fake_qemu,
+            root,
+            direct_xnu_pie_serial,
+            qemu_cpu="cortex-a710",
+            require_pie=False,
+            require_direct=True,
+        )
+        if (direct_xnu_pie_result.returncode != 1
+                or "requires XNU PIE mapping mode=0" not in direct_xnu_pie_result.stderr):
+            print("FAIL: direct profile accepted XNU PIE mapping mode=1", file=sys.stderr)
+            print(direct_xnu_pie_result.stdout + direct_xnu_pie_result.stderr, file=sys.stderr)
+            return 1
+        print("PASS: direct profile rejects XNU PIE mode 1 when TCR2 PIE=0")
 
         direct_unsupported_serial = (
             common

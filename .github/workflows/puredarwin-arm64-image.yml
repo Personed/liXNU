@@ -439,7 +439,7 @@ jobs:
           retention-days: 30
 
   puredarwin-tcg-pie-boot:
-    name: Boot PureDarwin with QEMU 11.1 PIE enabled
+    name: Boot ARM64 PureDarwin via QEMU 11.1 TCG PIE on x86-64
     needs: [puredarwin-build, arm64-guest]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -522,7 +522,8 @@ jobs:
             echo "- QEMU source revision: \`${QEMU_REV}\`"
             echo '- CPU profile: QEMU `-cpu max`; `--require-pie` requires exactly one host TCR2_EL1.PIE=1 report and XNU PIE mapping mode=1.'
             echo '- Required guest evidence: XNU bootstrap write/execute probes, stage-210 page-table write/exec probes, PureDarwin userland marker, guest halt, XNU unload, and QEMU power-off.'
-            echo '- TCG is a supplemental validation profile; it does not replace the native hosted-XNU x86_64 project goal or ARM64 support.'
+            echo '- Route: x86-64 runner → Linux ARM64 guest under QEMU TCG → FKI/XNU → PureDarwin console.'
+            echo '- This TCG guest profile is supplemental validation; native hosted-XNU x86_64 remains the project goal and ARM64 support is preserved.'
             if [ -s "$output" ]; then
               echo
               echo '### Boot diagnostics'

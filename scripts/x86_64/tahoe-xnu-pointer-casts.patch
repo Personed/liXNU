@@ -191,3 +191,55 @@ index 75d172f13d69239a60e80f13bd01efa1a6de304e..a07d49be31a80df66f05c4bb823540a3
  	struct btlog_record recs[RECS] = {0};
  	bt_stack_t bts;
  
+--- a/bsd/netinet/tcp_prague.c
++++ b/bsd/netinet/tcp_prague.c
+@@ -110,7 +110,7 @@
+ 			 * Wmax again after reduction due to loss.
+ 			 */
+ 
+-			K = ((float)(tp->t_ccstate->cubic_W_max - tp->snd_cwnd)) / cubic_c_factor / tp->t_maxseg;
++			K = ((float)(tp->t_ccstate->cubic_W_max - tp->snd_cwnd)) / cubic_c_factor / (float)tp->t_maxseg;
+ 			K = cbrtf(K);
+ 			tp->t_ccstate->cubic_K = K * TCP_RETRANSHZ; /* in milliseconds */
+ 			tp->t_ccstate->cubic_origin_point = tp->t_ccstate->cubic_W_max;
+@@ -131,7 +131,7 @@
+ 	elapsed_time += srtt;
+ 
+ 	float var = (elapsed_time - tp->t_ccstate->cubic_K) / TCP_RETRANSHZ;
+-	var = var * var * var * cubic_c_factor * tp->t_maxseg;
++	var = var * var * var * cubic_c_factor * (float)tp->t_maxseg;
+ 
+ 	int32_t cwnd = (int32_t)((float)tp->t_ccstate->cubic_origin_point + var);
+ 	uint32_t w_cubic_next = cwnd > 0 ? (uint32_t)cwnd : 0;
+@@ -179,7 +179,7 @@
+ 			alpha_aimd = 1;
+ 		}
+ 
+-		tp->t_ccstate->reno_cwnd += (uint32_t)(tp->t_maxseg * alpha_aimd);
++		tp->t_ccstate->reno_cwnd += (uint32_t)((float)tp->t_maxseg * alpha_aimd);
+ 	}
+ 
+ 	return tp->t_ccstate->reno_cwnd;
+@@ -304,7 +304,7 @@
+ 	}
+ 
+ 	/* Calculate congestion window by multiplying with beta factor */
+-	win = (uint32_t)(win * cubic_beta);
++	win = (uint32_t)((float)win * cubic_beta);
+ 	win = tcp_round_to(win, tp->t_maxseg);
+ 	if (win < 2 * tp->t_maxseg) {
+ 		win =  2 * tp->t_maxseg;
+--- a/osfmk/kern/smr.c
++++ b/osfmk/kern/smr.c
+@@ -2930,8 +2930,9 @@
+ 	uint8_t                 newshift,
+ 	smrh_traits_t           traits)
+ {
+-	const size_t FLAT_SIZE = 256;
+-	struct smrq_slink *flat_queue[FLAT_SIZE];
++	enum { FLAT_QUEUE_COUNT = 256 };
++	struct smrq_slink *flat_queue[FLAT_QUEUE_COUNT];
++	const size_t FLAT_SIZE = FLAT_QUEUE_COUNT;
+ 
+ 	size_t oldsize, newsize;
+ 	hw_lck_ptr_t *oldarray;

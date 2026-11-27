@@ -11,6 +11,7 @@
 #define FIXED_BYTES ((DEFAULT_NKPT + 6) * PAGE_BYTES)
 #define MIN_BYTES (FIXED_BYTES + 9 * PAGE_BYTES)
 #define MAP_LIMIT (DEFAULT_NKPT * 512 * PAGE_BYTES)
+#define GIB_BYTES (1ULL << 30)
 
 static struct xnu_x86_boot_args boot_args(void)
 {
@@ -35,6 +36,7 @@ static struct xnu_x86_boot_layout boot_layout(void)
 		.carveout_size = 0x600000,
 		.boot_args_pa = 0x100000,
 		.bootstrap_bytes = 0x210000,
+		.hib_bytes = 0x200000,
 		.idle_kernel_pt_pages = DEFAULT_NKPT,
 	};
 }
@@ -121,11 +123,51 @@ static void test_table_and_address_limits(void)
 	assert(xnu_x86_boot_layout_validate(&args, &layout) == -ERANGE);
 }
 
+static void test_bootstrap_budget_components(void)
+{
+	struct xnu_x86_boot_args args = boot_args();
+	struct xnu_x86_boot_layout layout = boot_layout();
+
+	layout.bootstrap_bytes = MIN_BYTES;
+	assert(xnu_x86_boot_layout_validate(&args, &layout) == 0);
+	layout.hib_bytes++;
+	assert(xnu_x86_boot_layout_validate(&args, &layout) == -ERANGE);
+	layout.bootstrap_bytes += PAGE_BYTES;
+	assert(xnu_x86_boot_layout_validate(&args, &layout) == 0);
+	layout.hib_bytes = 0;
+	assert(xnu_x86_boot_layout_validate(&args, &layout) == -EINVAL);
+
+	layout = boot_layout();
+	layout.carveout_size = 0x4000000;
+	args.PhysicalMemorySize = 253 * GIB_BYTES;
+	/* 257 L2 pages fill the first L3 at the maximum entropy offset. */
+	layout.bootstrap_bytes = FIXED_BYTES + (257 + 1 + 3) * PAGE_BYTES;
+	assert(xnu_x86_boot_layout_validate(&args, &layout) == 0);
+	layout.bootstrap_bytes += PAGE_BYTES;
+	args.PhysicalMemorySize++;
+	assert(xnu_x86_boot_layout_validate(&args, &layout) == -ERANGE);
+	layout.bootstrap_bytes += PAGE_BYTES;
+	assert(xnu_x86_boot_layout_validate(&args, &layout) == 0);
+
+	layout.bootstrap_bytes = 0x2000000;
+	args.PhysicalMemorySize = (14 * 512 - 255 - 4) * GIB_BYTES;
+	assert(xnu_x86_boot_layout_validate(&args, &layout) == 0);
+	args.PhysicalMemorySize++;
+	assert(xnu_x86_boot_layout_validate(&args, &layout) == -ERANGE);
+
+	args = boot_args();
+	layout.hib_bytes = GIB_BYTES;
+	assert(xnu_x86_boot_layout_validate(&args, &layout) == 0);
+	layout.hib_bytes++;
+	assert(xnu_x86_boot_layout_validate(&args, &layout) == -ERANGE);
+}
+
 int main(void)
 {
 	test_placement();
 	test_alignment_and_zero();
 	test_table_and_address_limits();
+	test_bootstrap_budget_components();
 	puts("xnu x86 boot layout fixtures passed");
 	return 0;
 }

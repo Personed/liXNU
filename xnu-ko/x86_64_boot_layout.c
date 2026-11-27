@@ -14,6 +14,9 @@
 #define BOOT_PD_PAGES 4ULL
 #define BOOT_LAST_PA 0xffffffffULL
 #define BOOT_GIB (1ULL << 30)
+#define BOOT_LARGE_PAGE_SIZE (1ULL << 21)
+#define BOOT_PHYSMAP_MAX_OFFSET 255ULL
+#define BOOT_PHYSMAP_MAX_PML4_SLOTS 14ULL
 
 struct boot_span {
 	xnu_boot_u64 start;
@@ -24,7 +27,7 @@ int xnu_x86_boot_layout_validate(const struct xnu_x86_boot_args *args,
 				 const struct xnu_x86_boot_layout *layout)
 {
 	xnu_boot_u64 carveout_end, kernel_end, first_free, fixed_bytes, mapped_limit;
-	xnu_boot_u64 physmap_l2_min, physmap_l3_min, min_bytes;
+	xnu_boot_u64 physmap_l2_pages, physmap_l3_pages, dblmap_l1_pages, table_bytes;
 	unsigned int i, j;
 	int err;
 
@@ -36,6 +39,7 @@ int xnu_x86_boot_layout_validate(const struct xnu_x86_boot_args *args,
 
 	if (!layout->carveout_size || !layout->boot_args_pa ||
 	    !layout->bootstrap_bytes || !layout->idle_kernel_pt_pages ||
+	    !layout->hib_bytes || !args->PhysicalMemorySize ||
 	    layout->idle_kernel_pt_pages > BOOT_PD_PAGES * BOOT_PTE_PER_PAGE)
 		return -EINVAL;
 	if ((layout->carveout_pa | layout->carveout_size | layout->boot_args_pa |
@@ -61,19 +65,28 @@ int xnu_x86_boot_layout_validate(const struct xnu_x86_boot_args *args,
 	mapped_limit = layout->idle_kernel_pt_pages * BOOT_PTE_PER_PAGE *
 		       BOOT_PAGE_SIZE;
 	/*
-	 * physmap_init() covers one GiB per L2 table and includes a 4 GiB
-	 * allowance for MMIO. doublemap_init() needs at least three pages
-	 * for a nonempty __HIB. Entropy and larger __HIB mappings can add
-	 * pages, so this is only a lower bound on the caller's budget.
+	 * One L2 page per GiB, including the 4 GiB MMIO allowance. The
+	 * first L3 can start as late as index 255. Bound the full physmap
+	 * at that offset rather than rely on XNU's release-build clamp.
 	 */
-	physmap_l2_min = args->PhysicalMemorySize / BOOT_GIB + 4;
+	physmap_l2_pages = args->PhysicalMemorySize / BOOT_GIB + 4;
 	if (args->PhysicalMemorySize % BOOT_GIB)
-		physmap_l2_min++;
-	physmap_l3_min = (physmap_l2_min + BOOT_PTE_PER_PAGE - 1) /
-			 BOOT_PTE_PER_PAGE;
-	min_bytes = fixed_bytes + (physmap_l2_min + physmap_l3_min + 3) *
-		    BOOT_PAGE_SIZE;
-	if (layout->bootstrap_bytes < min_bytes ||
+		physmap_l2_pages++;
+	physmap_l3_pages = (physmap_l2_pages + BOOT_PHYSMAP_MAX_OFFSET +
+			  BOOT_PTE_PER_PAGE - 1) / BOOT_PTE_PER_PAGE;
+	if (physmap_l3_pages > BOOT_PHYSMAP_MAX_PML4_SLOTS)
+		return -ERANGE;
+
+	/* doublemap_init(): one L3 and L2, one L1 per 2 MiB of __HIB. */
+	dblmap_l1_pages = layout->hib_bytes / BOOT_LARGE_PAGE_SIZE;
+	if (layout->hib_bytes % BOOT_LARGE_PAGE_SIZE)
+		dblmap_l1_pages++;
+	if (dblmap_l1_pages > BOOT_PTE_PER_PAGE)
+		return -ERANGE;
+
+	table_bytes = fixed_bytes + (physmap_l2_pages + physmap_l3_pages +
+				     dblmap_l1_pages + 2) * BOOT_PAGE_SIZE;
+	if (layout->bootstrap_bytes < table_bytes ||
 	    first_free + fixed_bytes > mapped_limit)
 		return -ERANGE;
 	if (args->kaddr < layout->carveout_pa ||

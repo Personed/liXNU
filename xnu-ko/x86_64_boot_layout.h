@@ -9,6 +9,8 @@ struct xnu_x86_boot_layout {
 	xnu_boot_u64 boot_args_pa;
 	/* Reserve from round_page(kaddr + ksize), including the fixed tables. */
 	xnu_boot_u64 bootstrap_bytes;
+	/* The selected XNU image's nonempty __HIB virtual size. */
+	xnu_boot_u64 hib_bytes;
 	/* The selected XNU build's NKPT, including any build override. */
 	xnu_boot_u32 idle_kernel_pt_pages;
 };
@@ -16,7 +18,8 @@ struct xnu_x86_boot_layout {
 /*
  * Validate placement for the source-pinned core boot objects. The caller
  * supplies a host-owned contiguous reservation and the bootstrap budget for
- * the selected artifact. This checks address arithmetic and containment.
+ * the selected artifact. This checks address arithmetic, containment and the
+ * pinned non-KASAN Idle_PTs_init() allocation bound.
  * It does not verify ownership, EFI/ADT content, optional boot fields,
  * mappings, or that the supplied budget covers all build-specific writes.
  *

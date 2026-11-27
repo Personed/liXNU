@@ -19,6 +19,6 @@ struct x86_boundary_continuation_request {
 #define X86_BOUNDARY_PROBE_MODE_ABORT  1
 #define X86_BOUNDARY_PROBE_RUN _IOW(0xb7, 1, struct x86_boundary_probe_request)
 #define X86_BOUNDARY_PROBE_TASK_CONTINUATION \
-	_IOW(0xb7, 2, struct x86_boundary_continuation_request)
+	_IOW(0xb7, 3, struct x86_boundary_continuation_request)
 
 #endif

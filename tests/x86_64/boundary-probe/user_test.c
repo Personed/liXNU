@@ -44,7 +44,7 @@ struct xsave_config {
 _Static_assert(X86_BOUNDARY_PROBE_RUN == _IOW(0xb7, 1, struct x86_boundary_probe_request),
 	       "userspace ioctl number disagrees with kernel UAPI");
 _Static_assert(X86_BOUNDARY_PROBE_TASK_CONTINUATION ==
-	       _IOW(0xb7, 2, struct x86_boundary_continuation_request),
+	       _IOW(0xb7, 3, struct x86_boundary_continuation_request),
 	       "userspace continuation ioctl disagrees with kernel UAPI");
 
 static long invoke_with_xstate(int fd, const struct x86_boundary_probe_request *request,

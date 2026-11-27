@@ -45,7 +45,7 @@ with evidence from the native XNU session being recorded.
 | Enter hosted XNU | The native entry trace names the loaded build and records execution past the XNU entry point. | |
 | Return and fault recovery | The approved checks record normal return and the outcome of each exercised recovery path, with before/after Linux state comparisons. | |
 | Linux host integrity | The host checks report CPU/task, register, extended state, address-space, and interrupt state preservation as applicable. Record Linux syscall and memory checks during hosted operation and after return. | |
-| Tahoe desktop and devices | The desktop responds to keyboard and pointer input. Record the display/rendering backend and the observed disk I/O and network results. | |
+| Tahoe desktop and devices | The desktop renders visibly, responds to keyboard and pointer input, and passes both disk I/O and network checks. Record the rendering backend and the outcome of each check. | |
 | Guest shutdown and cleanup | Tahoe requests shutdown. Linux logs the XNU stop and module cleanup and stays responsive afterward. Record a host-initiated stop as cleanup. | |
 | Unsupported CPU or config refusal | Record the deliberately unsupported profile in a separate run and retain the refusal before XNU entry, plus the subsequent Linux health check. | |
 

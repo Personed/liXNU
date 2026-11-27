@@ -76,7 +76,7 @@ jobs:
           cat "$log"
           grep -F "kernel release mismatch: headers lixnu-recovery-mismatch-fixture, booted kernel $release" "$log"
           grep -F 'reboot: Power down' "$log"
-          if grep -Eq '^X86_EXCEPTION_RECOVERY_|x86-exception-recovery: test-only|Kernel panic' "$log"; then
+          if grep -Eq '^X86_EXCEPTION_RECOVERY_|x86-boundary-probe: test-only|x86-exception-recovery: test-only|Kernel panic' "$log"; then
             echo "mismatched guest ran the probe or panicked" >&2
             exit 1
           fi

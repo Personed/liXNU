@@ -24,6 +24,9 @@ SUPPORTED_SUBTYPES = {"X86_64_ALL", "X86_64_H"}
 ENTRY_SOURCE = "LC_UNIXTHREAD.x86_THREAD_STATE64.RIP"
 LAYOUT_PROFILE = "xnu-development-kernel-v1"
 MANIFEST_CONTRACT = "build-xnu-kernel-result-v1"
+XNU_SOURCE_PATCH = "xnu-patches/0015-x86-cpuid-vendor-early-refusal.patch"
+XNU_COMPAT_PATCH = "scripts/x86_64/tahoe-xnu-pointer-casts.patch"
+NON_INTEL_VENDOR_POLICY = "refuse-before-cpuid_do_precpuid_was-and-cpuid_set_generic_info"
 EXPECTED_BUILD_IDENTITY = {
     "xnu_commit": "ac9718fb1af618d5ce8678d0dc6e8a58f252216f",
     "xnu_tag": "xnu-12377.121.6",
@@ -103,7 +106,8 @@ def require_string(manifest: dict[str, object], key: str, expected: str | None =
 
 
 def verify_manifest(
-    manifest: dict[str, object], artifact_sha256: str, artifact_size: int
+    manifest: dict[str, object], artifact_sha256: str, artifact_size: int,
+    repo_root: pathlib.Path,
 ) -> dict[str, object]:
     if type(manifest.get("build_result_schema_version")) is not int or manifest["build_result_schema_version"] != 1:
         raise VerificationError("build-result.json must declare build_result_schema_version=1")
@@ -118,6 +122,31 @@ def verify_manifest(
         key: require_string(manifest, key, expected)
         for key, expected in EXPECTED_BUILD_IDENTITY.items()
     }
+
+    if manifest.get("xnu_source_modified") is not True:
+        raise VerificationError("build-result.json must attest that the pinned XNU patch was applied")
+    source_patch = require_string(manifest, "xnu_source_patch", XNU_SOURCE_PATCH)
+    vendor_policy = require_string(manifest, "xnu_non_intel_vendor_policy", NON_INTEL_VENDOR_POLICY)
+    source_patch_sha256 = require_string(manifest, "xnu_source_patch_sha256")
+    compat_patch_sha256 = require_string(manifest, "xnu_source_compat_patch_sha256")
+    if not SHA256_RE.fullmatch(source_patch_sha256):
+        raise VerificationError("build-result.json xnu_source_patch_sha256 must be a 64-digit SHA-256")
+    if not SHA256_RE.fullmatch(compat_patch_sha256):
+        raise VerificationError("build-result.json xnu_source_compat_patch_sha256 must be a 64-digit SHA-256")
+    expected_source_patch_sha256 = sha256_file(repo_root / XNU_SOURCE_PATCH)
+    if source_patch_sha256.lower() != expected_source_patch_sha256:
+        raise VerificationError("XNU source patch SHA-256 does not match the checked-out patch")
+    expected_compat_patch_sha256 = sha256_file(repo_root / XNU_COMPAT_PATCH)
+    if compat_patch_sha256.lower() != expected_compat_patch_sha256:
+        raise VerificationError("XNU compatibility patch SHA-256 does not match the checked-out patch")
+
+    host_identity = {
+        "build_host_arch": require_string(manifest, "build_host_arch", "x86_64"),
+        "build_host_mode": require_string(manifest, "build_host_mode", "native"),
+        "build_process_arch": require_string(manifest, "build_process_arch", "x86_64"),
+    }
+    if manifest.get("build_process_translated") is not False:
+        raise VerificationError("build-result.json must attest build_process_translated=false")
 
     recorded_hash = require_string(manifest, "artifact_sha256")
     if not SHA256_RE.fullmatch(recorded_hash):
@@ -141,6 +170,13 @@ def verify_manifest(
         "build_result_schema_version": 1,
         "artifact_size_bytes": artifact_size,
         **identity,
+        "xnu_source_modified": True,
+        "xnu_source_patch": source_patch,
+        "xnu_source_patch_sha256": expected_source_patch_sha256,
+        "xnu_source_compat_patch_sha256": expected_compat_patch_sha256,
+        "xnu_non_intel_vendor_policy": vendor_policy,
+        **host_identity,
+        "build_process_translated": False,
         "artifact_type": "XNU development kernel",
         "architecture": "x86_64",
         "kernel_collection_built": False,
@@ -211,6 +247,10 @@ def verify_inspection(
         raise VerificationError("inspector mapped_segment_count does not match the segment list")
 
     text_segment = text_segments[0]
+    layout_observed = {
+        key: text_segment.get(key)
+        for key in ("vmaddr", "vmsize", "fileoff", "filesize", "initprot", "maxprot", "nsects", "mapped")
+    }
     if (
         text_segment.get("mapped") is not True
         or text_segment.get("fileoff") != "0x0000000000000000"
@@ -221,13 +261,17 @@ def verify_inspection(
         or text_segment.get("nsects", 0) < 1
     ):
         raise VerificationError(
-            "XNU development layout requires one file-backed, sectioned, read/execute-only __TEXT at file offset zero"
+            "XNU development layout requires one file-backed, sectioned, read/execute-only "
+            f"__TEXT at file offset zero; observed {layout_observed!r}"
         )
     text_vmaddr = parse_hex(text_segment.get("vmaddr"), "__TEXT.vmaddr")
     text_vmsize = parse_hex(text_segment.get("vmsize"), "__TEXT.vmsize")
     text_filesize = parse_hex(text_segment.get("filesize"), "__TEXT.filesize")
     if text_vmsize == 0 or text_filesize > text_vmsize:
-        raise VerificationError("__TEXT must have a non-empty file-backed range within its VM range")
+        raise VerificationError(
+            "__TEXT must have a non-empty file-backed range within its VM range; "
+            f"observed {layout_observed!r}"
+        )
     entry_is_in_text = False
     for segment in segments:
         if segment.get("name") != "__TEXT":
@@ -398,7 +442,7 @@ def main(argv: list[str]) -> int:
             temporary_dir = pathlib.Path(temporary)
             snapshot = temporary_dir / "kernel.development"
             artifact_size, artifact_sha256 = snapshot_artifact(artifact, snapshot)
-            build_metadata = verify_manifest(manifest, artifact_sha256, artifact_size)
+            build_metadata = verify_manifest(manifest, artifact_sha256, artifact_size, repo_root)
             inspector = compile_trusted_inspector(repo_root, temporary_dir)
             inspection = inspect_artifact(
                 inspector, snapshot, artifact_size, args.expected_subtype

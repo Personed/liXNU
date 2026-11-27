@@ -31,6 +31,7 @@ jobs:
       - name: Install QEMU on Linux
         if: runner.os == 'Linux'
         run: |
+          scripts/ci/disable-microsoft-apt-feed.sh
           sudo apt-get update
           sudo apt-get install --yes qemu-system-arm qemu-efi-aarch64 qemu-utils
       - name: Install QEMU on Windows
@@ -60,6 +61,7 @@ jobs:
           python-version: "3.12"
       - name: Install QEMU and ARM64 UEFI firmware
         run: |
+          scripts/ci/disable-microsoft-apt-feed.sh
           sudo apt-get update
           sudo apt-get install --yes qemu-system-arm qemu-efi-aarch64 qemu-utils qemu-system-gui xvfb x11-utils
       - name: Start the graphical ARM64 guest through ${{ matrix.display_backend }}

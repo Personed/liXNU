@@ -33,7 +33,7 @@ KERNEL_RELEASE=$(cat "$KDIR/include/config/kernel.release")
 test -n "$KERNEL_RELEASE" || { echo "kernel release metadata is missing from KDIR" >&2; exit 1; }
 KERNEL_IMAGE_PACKAGE=
 for candidate in "linux-image-unsigned-$KERNEL_RELEASE" "linux-image-$KERNEL_RELEASE-unsigned"; do
-  if apt-cache show "$candidate" 2>/dev/null | grep -Fq "Package: $candidate"; then
+  if apt-cache show "$candidate" 2>/dev/null | grep -F "Package: $candidate" >/dev/null; then
     KERNEL_IMAGE_PACKAGE=$candidate
     break
   fi

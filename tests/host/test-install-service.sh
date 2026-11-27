@@ -24,7 +24,7 @@ GETCONF
 cat > "$fixture/bin/make" <<'MAKE'
 #!/bin/sh
 : > "$TEST_CASE/make-called"
-exit 1
+test "${TEST_LOAD_XNU:-}" = yes
 MAKE
 cp "$fixture/bin/make" "$fixture/bin/modinfo"
 cat > "$fixture/bin/sudo" <<'SUDO'
@@ -34,6 +34,12 @@ printf '%s\n' "$*" >> "$TEST_CASE/sudo.log"
 case "$1" in
   tee) cat > "$TEST_CASE/${2##*/}" ;;
   systemctl) ;;
+  dmesg|insmod|rmmod) test "${TEST_LOAD_XNU:-}" = yes ;;
+  setsid)
+    test "${TEST_LOAD_XNU:-}" = yes
+    test "$2 $3 $4" = "nohup insmod xnu-ko/xnu.ko"
+    printf '%s\n' "$@" > "$TEST_CASE/xnu-args"
+    ;;
   *) exit 1 ;;
 esac
 SUDO
@@ -46,6 +52,7 @@ cat > "$fixture/config-checks.sh" <<'CHECKS'
     "-f /etc/xnulinux.conf ]") [[ -f "$TEST_CASE/xnulinux.conf" ]] ;;
     "! -f /var/tmp/mac.conf ]") [[ "$TEST_DEFAULT_DISK" == absent ]] ;;
     "! -f /lib/modules/xnulinux-fixture/build/Makefile ]") return 1 ;;
+    "-d /sys/module/xnu ]") return 1 ;;
     *) builtin [ "$@" ;;
   esac
 }
@@ -56,6 +63,9 @@ cat > "$fixture/config-checks.sh" <<'CHECKS'
     builtin . "$@"
   fi
 }
+nproc() { printf '1\n'; }
+sync() { :; }
+sleep() { wait; }
 CHECKS
 
 run_installer() {
@@ -102,6 +112,26 @@ DISK_CONF
   test ! -e "$custom/make-called"
   cmp "$custom/sudo-before" "$custom/sudo.log"
 done
+
+# Run the actual startup command in a private tree. Redirect its fixed log
+# path and FKI parameter reads to the fixture, and replace networking and sudo.
+mkdir -p "$fixture/runtime/scripts" "$custom/fki/parameters"
+sed 's@/var/tmp/xnu-insmod.log@"$TEST_CASE/xnu-insmod.log"@g; s@/sys/module/fki@"$TEST_CASE/fki"@g' \
+  "$REPO/scripts/xnulinux-boot.sh" > "$fixture/runtime/scripts/xnulinux-boot.sh"
+printf 'exit 0\n' > "$fixture/runtime/scripts/vm-net-up.sh"
+printf '0\n' > "$custom/fki/parameters/cpu_list"
+printf '1024\n' > "$custom/fki/parameters/carve_mb"
+printf 'ROOT_UUID=fixture-root\nBOOT_UUID=fixture-boot\n' > "$custom/pd.conf"
+if ! PATH="$fixture/bin:$PATH" BASH_ENV="$fixture/config-checks.sh" TEST_CASE="$custom" TEST_LOAD_XNU=yes \
+    MAC_CONF= DISK= ROOT_UUID= BOOT_UUID= GPU=off CPUS=1 SOC_NAME=fixture \
+    CONSOLE_IN="$custom/console" INPUT_IN="$custom/input" FB_DUMP="$custom/fb" KEYSTORE="$custom/keystore" \
+    bash "$fixture/runtime/scripts/xnulinux-boot.sh" > "$custom/start.log" 2>&1; then
+  cat "$custom/start.log" >&2
+  exit 1
+fi
+grep -Fxq "disk=$custom/pd.img" "$custom/xnu-args"
+grep -Fxq 'root_uuid=fixture-root' "$custom/xnu-args"
+grep -Fxq 'boot_uuid=fixture-boot' "$custom/xnu-args"
 
 run_installer default present
 test -s "$fixture/default/xnulinux.conf"

@@ -9,6 +9,8 @@ certification or a physical-hardware test.
 
 import argparse
 import ctypes
+import gzip
+import hashlib
 import json
 import os
 import platform
@@ -16,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import zlib
 
 GIB = 1024 ** 3
 X86_64H_FEATURES = (
@@ -133,6 +136,36 @@ def linux_cpu_info(path="/proc/cpuinfo"):
     return fields
 
 
+def linux_kernel_config_facts(release, proc_config_path="/proc/config.gz", boot_config_dir="/boot"):
+    """Hash the running Linux kernel config, preferring its proc gzip export.
+
+    The gzip stream is decompressed before hashing so the digest identifies the
+    canonical .config bytes rather than gzip metadata. If no readable config is
+    available, the returned status is "unavailable" and the hash/source are null.
+    """
+    candidates = [(proc_config_path, True)]
+    if release and os.path.basename(release) == release:
+        candidates.append((os.path.join(boot_config_dir, f"config-{release}"), False))
+
+    for path, compressed in candidates:
+        try:
+            if compressed:
+                with gzip.open(path, "rb") as config_file:
+                    config = config_file.read()
+            else:
+                with open(path, "rb") as config_file:
+                    config = config_file.read()
+        except (OSError, EOFError, zlib.error):
+            continue
+        return {
+            "status": "available",
+            "source": path,
+            "sha256": hashlib.sha256(config).hexdigest(),
+        }
+
+    return {"status": "unavailable", "source": None, "sha256": None}
+
+
 def collect_facts():
     system = platform.system() or "Unknown"
     machine = platform.machine() or "unknown"
@@ -141,6 +174,11 @@ def collect_facts():
     cpu_info = linux_cpu_info() if system == "Linux" else {}
     flags = set(cpu_info.get("flags", cpu_info.get("features", "")).split())
     linux_page_size = os.sysconf("SC_PAGE_SIZE") if system == "Linux" else None
+    kernel_config = (
+        linux_kernel_config_facts(platform.release())
+        if system == "Linux"
+        else {"status": "not_applicable", "source": None, "sha256": None}
+    )
     try:
         free_disk = shutil.disk_usage(os.getcwd()).free
     except OSError:
@@ -159,6 +197,9 @@ def collect_facts():
         "linux_cpu_vendor": cpu_info.get("vendor_id"),
         "linux_cpu_model": cpu_info.get("model name"),
         "linux_page_size_bytes": linux_page_size,
+        "linux_kernel_config_status": kernel_config["status"],
+        "linux_kernel_config_source": kernel_config["source"],
+        "linux_kernel_config_sha256": kernel_config["sha256"],
     }
 
 

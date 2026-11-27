@@ -80,8 +80,10 @@ PR #89 run #162 remains queued on old SHA `3020e23` with no jobs started; curren
 The historical full-route TCG reference assigns 16 GiB to the ARM64 guest, with Linux
 `mem=7G`, an 8,156 MiB FKI carve-out at `0x200000000`, and 7,900 MiB XNU RAM. The
 20 GiB total / 4 GiB available before artifact preparation screen is planning guidance,
-not a measured physical minimum or an acceptance threshold. Current required CI uses a
-separate reduced 6 GiB profile. The full route passed in
+not a measured physical minimum or an acceptance threshold. The complementary QEMU TCG
+workflow introduced in PR #52 uses 6 GiB as its default guest profile. This profile is
+specific to that workflow and is not a merge gate for the native x86_64 port. The full
+route passed in
 three recent virtualized Ubuntu jobs: PR #67 run [#106](https://github.com/Personed/xnulinux/actions/runs/45874167659)
 reported AMD EPYC 9V74, 4 vCPUs, and `MemTotal: 16367528 kB`; PR #36 run [#118](https://github.com/Personed/xnulinux/actions/runs/45881289094)
 reported `MemTotal: 16078392 kB`; and PR #69 run [#115](https://github.com/Personed/xnulinux/actions/runs/45880581266)

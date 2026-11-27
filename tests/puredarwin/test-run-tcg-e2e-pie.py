@@ -19,6 +19,7 @@ def run_with_serial(
     *,
     qemu_cpu: str | None = None,
     require_pie: bool = True,
+    require_direct: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     kernel = root / "Image"
     initramfs = root / "initramfs.cpio.gz"
@@ -34,6 +35,8 @@ def run_with_serial(
         command.extend(("--qemu-cpu", qemu_cpu))
     if require_pie:
         command.append("--require-pie")
+    if require_direct:
+        command.append("--require-direct")
     command.extend(
         [
             "--qemu-memory", "6G",
@@ -168,13 +171,61 @@ def main() -> int:
             + "xnu: host TCR2_EL1.PIE 0x0\n"
         )
         direct_result = run_with_serial(
-            fake_qemu, root, direct_serial, qemu_cpu="cortex-a710", require_pie=False
+            fake_qemu,
+            root,
+            direct_serial,
+            qemu_cpu="cortex-a710",
+            require_pie=False,
+            require_direct=True,
         )
         if direct_result.returncode != 0 or "cortex-a710 CPU" not in direct_result.stdout:
-            print("FAIL: explicit cortex-a710 direct profile did not reach clean halt", file=sys.stderr)
+            print("FAIL: explicit cortex-a710 PIE=0 profile did not reach clean halt", file=sys.stderr)
             print(direct_result.stdout + direct_result.stderr, file=sys.stderr)
             return 1
-        print("PASS: explicit cortex-a710 direct profile is forwarded to QEMU")
+        for evidence in ("xnu: host TCR2_EL1.PIE 0x0", "xnu: XNU PIE mapping mode 0x0"):
+            if evidence not in direct_result.stdout:
+                print(f"FAIL: direct profile evidence missing: {evidence}", file=sys.stderr)
+                return 1
+        print("PASS: cortex-a710 requires TCR2 PIE=0 and XNU direct mode")
+
+        direct_pie1_serial = (
+            common
+            + "xnu: XNU PIE mapping mode 0x1\n"
+            + "xnu: host TCR2_EL1 0x2\n"
+            + "xnu: host TCR2_EL1.PIE 0x1\n"
+        )
+        direct_pie1_result = run_with_serial(
+            fake_qemu,
+            root,
+            direct_pie1_serial,
+            qemu_cpu="cortex-a710",
+            require_pie=False,
+            require_direct=True,
+        )
+        if direct_pie1_result.returncode != 1 or "requires TCR2_EL1.PIE=0" not in direct_pie1_result.stderr:
+            print("FAIL: direct profile accepted PIE=1", file=sys.stderr)
+            print(direct_pie1_result.stdout + direct_pie1_result.stderr, file=sys.stderr)
+            return 1
+        print("PASS: direct profile rejects PIE=1")
+
+        direct_unsupported_serial = (
+            common
+            + "xnu: XNU PIE mapping mode 0x0\n"
+            + "xnu: host TCR2_EL1 unavailable; using direct permissions\n"
+        )
+        direct_unsupported_result = run_with_serial(
+            fake_qemu,
+            root,
+            direct_unsupported_serial,
+            qemu_cpu="cortex-a710",
+            require_pie=False,
+            require_direct=True,
+        )
+        if direct_unsupported_result.returncode != 0:
+            print("FAIL: direct profile rejected unsupported TCR2 fallback", file=sys.stderr)
+            print(direct_unsupported_result.stdout + direct_unsupported_result.stderr, file=sys.stderr)
+            return 1
+        print("PASS: direct profile accepts unsupported TCR2 fallback with XNU mode 0")
     return 0
 
 

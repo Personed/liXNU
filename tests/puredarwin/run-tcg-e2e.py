@@ -130,9 +130,16 @@ def main() -> int:
         action="store_true",
         help="require the guest to report TCR2_EL1.PIE=1 and pass XNU page-table probes before userland",
     )
+    parser.add_argument(
+        "--require-direct",
+        action="store_true",
+        help="require TCR2_EL1.PIE=0 (or unsupported TCR2) and XNU PIE mapping mode=0",
+    )
     args = parser.parse_args()
     if not args.qemu_cpu.strip():
         parser.error("--qemu-cpu must not be empty")
+    if args.require_pie and args.require_direct:
+        parser.error("--require-pie and --require-direct are mutually exclusive")
     for path in (args.kernel, args.initramfs, args.disk):
         if not path.is_file():
             parser.error(f"missing input: {path}")
@@ -273,6 +280,14 @@ def main() -> int:
         ):
             if not any(marker in line for line in messages):
                 missing.append(marker)
+    elif args.require_direct:
+        if tcr2_unsupported:
+            if pie_values:
+                missing.append("requires consistent TCR2_EL1 evidence for direct permissions")
+        elif not (tcr2_logged and len(pie_values) == 1 and pie_values[0] == 0):
+            missing.append("requires TCR2_EL1.PIE=0 or unsupported TCR2")
+        if len(xnu_pie_values) != 1 or xnu_pie_values[0] != 0:
+            missing.append("requires XNU PIE mapping mode=0")
     elif not (tcr2_unsupported or (tcr2_logged and pie_logged)):
         missing.append("TCR2_EL1 read and PIE-bit result (or unsupported-feature fallback)")
     darwin_line = "fki: darwin console: Darwin"
@@ -297,6 +312,12 @@ def main() -> int:
             "xnu: probe port_crumb (rw)",
             "xnu: probe exec strlen through XNU tables",
             "xnu: probes done",
+        ))
+    elif args.require_direct:
+        printed_markers.extend((
+            "xnu: host TCR2_EL1",
+            "xnu: host TCR2_EL1 unavailable",
+            "xnu: XNU PIE mapping mode",
         ))
     for line in messages:
         if line == darwin_line or any(marker in line for marker in printed_markers):

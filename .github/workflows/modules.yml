@@ -53,7 +53,7 @@ jobs:
           case "$kdir" in */linux-headers-6.12.*-amd64) ;; *) echo "expected Debian 13 Linux 6.12 x86_64 headers; got $kdir" >&2; exit 1;; esac
           echo "KDIR=$kdir" >> "$GITHUB_ENV"
       - name: Build x86_64 FKI
-        run: ARCH=x86_64 tests/x86_64/build-fki.sh "$KDIR"
+        run: make -C "$KDIR" ARCH=x86_64 M="$PWD/fki-ko" CONFIG_DEBUG_INFO_BTF_MODULES= modules
       - name: Build x86_64 fail-closed XNU module
         run: make -C "$KDIR" ARCH=x86_64 M="$PWD/xnu-ko" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
       - name: Test x86_64 XNU stub refusal on Debian 13

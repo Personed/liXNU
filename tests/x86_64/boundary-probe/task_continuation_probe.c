@@ -588,7 +588,6 @@ static int bp_task_continuation_responder_thread(void *data)
 	struct bp_continuation_test *test = data;
 	u64 wrong_generation;
 	u64 wrong_request_id;
-	unsigned long deadline;
 	int ret;
 
 	WRITE_ONCE(test->responder_task, current);

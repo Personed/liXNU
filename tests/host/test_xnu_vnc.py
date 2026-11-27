@@ -300,15 +300,13 @@ class TestXnuVnc(unittest.TestCase):
                 'else\n'
                 '  printf "# /etc/systemd/journald.conf\\n"\n'
                 'fi\n'
-                'cat <<\'EOF\'\n'
-                '[Journal]\n'
-                'ReadKMsg=\\\n'
-                '# ignored comment\n'
-                '  yes\n'
-                '\n'
-                '# /etc/systemd/journald.conf.d/10-headerless.conf\n'
-                'ReadKMsg=no\n'
-                'EOF\n',
+                'printf "%s\\n" "[Journal]" "ReadKMsg=no" "ReadKMsg=\\" "# ignored comment" "  yes" ""\n'
+                'if [ "$SYSTEMD_COLORS" != 0 ]; then\n'
+                '  printf "\\033[35m# /etc/systemd/journald.conf.d/10-headerless.conf\\033[0m\\n"\n'
+                'else\n'
+                '  printf "# /etc/systemd/journald.conf.d/10-headerless.conf\\n"\n'
+                'fi\n'
+                'printf "ReadKMsg=no\\n"\n',
                 encoding="utf-8",
             )
             os.chmod(bin_dir / "systemd-analyze", 0o755)

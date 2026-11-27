@@ -1,6 +1,6 @@
 # Native x86_64 code-path audit
 
-Status on 2026-11-27, based on main `7712aac19400a3bc5cc1edf2f2d8c647b43b2978`.
+Status on 2026-11-27, based on main `e69f0a0309bc32d61266201eb2420aebeef33b87`.
 This audit covers only the separate native hosted-XNU experiment. It does not
 change the project goal or the ARM64 implementation.
 
@@ -18,13 +18,13 @@ change the project goal or the ARM64 implementation.
 ## Artifact blocker
 
 PR #56 is pinned to public XNU source `xnu-12377.121.6` (26.5) while the
-runtime target is Tahoe 26.6.2. Its current Intel-native run failed closed
+runtime target is Tahoe 26.7.3 (25G342). Its current Intel-native run failed closed
 before kernel compilation because the official Xcode SDK scan found no
 `TrustCache/API.h` v4; the Apple Silicon cross-build was skipped without a
 matching KDK. No `kernel.development` artifact exists. The missing official
 TrustCache/KDK input blocks real-image inspection and source-to-artifact ABI
 confirmation. It does not block isolated checks derived from the pinned public
-source, but those checks cannot establish 26.6.2 compatibility.
+source, but those checks cannot establish 26.7.3 compatibility.
 
 ## Safe slice in this change
 

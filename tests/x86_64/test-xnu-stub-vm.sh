@@ -91,9 +91,15 @@ run_stub_vm() {
   local accel="$1"
   local cpu="$2"
   local log="$3"
+  local extra_kernel_args="${4:-}"
+  local kernel_args='console=ttyS0,115200 rdinit=/init panic=1 loglevel=7'
+
+  if [[ -n "$extra_kernel_args" ]]; then
+    kernel_args+=" $extra_kernel_args"
+  fi
 
   set +e
-  timeout 240 qemu-system-x86_64 -machine q35 -accel "$accel" -cpu "$cpu" -smp 2 -m 1024 -kernel "$KERNEL" -initrd "$INITRD" -append 'console=ttyS0,115200 rdinit=/init panic=1 loglevel=7' -display none -serial stdio -monitor none -no-reboot > "$log" 2>&1
+  timeout 240 qemu-system-x86_64 -machine q35 -accel "$accel" -cpu "$cpu" -smp 2 -m 1024 -kernel "$KERNEL" -initrd "$INITRD" -append "$kernel_args" -display none -serial stdio -monitor none -no-reboot > "$log" 2>&1
   QEMU_RC=$?
   set -e
   cat "$log"
@@ -147,5 +153,16 @@ grep -F 'xnu: CPU is missing required x86_64 features: AVX2' "$AVX2_LOG" >/dev/n
 }
 if grep -F 'xnu: native x86_64 world switch is not implemented; refusing to load' "$AVX2_LOG" >/dev/null; then
   echo "Haswell profile reached the world-switch refusal with AVX2 disabled" >&2
+  exit 1
+fi
+
+LINUX_DISABLED_LOG="$STAGE/qemu-serial-linux-disabled-avx2.log"
+run_stub_vm tcg Haswell "$LINUX_DISABLED_LOG" 'clearcpuid=avx2'
+grep -F 'xnu: CPU is missing required x86_64 features: AVX2' "$LINUX_DISABLED_LOG" >/dev/null || {
+  echo "Linux clearcpuid=avx2 was not reflected by the module preflight" >&2
+  exit 1
+}
+if grep -F 'xnu: native x86_64 world switch is not implemented; refusing to load' "$LINUX_DISABLED_LOG" >/dev/null; then
+  echo "Haswell profile reached the world-switch refusal after Linux disabled AVX2" >&2
   exit 1
 fi

@@ -80,7 +80,10 @@ the full standard XSAVE image for all XCR0-enabled user components around the ra
 deliberately seeded and clobbered; other enabled components have passive before/after comparison, not an active
 pattern test. The test also checks Linux syscalls before and after each ioctl. The VM must unload both modules and
 power off cleanly. TCG runs on every CI attempt; the script adds a KVM run when
-`/dev/kvm` and host XSAVE/AVX are available.
+`/dev/kvm` and host XSAVE/AVX are available. On a local host whose QEMU is older than 8.2,
+setting `X86_BOUNDARY_ALLOW_KVM_ONLY=1` skips the unsupported TCG profile and instead requires
+the KVM/host run. That explicit fallback is complementary local validation only; it is not a
+substitute for the CI TCG profile.
 
 This is a host-only call/return test. It does not enter XNU, change `fki.h`, enable FKI capabilities, change CR3 or GS,
 inspect supervisor XSS state, install or replace Linux IDT, page-fault, general-protection, or syscall handlers, or run C under foreign host state.

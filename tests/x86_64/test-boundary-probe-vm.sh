@@ -27,9 +27,24 @@ fi
 QEMU_MAJOR=${BASH_REMATCH[1]}
 QEMU_MINOR=${BASH_REMATCH[2]}
 QEMU_VERSION="$QEMU_MAJOR.$QEMU_MINOR"
+host_flags=$(grep -m1 '^flags' /proc/cpuinfo || true)
+KVM_USABLE=0
+if [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ] && \
+   [[ " $host_flags " == *' xsave '* ]] && [[ " $host_flags " == *' avx '* ]]; then
+  KVM_USABLE=1
+fi
+QEMU_TCG_XSAVE_OK=1
 if (( QEMU_MAJOR < 8 || (QEMU_MAJOR == 8 && QEMU_MINOR < 2) )); then
-  echo "QEMU >= 8.2 is required for the TCG boundary-probe XSAVE/AVX profile; older TCG versions (including 6.2) may omit this state (detected $QEMU_VERSION)" >&2
-  exit 1
+  if [ "${X86_BOUNDARY_ALLOW_KVM_ONLY:-0}" = "1" ] && [ "$KVM_USABLE" -eq 1 ]; then
+    echo "QEMU $QEMU_VERSION is too old for the TCG XSAVE/AVX profile; running the explicitly requested KVM-only validation" >&2
+    QEMU_TCG_XSAVE_OK=0
+  else
+    echo "QEMU >= 8.2 is required for the TCG boundary-probe XSAVE/AVX profile; older TCG versions (including 6.2) may omit this state (detected $QEMU_VERSION)" >&2
+    if [ "$KVM_USABLE" -eq 1 ]; then
+      echo "for complementary local validation only, X86_BOUNDARY_ALLOW_KVM_ONLY=1 runs the KVM/host profile without the TCG leg" >&2
+    fi
+    exit 1
+  fi
 fi
 echo "Using QEMU $QEMU_VERSION for the x86 boundary-probe VM" >&2
 
@@ -143,10 +158,10 @@ run_probe_vm() {
   }
 }
 
-run_probe_vm tcg max "$STAGE/tcg.log"
-host_flags=$(grep -m1 '^flags' /proc/cpuinfo || true)
-if [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ] && \
-   [[ " $host_flags " == *' xsave '* ]] && [[ " $host_flags " == *' avx '* ]]; then
+if [ "$QEMU_TCG_XSAVE_OK" -eq 1 ]; then
+  run_probe_vm tcg max "$STAGE/tcg.log"
+fi
+if [ "$KVM_USABLE" -eq 1 ]; then
   run_probe_vm kvm host "$STAGE/kvm.log"
 else
   echo 'skipping optional KVM boundary-probe run: KVM/XSAVE/AVX is unavailable'

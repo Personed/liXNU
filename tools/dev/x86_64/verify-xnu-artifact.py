@@ -326,7 +326,7 @@ def inspect_artifact(
 
 
 def snapshot_artifact(source: pathlib.Path, destination: pathlib.Path) -> tuple[int, str]:
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
     try:
         source_fd = os.open(source, flags)
     except OSError as error:
@@ -342,7 +342,12 @@ def snapshot_artifact(source: pathlib.Path, destination: pathlib.Path) -> tuple[
                 chunk = os.read(source_fd, 1024 * 1024)
                 if not chunk:
                     break
-                size += len(chunk)
+                next_size = size + len(chunk)
+                if next_size > before.st_size:
+                    raise VerificationError(
+                        "kernel.development grew beyond its initial size while its private snapshot was created"
+                    )
+                size = next_size
                 digest.update(chunk)
                 target.write(chunk)
             target.flush()

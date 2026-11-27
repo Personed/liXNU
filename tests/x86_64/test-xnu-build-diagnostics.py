@@ -41,6 +41,26 @@ def test_only_main_diagnostics_consume_the_limit() -> None:
     assert "file20.c" not in "\n".join(output), output
 
 
+def test_indented_error_is_not_discarded_as_linker_context() -> None:
+    lines = ["Undefined symbols for architecture x86_64:"]
+    lines.extend(f"    _symbol_{index}, referenced from" for index in range(8))
+    lines.append("    /src/late.c:8:3: error: indented compiler failure")
+
+    output = MODULE.summarize(lines)
+    rendered = "\n".join(output)
+    assert "indented compiler failure" in rendered, rendered
+    assert "_symbol_5" not in rendered, rendered
+
+
+def test_summary_stops_reading_after_the_primary_diagnostic_limit() -> None:
+    def bounded_input():
+        for index in range(MODULE.MAX_DIAGNOSTICS):
+            yield f"/src/file{index}.c:1:2: error: synthetic failure"
+        raise AssertionError("summary read beyond the primary diagnostic limit")
+
+    assert len(MODULE.summarize(bounded_input())) == MODULE.MAX_DIAGNOSTICS
+
+
 def test_empty_and_non_error_logs_are_explained() -> None:
     expected = ["No compiler or linker errors recorded yet."]
     assert MODULE.summarize([]) == expected
@@ -50,5 +70,7 @@ def test_empty_and_non_error_logs_are_explained() -> None:
 if __name__ == "__main__":
     test_symbol_context_does_not_hide_terminal_errors()
     test_only_main_diagnostics_consume_the_limit()
+    test_indented_error_is_not_discarded_as_linker_context()
+    test_summary_stops_reading_after_the_primary_diagnostic_limit()
     test_empty_and_non_error_logs_are_explained()
     print("XNU diagnostic summary tests passed.")

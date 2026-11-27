@@ -92,19 +92,31 @@ class DoctorTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             boot_dir = Path(tmp)
             proc_config = Path(tmp) / "proc-config.gz"
-            proc_config.write_bytes(b"not a gzip stream")
             boot_config = boot_dir / "config-6.8.0-test"
             boot_config.write_bytes(config)
 
+            for invalid_export in (b"not a gzip stream", b"", gzip.compress(b"\n")):
+                with self.subTest(export=invalid_export):
+                    proc_config.write_bytes(invalid_export)
+                    facts = doctor.linux_kernel_config_facts(
+                        "6.8.0-test",
+                        proc_config_path=str(proc_config),
+                        boot_config_dir=str(boot_dir),
+                    )
+                    self.assertEqual(facts["status"], "available")
+                    self.assertEqual(facts["source"], str(boot_config))
+                    self.assertEqual(facts["sha256"], hashlib.sha256(config).hexdigest())
+
+    def test_kernel_config_unavailable_if_boot_config_is_blank(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "config-6.8.0-test").write_bytes(b"\n \t\n")
             facts = doctor.linux_kernel_config_facts(
-                "6.8.0-test",
-                proc_config_path=str(proc_config),
-                boot_config_dir=str(boot_dir),
+                "6.8.0-test", proc_config_path=str(root / "missing-config.gz"),
+                boot_config_dir=str(root),
             )
 
-        self.assertEqual(facts["status"], "available")
-        self.assertEqual(facts["source"], str(boot_config))
-        self.assertEqual(facts["sha256"], hashlib.sha256(config).hexdigest())
+        self.assertEqual(facts, {"status": "unavailable", "source": None, "sha256": None})
 
     def test_kernel_config_unavailable_has_null_source_and_hash(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -132,6 +144,7 @@ class DoctorTest(unittest.TestCase):
             patch.object(doctor, "memory_facts", return_value=(16 * GIB, 12 * GIB)),
             patch.object(doctor, "qemu_facts", return_value={}),
             patch.object(doctor, "linux_cpu_info", return_value={}),
+            patch.object(doctor.os, "sysconf", create=True, return_value=4096) as sysconf,
             patch.object(
                 doctor,
                 "linux_kernel_config_facts",
@@ -143,6 +156,7 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(host["linux_kernel_config_status"], "available")
         self.assertEqual(host["linux_kernel_config_source"], "/proc/config.gz")
         self.assertEqual(host["linux_kernel_config_sha256"], "abc123")
+        sysconf.assert_called_once_with("SC_PAGE_SIZE")
         config_facts.assert_called_once_with("6.8.0-test")
 
     def test_non_linux_json_snapshot_marks_kernel_config_not_applicable(self):

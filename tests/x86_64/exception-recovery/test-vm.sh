@@ -94,7 +94,12 @@ export PATH=/bin
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
-trap 'echo "x86 exception recovery VM failed"; dmesg; poweroff -f' EXIT
+read -r original_console_loglevel other_printk_levels < /proc/sys/kernel/printk
+test -n "$original_console_loglevel"
+restore_console_loglevel() {
+	dmesg -n "$original_console_loglevel"
+}
+trap 'restore_console_loglevel || true; echo "x86 exception recovery VM failed"; dmesg; poweroff -f' EXIT
 
 insmod /fki.ko
 insmod /x86-boundary-probe.ko
@@ -111,7 +116,7 @@ dmesg -n 5
 /exception-recovery-test 1
 # Replay the buffered probe details once the marker lines have been written.
 dmesg | grep -F 'x86-exception-recovery:' || true
-dmesg -n 7
+restore_console_loglevel
 rmmod x86_exception_recovery
 test ! -e /sys/module/x86_exception_recovery
 test ! -e /dev/x86-exception-recovery

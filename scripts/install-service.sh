@@ -5,6 +5,12 @@
 # started again after a panic or a run that ended by itself; each run's kernel log is in /var/log/xnulinux/.
 #   sudo systemctl status xnulinux     journalctl -u xnulinux     settings: /etc/xnulinux.conf (then: systemctl restart xnulinux)
 set -euo pipefail
+HOST=$(uname -sm)
+if [ "$HOST" != "Linux aarch64" ]; then
+  printf 'The hosted XNU service installer requires ARM64 Linux (detected %s).\n' "$HOST" >&2
+  exit 1
+fi
+
 P=$(cd "$(dirname "$0")/.." && pwd)
 U=$(id -un)
 [ -f /var/tmp/mac.conf ] || { echo "no /var/tmp/mac.conf: make the disk first (scripts/mk-macvm-disk.sh)" >&2; exit 1; }

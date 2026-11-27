@@ -17,6 +17,13 @@ resolve_command() {
 }
 DRY_RUN=0
 [ "${1:-}" = --dry-run ] || [ "${1:-}" = --print ] && DRY_RUN=1
+if [ "$DRY_RUN" = 0 ]; then
+  HOST=$(uname -sm)
+  if [ "$HOST" != "Linux aarch64" ]; then
+    printf 'The FKI service installer requires ARM64 Linux (detected %s).\n' "$HOST" >&2
+    exit 1
+  fi
+fi
 
 REQUESTED_LINUX_MEM=${LINUX_MEM:-}
 REQUESTED_CARVE_BASE=${CARVE_BASE:-}

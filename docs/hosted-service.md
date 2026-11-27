@@ -79,8 +79,9 @@ We ship these. The user's disk script installs them into their own macOS disk:
 
 ## 3. Operator: preparing a host
 
-1. **Host OS.** arm64 Ubuntu, either directly on the hardware or as a VM. On an Apple Silicon Mac the VM runs under
-   krunkit (krunkit, libkrun, virglrenderer, MoltenVK and gvproxy under `$KRUN`; `scripts/krun-vm.sh`,
+1. **Host OS.** Use ARM64 Ubuntu, either directly on the hardware or as a VM. Both service installers check for
+   ARM64 Linux before installing anything. On an Apple Silicon Mac the VM runs under krunkit (krunkit, libkrun,
+   virglrenderer, MoltenVK and gvproxy under `$KRUN`; `scripts/krun-vm.sh`,
    `scripts/install-krun-agent.sh`), which gives it the host GPU through virtio-gpu Venus.
 2. **Memory.** Run `scripts/vm-install-fki-service.sh` once before the first reboot, while `/proc/iomem` still shows the
    full physical RAM map and before an earlier `mem=` limit has hidden the carve-out. It detects `LINUX_MEM`,

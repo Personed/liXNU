@@ -43,6 +43,9 @@ struct xsave_config {
 
 _Static_assert(X86_BOUNDARY_PROBE_RUN == _IOW(0xb7, 1, struct x86_boundary_probe_request),
 	       "userspace ioctl number disagrees with kernel UAPI");
+_Static_assert(X86_BOUNDARY_PROBE_COOPERATIVE ==
+	       _IOW(0xb7, 2, struct x86_boundary_probe_request),
+	       "userspace cooperative ioctl number disagrees with kernel UAPI");
 
 static long invoke_with_xstate(int fd, const struct x86_boundary_probe_request *request,
 			       uint32_t after[8][8], void *xstate_before,
@@ -242,6 +245,25 @@ fail:
 	return -1;
 }
 
+static int run_cooperative_ioctl(int fd, pid_t pid, unsigned int cpu,
+				 unsigned int mode)
+{
+	struct x86_boundary_probe_request request = {.cpu = cpu, .mode = mode};
+	int result;
+
+	if (check_linux_syscalls(pid))
+		return -1;
+	result = ioctl(fd, X86_BOUNDARY_PROBE_COOPERATIVE, &request);
+	if (result) {
+		fprintf(stderr, "cpu %u cooperative mode %u failed: %s\n",
+			cpu, mode, strerror(errno));
+		return -1;
+	}
+	if (check_linux_syscalls(pid))
+		return -1;
+	return 0;
+}
+
 int main(void)
 {
 	const pid_t pid = getpid();
@@ -270,14 +292,16 @@ int main(void)
 		return 1;
 	for (cpu = 0; cpu < cpu_count; cpu++) {
 		if (run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_RETURN, &xsave) ||
-		    run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_ABORT, &xsave))
+		    run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_ABORT, &xsave) ||
+		    run_cooperative_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_COOP_REPLY) ||
+		    run_cooperative_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_COOP_TIMEOUT))
 			return 1;
 	}
 	if (close(fd)) {
 		perror("close probe device");
 		return 1;
 	}
-	printf("x86 boundary probe passed: %ld CPUs, return/abort, host state, enabled XSAVE/x87/MXCSR/YMM, Linux syscalls (xcr0=%#llx size=%zu)\n",
+	printf("x86 boundary probe passed: %ld CPUs, return/abort, cooperative callback reply/timeout, host state, enabled XSAVE/x87/MXCSR/YMM, Linux syscalls (xcr0=%#llx size=%zu)\n",
 	       cpu_count, (unsigned long long)xsave.mask, xsave.size);
 	return 0;
 }

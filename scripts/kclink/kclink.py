@@ -35,6 +35,7 @@ from macho import (HEADER, LC_SEGMENT_64, LC_SYMTAB, LC_DYSYMTAB, LC_UNIXTHREAD,
                    LC_FUNCTION_STARTS, LC_DATA_IN_CODE, LC_DYLD_CHAINED_FIXUPS, LC_FILESET_ENTRY, MH_FILESET,
                    N_STAB, N_TYPE, N_SECT, N_EXT, NLIST, KC_PAGE, Fixup, Image, Segment, align, kc_read_fixups,
                    kc_write_fixups, threaded_rebases)
+from segment_copies import check_kernel_segment_copies
 import kextld  # noqa: E402
 
 KERNEL_ID = 'com.apple.kernel'
@@ -410,6 +411,15 @@ def main():
         if s.name != '__LINKEDIT' and s.filesize:
             off = s.vmaddr - hdr
             out[off:off + s.filesize] = kbuf[s.fileoff:s.fileoff + s.filesize]
+    try:
+        kernel_ranges, kernel_overlaps = check_kernel_segment_copies(kernel.segments, kbuf, out, hdr)
+    except ValueError as error:
+        fail(f'kernel segment copies: {error}')
+    for name, vmaddr, vmsize, fileoff, filesize, out_start, out_end in kernel_ranges:
+        print(f'kernel segment {name}: vmaddr={vmaddr:#x} vmsize={vmsize:#x} fileoff={fileoff:#x} '
+              f'filesize={filesize:#x} collection={out_start:#x}-{out_end:#x}')
+    for first, second, start, end in kernel_overlaps:
+        print(f'kernel file-backed overlap {first}/{second} at {start:#x}-{end:#x}: identical bytes')
 
     # the kept kexts' headers, symbols and kmod_info at the output's addresses
     for n in kept:

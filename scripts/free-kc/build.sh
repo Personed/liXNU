@@ -112,7 +112,7 @@ for k in XnuCPU XnuDisk XnuDrm; do native_specs+=("$POC/kexts/$k/$k.json"); done
 # nothing of Apple's kernelcache is read
 kernel_version=$(strings "$DVM/out/k27/kernel-k27.macho" | sed -n 's/^Darwin Kernel Version \([0-9.]*\):.*/\1/p' | head -1)
 python3 "$POC/scripts/free-kc/mk-template.py" "$POC/scripts/free-kc/layout.json" "$DVM/out/k27/xnu" \
-	"$kernel_version" "$W/kc-template.bin"
+	"$kernel_version" "$W/kc-template.bin" "$DVM/out/k27/kernel-k27.macho"
 # the link (scripts/kclink, as vm-xnu-rebuild.sh links; the specs' object lists of xnulinux's kexts are relative to $DVM)
 ( cd "$DVM" && python3 "$POC/scripts/kclink/kclink.py" "$W/kc-template.bin" out/k27/kernel-k27.macho "$W/kc-free.bin" --native "${native_specs[@]}" \
 	> "$W/kclink.log" 2>&1 ) || { tail -5 -- "$W/kclink.log"; exit 1; }

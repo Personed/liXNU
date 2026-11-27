@@ -343,6 +343,38 @@ static int is_pagezero(const unsigned char *name)
 	return fixed_name_is(name, "__PAGEZERO", 10);
 }
 
+static int parse_image(const void *input, unsigned long file_size,
+		       struct xnu_macho_x86_64_info *out,
+		       xnu_macho_u64 *hib_entry_fileoff);
+
+/* The caller has already validated every section's VM and file ranges. */
+static xnu_macho_u32 match_hib_text(const unsigned char *section,
+				  const struct segment_info *segment,
+				  xnu_macho_u64 entry, xnu_macho_u64 *fileoff)
+{
+	xnu_macho_u32 i, matches = 0;
+
+	if (!fixed_name_is(segment->name, "__HIB", 5) ||
+	    segment->initprot != (VM_PROT_READ | VM_PROT_WRITE) ||
+	    segment->maxprot != segment->initprot)
+		return 0;
+
+	for (i = 0; i < segment->nsects; i++, section += SECTION_64_SIZE) {
+		xnu_macho_u64 addr = read_u64le(section + 32);
+		xnu_macho_u64 size = read_u64le(section + 40);
+		xnu_macho_u32 flags = read_u32le(section + 64);
+
+		if (entry < addr || entry - addr >= size)
+			continue;
+		if (++matches != 1 || !fixed_name_is(section, "__text", 6) ||
+		    (flags & SECTION_TYPE_MASK) != S_REGULAR ||
+		    !(flags & S_ATTR_PURE_INSTRUCTIONS))
+			return 0;
+		*fileoff = read_u32le(section + 48) + (entry - addr);
+	}
+	return matches;
+}
+
 static int is_zerofill(xnu_macho_u32 flags)
 {
 	xnu_macho_u32 type = flags & SECTION_TYPE_MASK;
@@ -797,32 +829,10 @@ static void export_segment_plan(struct xnu_macho_x86_64_segment *out,
 	out->section_count = in->nsects;
 }
 
-/* The caller has already validated every section's VM and file ranges. */
-static xnu_macho_u32 match_hib_text(const unsigned char *section,
-				  const struct segment_info *segment,
-				  xnu_macho_u64 entry, xnu_macho_u64 *fileoff)
+int xnu_macho_x86_64_parse(const void *input, unsigned long file_size,
+			   struct xnu_macho_x86_64_info *out)
 {
-	xnu_macho_u32 i, matches = 0;
-
-	if (!fixed_name_is(segment->name, "__HIB", 5) ||
-	    segment->initprot != (VM_PROT_READ | VM_PROT_WRITE) ||
-	    segment->maxprot != segment->initprot)
-		return 0;
-
-	for (i = 0; i < segment->nsects; i++, section += SECTION_64_SIZE) {
-		xnu_macho_u64 addr = read_u64le(section + 32);
-		xnu_macho_u64 size = read_u64le(section + 40);
-		xnu_macho_u32 flags = read_u32le(section + 64);
-
-		if (entry < addr || entry - addr >= size)
-			continue;
-		if (++matches != 1 || !fixed_name_is(section, "__text", 6) ||
-		    (flags & SECTION_TYPE_MASK) != S_REGULAR ||
-		    !(flags & S_ATTR_PURE_INSTRUCTIONS))
-			return 0;
-		*fileoff = read_u32le(section + 48) + (entry - addr);
-	}
-	return matches;
+	return parse_image(input, file_size, out, 0);
 }
 
 static int parse_image(const void *input, unsigned long file_size,
@@ -1033,12 +1043,6 @@ static int parse_image(const void *input, unsigned long file_size,
 	out->load_command_bytes = sizeofcmds;
 	out->entry = entry;
 	return 0;
-}
-
-int xnu_macho_x86_64_parse(const void *input, unsigned long file_size,
-			   struct xnu_macho_x86_64_info *out)
-{
-	return parse_image(input, file_size, out, 0);
 }
 
 #ifndef __KERNEL__

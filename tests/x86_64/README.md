@@ -64,6 +64,7 @@ bash tests/x86_64/test-launcher.sh
 bash tests/x86_64/test-tcg-smoke.sh
 tests/x86_64/tcg-smoke.sh /path/to/x86_64/vmlinuz /path/to/initrd.cpio.gz
 tests/x86_64/test-boundary-probe-vm.sh /path/to/x86_64/kernel-headers
+tests/x86_64/exception-recovery/test-vm.sh /path/to/x86_64/kernel-headers
 ```
 
 The smoke initramfs must print `XNU_LINUX_TCG_BOOTED` on its serial console and shut down before the timeout. TCG boots
@@ -81,6 +82,14 @@ deliberately seeded and clobbered; other enabled components have passive before/
 pattern test. The test also checks Linux syscalls before and after each ioctl. The VM must unload both modules and
 power off cleanly. TCG runs on every CI attempt; the script adds a KVM run when
 `/dev/kvm` and host XSAVE/AVX are available.
+
+The exception-recovery probe is a separate disposable-VM test for controlled `#PF`/`#GP` recovery. It needs the same
+kind of matching x86_64 kernel headers passed as `KDIR`, QEMU 8.2 or newer, `busybox-static`, `cpio` and the normal
+module-build tools. CI selects a generic Ubuntu header package with `apt-cache search`; the VM script reads
+`include/config/kernel.release` under `KDIR` and uses `apt-get download` plus `dpkg-deb` to extract the matching
+`linux-image-unsigned-$KERNEL_RELEASE` package and `busybox-static` into its temporary initramfs. On Debian/Ubuntu,
+therefore, the configured APT indexes must contain both the unsigned kernel image for the exact `KDIR` release and
+`busybox-static`; missing or mismatched packages are a not-run environment failure, not a recovery pass.
 
 This is a host-only call/return test. It does not enter XNU, change `fki.h`, enable FKI capabilities, change CR3 or GS,
 inspect supervisor XSS state, install or replace Linux IDT, page-fault, general-protection, or syscall handlers, or run C under foreign host state.

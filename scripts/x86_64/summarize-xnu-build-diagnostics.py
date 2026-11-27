@@ -12,7 +12,9 @@ from collections.abc import Iterable
 
 MAX_DIAGNOSTICS = 20
 MAX_UNDEFINED_SYMBOL_CONTEXT = 5
-ERROR_LINE = re.compile(r": (?:fatal )?error:|^Undefined symbols|^ld: ")
+ERROR_LINE = re.compile(
+    r": (?:fatal )?error:|^Undefined symbols|^ld: (?!warning:|note:)"
+)
 
 
 def clean(line: str) -> str:
@@ -43,6 +45,11 @@ def summarize(lines: Iterable[str]) -> list[str]:
         if line.startswith("Undefined symbols"):
             context_count = 0
             while True:
+                if (
+                    diagnostics >= MAX_DIAGNOSTICS
+                    and context_count >= MAX_UNDEFINED_SYMBOL_CONTEXT
+                ):
+                    break
                 try:
                     raw_context = next(iterator)
                 except StopIteration:

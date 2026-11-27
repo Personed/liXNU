@@ -61,6 +61,26 @@ def test_summary_stops_reading_after_the_primary_diagnostic_limit() -> None:
     assert len(MODULE.summarize(bounded_input())) == MODULE.MAX_DIAGNOSTICS
 
 
+def test_last_symbol_block_stops_after_its_context_limit() -> None:
+    def bounded_input():
+        for index in range(MODULE.MAX_DIAGNOSTICS - 1):
+            yield f"/src/file{index}.c:1:2: error: synthetic failure"
+        yield "Undefined symbols for architecture x86_64:"
+        for index in range(MODULE.MAX_UNDEFINED_SYMBOL_CONTEXT):
+            yield f"    _symbol_{index}, referenced from"
+        raise AssertionError("summary read beyond the final symbol context limit")
+
+    output = MODULE.summarize(bounded_input())
+    assert len(output) == MODULE.MAX_DIAGNOSTICS + MODULE.MAX_UNDEFINED_SYMBOL_CONTEXT
+
+
+def test_linker_warnings_do_not_hide_compiler_errors() -> None:
+    lines = [f"ld: warning: synthetic warning {index}" for index in range(20)]
+    lines.append("clang: error: linker command failed with exit code 1")
+    output = MODULE.summarize(lines)
+    assert output == ["  clang: error: linker command failed with exit code 1"], output
+
+
 def test_empty_and_non_error_logs_are_explained() -> None:
     expected = ["No compiler or linker errors recorded yet."]
     assert MODULE.summarize([]) == expected
@@ -72,5 +92,7 @@ if __name__ == "__main__":
     test_only_main_diagnostics_consume_the_limit()
     test_indented_error_is_not_discarded_as_linker_context()
     test_summary_stops_reading_after_the_primary_diagnostic_limit()
+    test_last_symbol_block_stops_after_its_context_limit()
+    test_linker_warnings_do_not_hide_compiler_errors()
     test_empty_and_non_error_logs_are_explained()
     print("XNU diagnostic summary tests passed.")

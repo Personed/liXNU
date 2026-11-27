@@ -12,6 +12,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CLI = ROOT / "scripts" / "xnulinux"
 INSTALLER = ROOT / "scripts" / "install.sh"
+DIRECT_BOOT = ROOT / "scripts" / "xnulinux-boot.sh"
 
 
 class TestCliAndInstaller(unittest.TestCase):
@@ -76,6 +77,69 @@ class TestCliAndInstaller(unittest.TestCase):
         res_mem = subprocess.run([str(CLI), "setup-mem", "--dry-run"], capture_output=True, text=True)
         self.assertNotEqual(res_mem.returncode, 0)
         self.assertIn("ARM64", res_mem.stderr)
+
+    def test_stop_checks_host_before_sudo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            shim = pathlib.Path(tmp)
+            fake_uname = shim / "uname"
+            fake_uname.write_text('#!/bin/sh\nprintf "%s\\n" "$TEST_HOST"\n', encoding="utf-8")
+            fake_uname.chmod(0o755)
+            sudo_log = shim / "sudo.log"
+            module_check_log = shim / "module-check.log"
+            console_in = shim / "console-in"
+            fake_sudo = shim / "sudo"
+            fake_sudo.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$TEST_SUDO_LOG"\nexit 99\n', encoding="utf-8")
+            fake_sudo.chmod(0o755)
+            bash_env = shim / "bash-env.sh"
+            # Simulate an idle ARM64 host without consulting the test runner's modules.
+            bash_env.write_text(
+                '[() {\n'
+                '  if [[ "$*" == "! -d /sys/module/xnu ]" ]]; then\n'
+                '    : > "$TEST_MODULE_CHECK_LOG"\n'
+                '    return 0\n'
+                '  fi\n'
+                '  builtin [ "$@"\n'
+                '}\n',
+                encoding="utf-8",
+            )
+            env = {
+                **os.environ,
+                "PATH": f"{shim}{os.pathsep}{os.environ.get('PATH', '')}",
+                "TEST_SUDO_LOG": str(sudo_log),
+                "TEST_MODULE_CHECK_LOG": str(module_check_log),
+                "CONSOLE_IN": str(console_in),
+                "BASH_ENV": str(bash_env),
+            }
+            for host in ("Linux x86_64", "Darwin arm64"):
+                for command in (CLI, DIRECT_BOOT):
+                    with self.subTest(host=host, command=command.name):
+                        result = subprocess.run(
+                            [str(command), "stop"],
+                            env={**env, "TEST_HOST": host},
+                            capture_output=True,
+                            text=True,
+                        )
+                        self.assertEqual(result.returncode, 1, result)
+                        self.assertIn(f"requires ARM64 Linux for direct hosted XNU (detected {host})", result.stderr)
+                        self.assertFalse(sudo_log.exists())
+                        self.assertFalse(module_check_log.exists())
+                        self.assertFalse(console_in.exists())
+
+            for command in (CLI, DIRECT_BOOT):
+                with self.subTest(host="Linux aarch64", command=command.name):
+                    result = subprocess.run(
+                        [str(command), "stop"],
+                        env={**env, "TEST_HOST": "Linux aarch64"},
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result)
+                    self.assertIn("no hosted system is running", result.stdout)
+                    self.assertEqual(sudo_log.read_text(encoding="utf-8").splitlines(), ["systemctl stop xnudrmd"])
+                    self.assertTrue(module_check_log.exists())
+                    self.assertFalse(console_in.exists())
+                    sudo_log.unlink()
+                    module_check_log.unlink()
 
     def test_install_relative_prefix_and_uninstall(self):
         with tempfile.TemporaryDirectory() as tmp:

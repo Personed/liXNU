@@ -191,9 +191,18 @@ artifact directories:
 ```powershell
 $env:Path += ";$env:ProgramFiles\qemu"
 qemu-system-aarch64.exe --version
-Get-FileHash .\artifacts\guest\Image -Algorithm SHA256
-Get-FileHash .\artifacts\guest\initramfs.cpio.gz -Algorithm SHA256
-Get-FileHash .\artifacts\disk\pd.img -Algorithm SHA256
+$ErrorActionPreference = "Stop"
+$expected = @{
+  ".\artifacts\guest\Image" = "02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6"
+  ".\artifacts\guest\initramfs.cpio.gz" = "fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667"
+  ".\artifacts\disk\pd.img" = "7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f"
+}
+foreach ($path in $expected.Keys) {
+  $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($actual -ne $expected[$path]) {
+    throw "SHA-256 mismatch for $path: expected $($expected[$path]), got $actual"
+  }
+}
 Copy-Item .\artifacts\disk\pd.img .\artifacts\disk\pd-tcg-test.img
 py -3 tests\puredarwin\run-tcg-e2e.py `
   --timeout-seconds 5400 `

@@ -134,9 +134,12 @@ host-RAM floor or physical-PC support.
 The local run used `tests/puredarwin/run-tcg-e2e.py` at PR #99's rebased head
 [`e1b70f8`](https://github.com/Personed/xnulinux/commit/e1b70f8e35a944eb374e2d37653d0b8cd6bc7420).
 The six-profile shutdown and QEMU-exit summary is recorded in [PR #99 comment
-7206519486](https://github.com/Personed/xnulinux/pull/99#issuecomment-7206519486). The
-raw local serial logs and process exit capture were not attached, so these local results
-are supplementary and cannot be independently audited stage by stage from the artifacts.
+7206519486](https://github.com/Personed/xnulinux/pull/99#issuecomment-7206519486). The raw
+`run-*.log` and `serial-*.log` files for all six profiles, plus `EVIDENCE.txt` with their
+SHA-256 values, are attached in [PR #99 comment
+7206879507](https://github.com/Personed/xnulinux/pull/99#issuecomment-7206879507). The
+runner's per-profile logs show the Darwin console and userland marker, guest halt,
+`XNULINUX_E2E_XNU_UNLOADED`, Linux power-off, and QEMU exit status 0.
 
 Inputs reused from run #157: image SHA-256
 `02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6`, initramfs SHA-256
@@ -346,8 +349,8 @@ Report the profile alongside the stage:
   above. The run is on the older #89 code stack and does not validate PIE; that status does not invalidate its A710 hosted-runner pass. PR #99 rebases the
   memory sweep onto the integrated chain; run [#159](https://github.com/Personed/xnulinux/actions/runs/45911321313)
   remains queued after the initial disk build hit a remote SDK-fetch timeout and a retry was canceled. The
-  supplemental local six-profile QEMU 6.2.0/KVM results using paired #157 artifacts are recorded above; their raw
-  local serial logs/process exit capture were not attached. No current-head workflow memory results are available.
+  supplemental local six-profile QEMU 6.2.0/KVM results using paired #157 artifacts are recorded above, with raw
+  per-profile logs linked in PR #99 comment 7206879507. No current-head workflow memory results are available.
   PR #102 head `241c9c7` publishes PIE-aware changes; run
   [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121) tested old head `9e15d68`, passed image build,
   and was canceled during disk/collection build. New automated review findings say patch hunks may prevent XNU

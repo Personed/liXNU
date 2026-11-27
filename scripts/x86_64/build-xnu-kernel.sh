@@ -1235,10 +1235,13 @@ import pathlib
 import sys
 
 kernel = pathlib.Path(sys.argv[1])
-digest = hashlib.sha256(kernel.read_bytes()).hexdigest()
+artifact_bytes = kernel.read_bytes()
+digest = hashlib.sha256(artifact_bytes).hexdigest()
 result = {
+    "build_result_schema_version": 1,
     "artifact": str(kernel),
     "artifact_sha256": digest,
+    "artifact_size_bytes": len(artifact_bytes),
     "artifact_type": "XNU development kernel",
     "architecture": sys.argv[9],
     "target_architecture": sys.argv[9],

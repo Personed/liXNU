@@ -78,8 +78,10 @@ The verifier compiles and runs the inspector from this checkout, on a private,
 read-only snapshot. It hashes the snapshot before and after inspection. The
 report is structural preflight evidence only: the parser validates selected
 Mach-O headers, segment/section ranges, thread state, entry range and relevant
-linkedit command bounds. It does not interpret or apply fixups, perform a real
-load, establish XNU/Linux ABI compatibility, or boot the kernel. Data in the
+linkedit command bounds. For chained-fixup metadata it validates selected
+formats and table/range bounds, but does not resolve pointer values, relocate
+the image, or write fixups. It does not perform a real load, establish
+XNU/Linux ABI compatibility, or boot the kernel. Data in the
 manifest about runtime targets is recorded as build metadata and is not runtime
 evidence. Unknown optional load commands are rejected because the inspector
 cannot classify their semantics.

@@ -45,8 +45,20 @@ layout with present leaves only within a single caller-owned physical
 reservation. The reservation must be aligned to 2 MiB. The loader must first
 verify the table offset against the selected artifact and place every early
 object and allocation in the reservation. This covers the initial directory.
-`Idle_PTs_init()` later creates new page tables and a physmap that each need
-their own memory-ownership checks before running XNU.
+`Idle_PTs_init()` later creates a new root. In unmodified XNU, its kernel
+alias starts at physical zero and covers the space up to the fixed-table
+allocation. The physmap creates a separate alias from physical zero through
+the advertised memory plus an MMIO allowance. A hosted implementation must
+leave entries outside the reservation absent in both aliases and keep
+physical offsets intact for `PHYSMAP_PTOV()`. ACPI or device addresses
+outside that reservation would need an explicit platform design.
+
+The page table audit checks a stable copy of each proposed four-level
+root. It bounds every reachable table to the supplied snapshot and every
+present 4 KiB or 2 MiB physical span to the owned region. Low and high
+aliases can share table pages. Virtual placement of entry code, stacks,
+return code and boot metadata, page permissions, and mappings created
+after entry require separate validation.
 
 This means the entry is not a normal Linux long-mode kernel call. A host implementation either has to reproduce the expected protected-mode/paging-disabled entry environment, or patch/replace this entry sequence with an explicitly reviewed long-mode handoff. Both choices affect control-register ownership, the GDT/IDT, the kernel image's physical placement, interrupt masking, rollback, and the exact interpretation of `boot_args`. Neither is authorized by this document.
 

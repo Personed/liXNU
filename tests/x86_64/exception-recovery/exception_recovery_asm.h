@@ -4,6 +4,8 @@
 
 #define ER_ARM_TOKEN                 0x45584350524f4245
 #define ER_HANDOFF_TOKEN             0x455248414e444f46
+/* Defined/restorable RFLAGS except RF/VM, which PUSHFQ clears. */
+#define ER_RFLAGS_RETURNED_MASK      0x00000000003c7fd5
 #define ER_GP_SELECTOR               0xfff8
 #define ER_SENTINEL_RAX              0x4a01f00d4a01f00d
 #define ER_SENTINEL_RBX              0x4a02f00d4a02f00d

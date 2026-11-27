@@ -373,7 +373,6 @@ SYM_CODE_START(x86_er_recovery_stub)
 	jne .Lterminal_recovery_state
 	cmpq $0, ER_OFF_RECOVERY_COUNT(%r15)
 	jne .Lterminal_recovery_state
-	incq ER_OFF_RECOVERY_COUNT(%r15)
 	movq ER_OFF_EXPECTED_RAX(%r15), %rax
 	cmpq %rax, er_recovery_scratch+ER_SCRATCH_RAX(%rip)
 	jne .Lterminal_recovery_state
@@ -426,6 +425,16 @@ SYM_CODE_START(x86_er_recovery_stub)
 	movabsq $0x4552484947484341, %rax
 	cmpq %rax, (%rsi)
 	jne .Lterminal_recovery_state
+
+	/* Compare live post-IRETQ RFLAGS before publishing any result. */
+	movq ER_OFF_FAULT_RFLAGS(%r15), %rax
+	xorq er_recovery_scratch+ER_SCRATCH_FLAGS(%rip), %rax
+	movabsq $ER_RFLAGS_RETURNED_MASK, %rdx
+	andq %rdx, %rax
+	jnz .Lterminal_recovery_state
+
+	/* Count only after the recovery entry and preserved state validate. */
+	incq ER_OFF_RECOVERY_COUNT(%r15)
 
 	/* Publish the captured architectural record before the single disarm write. */
 	movq ER_OFF_CAPTURED_VECTOR(%r15), %rax
@@ -498,6 +507,7 @@ SYM_CODE_END(x86_er_recovery_stub)
 	movq er_active_state(%rip), %r11
 	testq %r11, %r11
 	jz 1f
+	movq $0, ER_OFF_RECOVERY_COUNT(%r11)
 	movq %rax, ER_OFF_TERMINAL_CODE(%r11)
 1:
 	movw $0xf4, %dx

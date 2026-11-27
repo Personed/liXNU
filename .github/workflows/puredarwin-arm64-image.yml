@@ -368,6 +368,7 @@ jobs:
         run: |
           set -o pipefail
           python3 tests/puredarwin/run-tcg-e2e.py \
+            --qemu-cpu cortex-a710 \
             --timeout-seconds 5400 \
             --qemu-memory 6G \
             --linux-memory 2G \
@@ -496,6 +497,7 @@ jobs:
           set -o pipefail
           python3 tests/puredarwin/run-tcg-e2e.py \
             --qemu "$RUNNER_TEMP/qemu-11.1.0-build/qemu-system-aarch64" \
+            --qemu-cpu max \
             --require-pie \
             --timeout-seconds 5400 \
             --qemu-memory 6G \

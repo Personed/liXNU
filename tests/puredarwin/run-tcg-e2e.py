@@ -108,6 +108,11 @@ def main() -> int:
     parser.add_argument("serial_log", type=Path)
     parser.add_argument("--timeout-seconds", type=int, default=14400)
     parser.add_argument("--qemu", default="qemu-system-aarch64")
+    parser.add_argument(
+        "--qemu-cpu",
+        default="max",
+        help="QEMU guest CPU model (default: max; direct profiles may select cortex-a710)",
+    )
     parser.add_argument("--qemu-memory", default="16G")
     parser.add_argument("--linux-memory", default="7G")
     parser.add_argument("--fki-carve-base", default="0x200000000")
@@ -126,6 +131,8 @@ def main() -> int:
         help="require the guest to report TCR2_EL1.PIE=1 and pass XNU page-table probes before userland",
     )
     args = parser.parse_args()
+    if not args.qemu_cpu.strip():
+        parser.error("--qemu-cpu must not be empty")
     for path in (args.kernel, args.initramfs, args.disk):
         if not path.is_file():
             parser.error(f"missing input: {path}")
@@ -177,7 +184,7 @@ def main() -> int:
         "-name", "xnulinux-puredarwin-e2e",
         "-machine", "virt,virtualization=off",
         "-accel", "tcg,thread=multi",
-        "-cpu", "max",
+        "-cpu", args.qemu_cpu,
         "-smp", "2",
         "-m", args.qemu_memory,
         "-nodefaults",
@@ -215,7 +222,7 @@ def main() -> int:
     print(f"QEMU: {(version.stdout or version.stderr).splitlines()[0]}")
     print(
         "Profile: ARM64 QEMU virt, TCG, "
-        f"{args.qemu_memory} guest RAM, Linux mem={args.linux_memory}, "
+        f"{args.qemu_cpu} CPU, {args.qemu_memory} guest RAM, Linux mem={args.linux_memory}, "
         f"{args.fki_carve_mb} MiB FKI carve-out at {carve_base_hex}, "
         f"XNU RAM {args.xnu_ram_mb} MiB"
     )

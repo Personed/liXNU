@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-"""Exercise strict PIE evidence handling with a fake QEMU process."""
+"""Exercise strict PIE evidence and QEMU CPU selection with a fake QEMU process."""
 
 import os
 from pathlib import Path
@@ -12,7 +12,14 @@ import tempfile
 RUNNER = Path(__file__).with_name("run-tcg-e2e.py")
 
 
-def run_with_serial(fake_qemu: Path, root: Path, serial: str) -> subprocess.CompletedProcess[str]:
+def run_with_serial(
+    fake_qemu: Path,
+    root: Path,
+    serial: str,
+    *,
+    qemu_cpu: str | None = None,
+    require_pie: bool = True,
+) -> subprocess.CompletedProcess[str]:
     kernel = root / "Image"
     initramfs = root / "initramfs.cpio.gz"
     disk = root / "pd.img"
@@ -21,19 +28,24 @@ def run_with_serial(fake_qemu: Path, root: Path, serial: str) -> subprocess.Comp
         path.write_bytes(b"fixture")
     env = os.environ.copy()
     env["FAKE_QEMU_SERIAL"] = serial
-    return subprocess.run(
+    env["FAKE_QEMU_EXPECTED_CPU"] = qemu_cpu or "max"
+    command = [sys.executable, str(RUNNER), "--qemu", str(fake_qemu)]
+    if qemu_cpu is not None:
+        command.extend(("--qemu-cpu", qemu_cpu))
+    if require_pie:
+        command.append("--require-pie")
+    command.extend(
         [
-            sys.executable,
-            str(RUNNER),
-            "--qemu", str(fake_qemu),
-            "--require-pie",
             "--qemu-memory", "6G",
             "--linux-memory", "2G",
             "--fki-carve-base", "0xc0000000",
             "--fki-carve-mb", "3072",
             "--xnu-ram-mb", "2816",
             str(kernel), str(initramfs), str(disk), str(serial_log),
-        ],
+        ]
+    )
+    return subprocess.run(
+        command,
         check=False,
         capture_output=True,
         text=True,
@@ -52,6 +64,8 @@ def main() -> int:
             "if '--version' in sys.argv:\n"
             "    print('QEMU emulator version 11.1.0')\n"
             "    raise SystemExit(0)\n"
+            "cpu = sys.argv[sys.argv.index('-cpu') + 1]\n"
+            "assert cpu == os.environ['FAKE_QEMU_EXPECTED_CPU'], (cpu, os.environ['FAKE_QEMU_EXPECTED_CPU'])\n"
             "serial = sys.argv[sys.argv.index('-serial') + 1]\n"
             "assert serial.startswith('file:')\n"
             "Path(serial[5:]).write_text(os.environ['FAKE_QEMU_SERIAL'])\n"
@@ -76,28 +90,44 @@ def main() -> int:
         )
         cases = (
             (
-                "PIE=1 reaches userland",
+                "default max CPU with PIE=1 reaches userland",
                 common + "xnu: XNU PIE mapping mode 0x1\nxnu: host TCR2_EL1 0x2\nxnu: host TCR2_EL1.PIE 0x1\n",
                 0,
                 "",
+                None,
+                True,
+            ),
+            (
+                "explicit max CPU with PIE=1 reaches userland",
+                common + "xnu: XNU PIE mapping mode 0x1\nxnu: host TCR2_EL1 0x2\nxnu: host TCR2_EL1.PIE 0x1\n",
+                0,
+                "",
+                "max",
+                True,
             ),
             (
                 "PIE=0 is rejected",
                 common + "xnu: XNU PIE mapping mode 0x0\nxnu: host TCR2_EL1 0x0\nxnu: host TCR2_EL1.PIE 0x0\n",
                 1,
                 "requires TCR2_EL1.PIE=1",
+                None,
+                True,
             ),
             (
                 "unsupported TCR2 is rejected",
                 common + "xnu: XNU PIE mapping mode 0x0\nxnu: host TCR2_EL1 unavailable; using direct permissions\n",
                 1,
                 "requires TCR2_EL1.PIE=1",
+                None,
+                True,
             ),
             (
                 "PIE=1 with XNU direct mode is rejected",
                 common + "xnu: XNU PIE mapping mode 0x0\nxnu: host TCR2_EL1 0x2\nxnu: host TCR2_EL1.PIE 0x1\n",
                 1,
                 "requires XNU PIE mapping mode=1",
+                None,
+                True,
             ),
             (
                 "PIE=1 without the XNU writable-table probe is rejected",
@@ -105,10 +135,12 @@ def main() -> int:
                 + "xnu: XNU PIE mapping mode 0x1\nxnu: host TCR2_EL1 0x2\nxnu: host TCR2_EL1.PIE 0x1\n",
                 1,
                 "xnu: probe port_crumb (rw)",
+                None,
+                True,
             ),
         )
-        for name, serial, want_status, expected_error in cases:
-            result = run_with_serial(fake_qemu, root, serial)
+        for name, serial, want_status, expected_error, qemu_cpu, require_pie in cases:
+            result = run_with_serial(fake_qemu, root, serial, qemu_cpu=qemu_cpu, require_pie=require_pie)
             output = result.stdout + result.stderr
             if result.returncode != want_status or expected_error not in output:
                 print(f"FAIL: {name}: exit={result.returncode}, expected={want_status}", file=sys.stderr)
@@ -128,6 +160,21 @@ def main() -> int:
                         print(f"FAIL: {name}: evidence not printed: {evidence}", file=sys.stderr)
                         return 1
             print(f"PASS: {name}")
+
+        direct_serial = (
+            common
+            + "xnu: XNU PIE mapping mode 0x0\n"
+            + "xnu: host TCR2_EL1 0x0\n"
+            + "xnu: host TCR2_EL1.PIE 0x0\n"
+        )
+        direct_result = run_with_serial(
+            fake_qemu, root, direct_serial, qemu_cpu="cortex-a710", require_pie=False
+        )
+        if direct_result.returncode != 0 or "cortex-a710 CPU" not in direct_result.stdout:
+            print("FAIL: explicit cortex-a710 direct profile did not reach clean halt", file=sys.stderr)
+            print(direct_result.stdout + direct_result.stderr, file=sys.stderr)
+            return 1
+        print("PASS: explicit cortex-a710 direct profile is forwarded to QEMU")
     return 0
 
 

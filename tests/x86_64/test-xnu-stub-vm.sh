@@ -161,6 +161,17 @@ if grep -F 'xnu: native x86_64 world switch is not implemented; refusing to load
   exit 1
 fi
 
+AMD_LOG="$STAGE/qemu-serial-amd-vendor.log"
+run_stub_vm tcg 'max,vendor=AuthenticAMD' "$AMD_LOG"
+grep -F 'xnu: pinned XNU source requires GenuineIntel; this CPU vendor is unsupported' "$AMD_LOG" >/dev/null || {
+  echo "AMD-vendor disposable VM did not report the pinned-source vendor refusal" >&2
+  exit 1
+}
+if grep -E 'xnu: (CPU is missing required x86_64 features:|pinned XNU source does not recognize Intel family|native x86_64 world switch is not implemented; refusing to load)' "$AMD_LOG" >/dev/null; then
+  echo "AMD-vendor disposable VM did not stop at the vendor preflight" >&2
+  exit 1
+fi
+
 AVX2_LOG="$STAGE/qemu-serial-avx2-disabled.log"
 run_stub_vm tcg 'Haswell,-avx2' "$AVX2_LOG"
 grep -F 'xnu: CPU is missing required x86_64 features: AVX2' "$AVX2_LOG" >/dev/null || {

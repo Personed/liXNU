@@ -319,8 +319,8 @@ static long bp_ioctl(struct file *file, unsigned int command, unsigned long arg)
 	if (fki_caps() != 0)
 		return -EOPNOTSUPP;
 
-	/* Exercise kernel XSAVE/SIMD save/restore in this ioctl's calling task. */
-	kernel_fpu_begin();
+	/* Exercise x87/MXCSR/SIMD save and restore in the ioctl's calling task. */
+	kernel_fpu_begin_mask(KFPU_387 | KFPU_MXCSR);
 	x86_boundary_probe_clobber_xstate();
 	kernel_fpu_end();
 

@@ -1,18 +1,63 @@
+diff --git a/bsd/net/classq/classq_fq_codel.c b/bsd/net/classq/classq_fq_codel.c
+index de3c3cb8780b689722be5fbddcb5010d2468fcec..8b42c78decc43765e27da92bef89f6ca08ff9bc7 100644
+--- a/bsd/net/classq/classq_fq_codel.c
++++ b/bsd/net/classq/classq_fq_codel.c
+@@ -1286,7 +1286,7 @@ fq_codel_dq(void *fqs_p, void *fq_p, pktsched_pkt_t *pkt, uint64_t now)
+ 				} else if (FQ_IS_ECN_CAPABLE(fq) && pktsched_mark_ecn(pkt) == 0) {
+ 					fq_cl->fcl_stat.fcl_ce_marked++;
+ 					status->drop_next =
+-					    codel_control_law(fast_inv_sqrt(status->count), status->drop_next, FQ_UPDATE_INTERVAL(fq));
++					    codel_control_law(fast_inv_sqrt((float)status->count), status->drop_next, FQ_UPDATE_INTERVAL(fq));
+ 					KDBG(AQM_KTRACE_PKT_DROP, fq->fq_flowhash,
+ 					    status->count, status->drop_next, now);
+ 					/*
+@@ -1307,7 +1307,7 @@ fq_codel_dq(void *fqs_p, void *fq_p, pktsched_pkt_t *pkt, uint64_t now)
+ 						status->dropping = false;
+ 					} else {
+ 						status->drop_next =
+-						    codel_control_law(fast_inv_sqrt(status->count), status->drop_next, FQ_UPDATE_INTERVAL(fq));
++						    codel_control_law(fast_inv_sqrt((float)status->count), status->drop_next, FQ_UPDATE_INTERVAL(fq));
+ 					}
+ 				}
+ 				KDBG(AQM_KTRACE_PKT_DROP, fq->fq_flowhash,
+@@ -1358,7 +1358,7 @@ fq_codel_dq(void *fqs_p, void *fq_p, pktsched_pkt_t *pkt, uint64_t now)
+ 			}
+ 
+ 			status->drop_next =
+-			    codel_control_law(fast_inv_sqrt(status->count), now, FQ_UPDATE_INTERVAL(fq));
++			    codel_control_law(fast_inv_sqrt((float)status->count), now, FQ_UPDATE_INTERVAL(fq));
+ 			status->lastcnt = status->count;
+ 
+ 			KDBG(AQM_KTRACE_PKT_DROP, fq->fq_flowhash,
+diff --git a/bsd/net/necp.c b/bsd/net/necp.c
+index 13e9296a093cd3a93a8eadf1eca4a8c08219f073..a20514f7c3c267ee26e410b497cb5edb1e033142 100644
 --- a/bsd/net/necp.c
 +++ b/bsd/net/necp.c
-@@ -766,3 +766,3 @@
+@@ -764,7 +764,7 @@ caller, (uint64_t)VM_KERNEL_ADDRPERM(socket), log_msg, policy_id, skip_policy_id
+     char laddr_str[MAX_IPv6_STR_LEN]; \
+     char raddr_str[MAX_IPv6_STR_LEN]; \
      NECPDATATRACELOG(LOG_ERR, "DATA-TRACE <%s>: %s - fam %d proto %d port <local %d/%d remote %d/%d> <local %s remote %s> <drop-all order %d> <BoundInterface %d> <socket policy id %d socket skip id %d> <mbuf %X len %d %d>", \
 -	        caller, log_msg, local_addr.sin.sin_family, protocol, ntohs(local_addr.sin.sin_port), ntohs(local_addr.sin6.sin6_port), ntohs(remote_addr.sin.sin_port), ntohs(remote_addr.sin6.sin6_port), necp_get_address_string(&local_addr, laddr_str), necp_get_address_string(&remote_addr, raddr_str), necp_drop_all_order, bound_interface_index, socket_policy_id, socket_skip_policy_id, (unsigned int)packet, ip->ip_len, ntohs(ip->ip_len)); \
 +	        caller, log_msg, local_addr.sin.sin_family, protocol, ntohs(local_addr.sin.sin_port), ntohs(local_addr.sin6.sin6_port), ntohs(remote_addr.sin.sin_port), ntohs(remote_addr.sin6.sin6_port), necp_get_address_string(&local_addr, laddr_str), necp_get_address_string(&remote_addr, raddr_str), necp_drop_all_order, bound_interface_index, socket_policy_id, socket_skip_policy_id, (unsigned int)(uintptr_t)packet, ip->ip_len, ntohs(ip->ip_len)); \
      }
-@@ -774,3 +774,3 @@
+ 
+ #define NECP_DATA_TRACE_LOG_IP6(debug, caller, log_msg) \
+@@ -772,7 +772,7 @@ caller, (uint64_t)VM_KERNEL_ADDRPERM(socket), log_msg, policy_id, skip_policy_id
+     char laddr_str[MAX_IPv6_STR_LEN]; \
+     char raddr_str[MAX_IPv6_STR_LEN]; \
      NECPDATATRACELOG(LOG_ERR, "DATA-TRACE <%s>: %s - fam %d proto %d port <local %d/%d remote %d/%d> <local %s remote %s> <drop-all order %d> <BoundInterface %d> <socket policy id %d socket skip id %d> <mbuf %X len %d %d %d>", \
 -caller, log_msg, local_addr.sin.sin_family, protocol, ntohs(local_addr.sin.sin_port), ntohs(local_addr.sin6.sin6_port), ntohs(remote_addr.sin.sin_port), ntohs(remote_addr.sin6.sin6_port), necp_get_address_string(&local_addr, laddr_str), necp_get_address_string(&remote_addr, raddr_str), necp_drop_all_order, bound_interface_index, socket_policy_id, socket_skip_policy_id, (unsigned int)packet, ip6->ip6_plen, ntohs(ip6->ip6_plen), packet ? packet->m_pkthdr.len : 0); \
 +caller, log_msg, local_addr.sin.sin_family, protocol, ntohs(local_addr.sin.sin_port), ntohs(local_addr.sin6.sin6_port), ntohs(remote_addr.sin.sin_port), ntohs(remote_addr.sin6.sin6_port), necp_get_address_string(&local_addr, laddr_str), necp_get_address_string(&remote_addr, raddr_str), necp_drop_all_order, bound_interface_index, socket_policy_id, socket_skip_policy_id, (unsigned int)(uintptr_t)packet, ip6->ip6_plen, ntohs(ip6->ip6_plen), packet ? packet->m_pkthdr.len : 0); \
      }
+ 
+ #define NECP_DATA_TRACE_LOG_IP_RESULT(debug, caller, log_msg) \
+diff --git a/bsd/net/trie_utility.c b/bsd/net/trie_utility.c
+index 36e5aaa68943ddb69d9e01d30bd098ef892396a6..2d3e4d4dc21252a2feea894e755cc39a1c361401 100644
 --- a/bsd/net/trie_utility.c
 +++ b/bsd/net/trie_utility.c
-@@ -274,6 +274,6 @@
+@@ -272,10 +272,10 @@ net_trie_init_with_mem(struct net_trie *new_trie, uint8_t * __sized_by(trie_memo
+ 
+ 	NET_TRIE_LOG(LOG_DEBUG, "%s: NET_TRIE - initialized - mem %X (size %zu) nodes %X (size %zu count %d) maps %X (size %zu count %d) bytes %X (size %zu count %d)",
  	    __FUNCTION__,
 -	    (unsigned int)new_trie->memory, new_trie->trie_memory_size,
 -	    (unsigned int)new_trie->nodes, new_trie->nodes_mem_size, new_trie->nodes_count,
@@ -23,10 +68,49 @@
 +	    (unsigned int)(uintptr_t)new_trie->child_maps, new_trie->child_maps_mem_size, new_trie->child_maps_count,
 +	    (unsigned int)(uintptr_t)new_trie->bytes, new_trie->bytes_mem_size, new_trie->bytes_count);
  
+ 	return true;
+ }
+diff --git a/osfmk/i386/AT386/model_dep.c b/osfmk/i386/AT386/model_dep.c
+index ab30d3ef11c511eff14327f106f356a3b025f8f3..8840b093986b47d1a5f8b604ad2c53c2d2b3fbcb 100644
+--- a/osfmk/i386/AT386/model_dep.c
++++ b/osfmk/i386/AT386/model_dep.c
+@@ -224,7 +224,7 @@ print_one_backtrace(pmap_t pmap, vm_offset_t topfp, const char *cur_marker,
+ 	addr64_t        lr = 0;
+ 	addr64_t        fp = topfp;
+ 	addr64_t        fp_for_ppn = 0;
+-	ppnum_t         ppn = (ppnum_t)NULL;
++	ppnum_t         ppn = 0;
+ 	bool            dump_kernel_stack = (fp >= VM_MIN_KERNEL_ADDRESS);
+ 
+ 	do {
+@@ -246,7 +246,7 @@ print_one_backtrace(pmap_t pmap, vm_offset_t topfp, const char *cur_marker,
+ 			ppn = pmap_find_phys(pmap, fp + FP_LR_OFFSET);
+ 			fp_for_ppn = fp + (is_64_bit ? FP_LR_OFFSET64 : FP_LR_OFFSET);
+ 		}
+-		if (ppn != (ppnum_t)NULL) {
++		if (ppn != 0) {
+ 			if (is_64_bit) {
+ 				lr = ml_phys_read_double_64(((((vm_offset_t)ppn) << PAGE_SHIFT)) | ((fp + FP_LR_OFFSET64) & PAGE_MASK));
+ 			} else {
+@@ -264,7 +264,7 @@ print_one_backtrace(pmap_t pmap, vm_offset_t topfp, const char *cur_marker,
+ 			ppn = pmap_find_phys(pmap, fp);
+ 			fp_for_ppn = fp;
+ 		}
+-		if (ppn != (ppnum_t)NULL) {
++		if (ppn != 0) {
+ 			if (is_64_bit) {
+ 				fp = ml_phys_read_double_64(((((vm_offset_t)ppn) << PAGE_SHIFT)) | (fp & PAGE_MASK));
+ 			} else {
+diff --git a/osfmk/i386/machine_routines.c b/osfmk/i386/machine_routines.c
+index d7e433d380b5566ef6d99c64625f9977e3b1ab5e..8aae4735b0888561e931c5d95bff373726f180ef 100644
 --- a/osfmk/i386/machine_routines.c
 +++ b/osfmk/i386/machine_routines.c
-@@ -223,3 +223,3 @@
+@@ -221,7 +221,7 @@ ml_static_mfree(
+ 		assert((vaddr_cur & (map_size - 1)) == 0);
+ 
  		ppn = pmap_find_phys(kernel_pmap, vaddr_cur);
 -		assert(ppn != (ppnum_t)NULL);
 +		assert(ppn != 0);
  
+ 		pmap_remove(kernel_pmap, vaddr_cur, vaddr_cur + map_size);
+ 		while (map_size > 0) {

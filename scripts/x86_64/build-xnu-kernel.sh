@@ -207,6 +207,30 @@ verify_source() {
   [[ -f "$SOURCE_DIR/config/MASTER.x86_64" ]] || fail 'pinned XNU source is missing config/MASTER.x86_64'
 }
 
+# libdispatch's libfirehose_kernel target installs this under include/kernel.
+# Make only that installed header visible in the allowed XNU include directory;
+# adding the whole generic include/kernel tree would change header resolution.
+stage_firehose_buffer_header() {
+  local installed="$LIBDISPATCH_DSTROOT/usr/local/include/kernel/os/firehose_buffer_private.h"
+  local target="$SDK_DIR/usr/local/include/os/firehose_buffer_private.h"
+  [[ -s "$installed" && ! -L "$installed" ]] \
+    || fail 'libdispatch did not install its kernel Firehose buffer header'
+  if [[ -e "$target" || -L "$target" ]]; then
+    [[ -f "$target" && ! -L "$target" ]] && cmp -s "$installed" "$target" \
+      || fail 'refusing to replace an unexpected os/firehose_buffer_private.h'
+  else
+    install -m 0644 "$installed" "$target"
+  fi
+}
+
+verify_firehose_buffer_header() {
+  local installed="$LIBDISPATCH_DSTROOT/usr/local/include/kernel/os/firehose_buffer_private.h"
+  local target="$SDK_DIR/usr/local/include/os/firehose_buffer_private.h"
+  [[ -s "$installed" && ! -L "$installed" && -s "$target" && ! -L "$target" ]] && \
+    cmp -s "$installed" "$target" \
+    || fail 'the SDK overlay Firehose buffer header does not match the libdispatch install'
+}
+
 verify_sdk() {
   [[ -f "$SDK_DIR/SDKSettings.json" ]] || fail "missing bundled macOS SDK settings at $SDK_DIR"
   local version
@@ -224,6 +248,7 @@ verify_sdk() {
     || fail 'SDK overlay is missing exported x86_64 i386/cpu_number.h'
   [[ -s "$SDK_DIR/usr/local/lib/kernel/libfirehose_kernel.a" ]] \
     || fail 'SDK overlay is missing the staged libfirehose_kernel archive'
+  verify_firehose_buffer_header
   verify_machine_header_exports
   verify_public_availability_header
   verify_public_sys_unistd_header
@@ -1037,6 +1062,7 @@ verify_firehose_compile_arguments
 verify_firehose_archive "$LIBDISPATCH_ARCHIVE"
 FIREHOSE_ARCHIVE_SHA256="$(shasum -a 256 "$LIBDISPATCH_ARCHIVE" | awk '{print $1}')"
 ditto "$LIBDISPATCH_DSTROOT/usr/local" "$SDK_DIR/usr/local"
+stage_firehose_buffer_header
 verify_sdk
 verify_firehose_archive "$SDK_DIR/usr/local/lib/kernel/libfirehose_kernel.a"
 verify_public_availability_header
@@ -1133,8 +1159,8 @@ XNU_COMPAT_PATCH_SHA256="$(shasum -a 256 "$XNU_COMPAT_PATCH" | awk '{print $1}')
 printf 'xnu_compat_patch_sha256=%s\n' "$XNU_COMPAT_PATCH_SHA256" >> "$OUT_DIR/x86_64-build.env"
 if (
   # Keep the pinned checkout pristine, including on compile failure.
-  git -C "$SOURCE_DIR" apply "$XNU_COMPAT_PATCH" || exit 1
-  trap 'rc=$?; trap - EXIT; git -C "$SOURCE_DIR" apply -R "$XNU_COMPAT_PATCH" || exit 1; exit "$rc"' EXIT
+  git -C "$SOURCE_DIR" apply --whitespace=error "$XNU_COMPAT_PATCH" || exit 1
+  trap 'rc=$?; trap - EXIT; git -C "$SOURCE_DIR" apply --whitespace=error -R "$XNU_COMPAT_PATCH" || exit 1; exit "$rc"' EXIT
   make -C "$SOURCE_DIR" build \
   SDKROOT=macosx SDKROOT_RESOLVED="$SDK_DIR" HOST_SDKROOT=macosx HOST_SDKROOT_RESOLVED="$BASE_SDK_DIR" \
   SDKVERSION="$SDK_VERSION" KDKROOT="$KDKROOT" PLATFORM=MacOSX \

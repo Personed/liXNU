@@ -1,0 +1,2 @@
+# Unified diff context uses a leading space, including before tabs and empty lines.
+scripts/x86_64/tahoe-xnu-pointer-casts.patch whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab

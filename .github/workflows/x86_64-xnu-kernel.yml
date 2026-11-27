@@ -205,6 +205,25 @@ jobs:
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/libdispatch/dst/usr/local/lib/kernel/libfirehose_kernel.a
           if-no-files-found: error
           retention-days: 5
+      - name: Report Intel XNU compiler diagnostics
+        if: failure() || cancelled()
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/xnulinux-x86_64-xnu/out/xnu-build.log"
+          if [[ ! -s "$log" ]]; then
+            echo "No XNU compilation log was produced."
+            exit 0
+          fi
+          awk '
+            /: (fatal )?error:|^Undefined symbols|^ld: / {
+              gsub(/[[:cntrl:]]/, " ")
+              printf "  %s\n", substr($0, 1, 500)
+              if (++count == 20) exit
+            }
+            END {
+              if (!count) print "No compiler or linker errors recorded yet."
+            }
+          ' "$log"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

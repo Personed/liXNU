@@ -98,9 +98,21 @@ setting `X86_BOUNDARY_ALLOW_KVM_ONLY=1` skips the unsupported TCG profile and in
 the KVM/host run. That explicit fallback is complementary local validation only; it is not a
 substitute for the CI TCG profile.
 
+The same disposable VM also runs a synthetic task-stack continuation model. It covers a reply
+published after the owner's initial completion check but before its first wait, a delayed reply
+while the owner sleeps and a second task on that CPU is refused entry to the reserved stack/context,
+a timeout followed by a rejected late reply, and cancellation acknowledged by the owner before a
+late reply is rejected. The checks include the owner and responder task stacks, one resume with the
+exact reply payload/generation/request ID, unchanged alternate-stack canaries, and a voluntary
+context switch on the delayed/timeout/cancellation paths. Request and reply storage remains allocated
+until the responder acknowledges completion, timeout handling, or cancellation. This models the
+proposed ownership rules; it does not call `fki_arch_linux_runs()` or validate a production FKI
+continuation.
+
 This is a host-only call/return test. It does not enter XNU, change `fki.h`, enable FKI capabilities, change CR3 or GS,
 inspect supervisor XSS state, install or replace Linux IDT, page-fault, general-protection, or syscall handlers, or run C under foreign host state.
-Passing it does not establish native XNU runtime support or prove the proposed early exception/syscall bridge.
+The continuation scenario is also synthetic test code rather than a production FKI path. Passing either test does not
+establish native XNU runtime support or prove the proposed early exception/syscall bridge.
 The separate [test-only entry/return contract](../../docs/x86_64-entry-return-contract.md) defines the remaining gates
 and lists the Tahoe artifact and ABI evidence still required before any XNU handoff can be considered.
 

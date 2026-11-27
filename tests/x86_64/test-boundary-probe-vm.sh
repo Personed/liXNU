@@ -188,6 +188,10 @@ run_probe_vm() {
     echo "disposable VM did not report the boundary-probe success marker ($accel)" >&2
     exit 1
   }
+  grep -Fq 'X86_FKI_TASK_CONTINUATION_PASS' "$log" || {
+    echo "disposable VM did not report the task-continuation success marker ($accel)" >&2
+    exit 1
+  }
   grep -Fq 'reboot: Power down' "$log" || {
     echo "disposable VM did not power down cleanly ($accel)" >&2
     exit 1

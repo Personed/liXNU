@@ -25,6 +25,7 @@
 #include "fki.h"
 #include "boundary_probe_asm.h"
 #include "boundary_probe_uapi.h"
+#include "task_continuation_probe.h"
 
 #define BP_STACK_ORDER 2
 #define BP_STACK_SIZE (PAGE_SIZE << BP_STACK_ORDER)
@@ -86,6 +87,8 @@ static_assert(offsetof(struct bp_asm_result, gprs_during) == BP_OFF_GPRS_DURING)
 static_assert(offsetof(struct bp_asm_result, gprs_return) == BP_OFF_GPRS_RETURN);
 static_assert(-ECANCELED == -125);
 static_assert(X86_BOUNDARY_PROBE_RUN == _IOW(0xb7, 1, struct x86_boundary_probe_request));
+static_assert(X86_BOUNDARY_PROBE_TASK_CONTINUATION ==
+	      _IOW(0xb7, 2, struct x86_boundary_continuation_request));
 
 void x86_boundary_probe_switch_stack(void *stack_top, struct bp_asm_result *result,
 				     unsigned int mode);
@@ -304,9 +307,17 @@ out_restore:
 static long bp_ioctl(struct file *file, unsigned int command, unsigned long arg)
 {
 	struct x86_boundary_probe_request request;
+	struct x86_boundary_continuation_request continuation_request;
 	struct bp_work work;
 	long ret;
 
+	if (command == X86_BOUNDARY_PROBE_TASK_CONTINUATION) {
+		if (copy_from_user(&continuation_request, (void __user *)arg,
+				   sizeof(continuation_request)))
+			return -EFAULT;
+		return bp_task_continuation_probe_run(continuation_request.owner_cpu,
+						      continuation_request.responder_cpu);
+	}
 	if (command != X86_BOUNDARY_PROBE_RUN)
 		return -ENOTTY;
 	if (copy_from_user(&request, (void __user *)arg, sizeof(request)))

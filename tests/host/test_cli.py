@@ -56,6 +56,42 @@ class TestCliAndInstaller(unittest.TestCase):
             res = subprocess.run([str(CLI), cmd], capture_output=True, text=True, check=True)
             self.assertTrue(res.stdout.strip())
 
+    def test_build_modules_uses_the_selected_headers_architecture(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            headers = pathlib.Path(tmp) / "kernel headers"
+            config = headers / "include" / "config" / "auto.conf"
+            config.parent.mkdir(parents=True)
+            make = pathlib.Path(tmp) / "make"
+            make.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n', encoding="utf-8")
+            make.chmod(0o755)
+
+            for selected, inherited, expected_arch_args in (
+                ("CONFIG_X86_64=y", "arm64", ["ARCH=x86_64"]),
+                ("CONFIG_ARM64=y", "x86_64", ["ARCH=arm64"]),
+                ("CONFIG_PPC64=y", "powerpc", []),
+            ):
+                with self.subTest(selected=selected, inherited=inherited):
+                    config.write_text(f"{selected}\n", encoding="utf-8")
+                    env = {
+                        **os.environ,
+                        "PATH": f"{tmp}{os.pathsep}{os.environ.get('PATH', '')}",
+                        "KDIR": str(headers),
+                        "ARCH": inherited,
+                        "XNULINUX_HOME": str(ROOT),
+                    }
+                    result = subprocess.run(
+                        [str(CLI), "build-modules"], env=env, capture_output=True, text=True, check=True
+                    )
+                    make_args = ["-C", str(headers), *expected_arch_args]
+                    self.assertEqual(
+                        result.stdout.splitlines()[:-1],
+                        [
+                            *make_args, f"M={ROOT / 'fki-ko'}", "modules",
+                            *make_args, f"M={ROOT / 'xnu-ko'}",
+                            f"KBUILD_EXTRA_SYMBOLS={ROOT / 'fki-ko' / 'Module.symvers'}", "modules",
+                        ],
+                    )
+
     def test_screenshot(self):
         with tempfile.TemporaryDirectory() as tmp:
             fb = os.path.join(tmp, "fb.raw")

@@ -70,7 +70,7 @@ A pass requires all of the following for both `#PF` and `#GP`:
 
 - exact vector, RIP, error code, CPU, and recovery count metadata (`#GP` error code `0xfff8`);
 - CR2 equality and access-type consistency for `#PF`;
-- exact restoration of the expected 15 non-RSP GPR values, including a known R11 sentinel across CR2 capture; that sentinel must differ from the expected CR2 value for each injection (the guard-page address for `#PF`, zero for `#GP`) so a missing R11 restore is observable. DS must remain unchanged; fault-frame RSP must equal the recorded fault-window RSP and `iretq` must enter the recovery stack;
+- exact restoration of the expected 15 non-RSP GPR values, including a known R11 sentinel across CR2 capture; that sentinel must differ from the expected CR2 value for each injection (the guard-page address for `#PF`, zero for `#GP`). Fail closed before arming if the values are equal, so a missing R11 restore cannot pass. DS must remain unchanged; fault-frame RSP must equal the recorded fault-window RSP and `iretq` must enter the recovery stack;
 - exactly one recovery entry and no nested/unclassified exception;
 - normal Linux syscalls after return on the same vCPU as the recovered injection;
 - byte-for-byte restoration of IDTR state before cleanup;

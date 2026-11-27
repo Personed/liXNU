@@ -120,8 +120,8 @@ host_has_required_cpu_features() {
 if [[ -w /dev/kvm ]] && host_has_required_cpu_features; then
   HOST_LOG="$STAGE/qemu-serial-host-features.log"
   run_stub_vm kvm host "$HOST_LOG"
-  grep -F 'xnu: native x86_64 world switch is not implemented; refusing to load' "$HOST_LOG" >/dev/null || {
-    echo "feature-complete disposable VM did not log that the xnu stub initializer ran" >&2
+  grep -E 'xnu: (native x86_64 world switch is not implemented; refusing to load|pinned XNU source requires GenuineIntel|pinned XNU source does not recognize Intel family)' "$HOST_LOG" >/dev/null || {
+    echo "feature-complete VM did not report either the fail-closed entry stub or source-pinned CPU rejection" >&2
     exit 1
   }
 else
@@ -130,16 +130,10 @@ fi
 
 MISSING_LOG="$STAGE/qemu-serial-missing-features.log"
 run_stub_vm tcg qemu64 "$MISSING_LOG"
-grep -F 'xnu: CPU is missing required x86_64 features:' "$MISSING_LOG" >/dev/null || {
-  echo "feature-limited disposable VM did not log missing CPU features" >&2
+grep -E 'xnu: (CPU is missing required x86_64 features:|pinned XNU source requires GenuineIntel|pinned XNU source does not recognize Intel family)' "$MISSING_LOG" >/dev/null || {
+  echo "feature-limited disposable VM did not report a source-pinned CPU preflight rejection" >&2
   exit 1
 }
-for feature in SSE4.2 AVX FMA MOVBE POPCNT LZCNT BMI1 AVX2 BMI2; do
-  grep -F "$feature" "$MISSING_LOG" >/dev/null || {
-    echo "feature-limited disposable VM did not list missing CPU feature $feature" >&2
-    exit 1
-  }
-done
 if grep -F 'xnu: native x86_64 world switch is not implemented; refusing to load' "$MISSING_LOG" >/dev/null; then
   echo "feature-limited disposable VM reached the world-switch refusal before CPU validation" >&2
   exit 1

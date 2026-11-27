@@ -39,17 +39,45 @@ if [ "$MODE" = local ]; then
   JOURNALD_CONF_DIR=${JOURNALD_CONF_DIR:-/etc/systemd}
   JOURNAL_HAS_KMSG=0
   if command -v journalctl >/dev/null 2>&1 && [ -d "$SYSTEMD_RUNTIME_DIR" ]; then
+    READ_KMSG_AWK='
+      FNR == 1 { in_journal = 0 }
+      { sub(/\r$/, "") }
+      from_cat_config && /^# \/.*\/systemd\/journald\.conf(\.d\/[^\/]+\.conf)?$/ {
+        in_journal = 0
+        next
+      }
+      /^[[:space:]]*[#;]/ || /^[[:space:]]*$/ { next }
+      /^[[:space:]]*\[[^]]*\][[:space:]]*$/ {
+        s = $0
+        gsub(/^[[:space:]]*\[|\][[:space:]]*$/, "", s)
+        in_journal = (s == "Journal")
+        next
+      }
+      in_journal && /^[[:space:]]*ReadKMsg[[:space:]]*=/ {
+        v = $0
+        sub(/^[[:space:]]*ReadKMsg[[:space:]]*=[[:space:]]*/, "", v)
+        sub(/[[:space:]]*$/, "", v)
+        v = tolower(v)
+        if (v ~ /^(1|yes|y|true|t|on)$/) last = "yes"
+        else if (v ~ /^(0|no|n|false|f|off)$/) last = "no"
+      }
+      END { print last }
+    '
     READ_KMSG=$(
-      {
-        if [ "$JOURNALD_CONF_DIR" = /etc/systemd ] && command -v systemd-analyze >/dev/null 2>&1; then
-          systemd-analyze cat-config systemd/journald.conf 2>/dev/null || true
-        else
-          cat "$JOURNALD_CONF_DIR/journald.conf" "$JOURNALD_CONF_DIR/journald.conf.d"/*.conf 2>/dev/null || true
+      if [ "$JOURNALD_CONF_DIR" = /etc/systemd ] && command -v systemd-analyze >/dev/null 2>&1; then
+        (systemd-analyze cat-config systemd/journald.conf 2>/dev/null || true) | awk -v from_cat_config=1 "$READ_KMSG_AWK"
+      else
+        conf_files=()
+        for conf in "$JOURNALD_CONF_DIR/journald.conf" "$JOURNALD_CONF_DIR/journald.conf.d"/*.conf; do
+          [ -f "$conf" ] && [ -r "$conf" ] && conf_files+=("$conf")
+        done
+        if [ "${#conf_files[@]}" -gt 0 ]; then
+          awk -v from_cat_config=0 "$READ_KMSG_AWK" "${conf_files[@]}"
         fi
-      } | awk -F= '/^[[:space:]]*ReadKMsg[[:space:]]*=/{v=$2; gsub(/[[:space:]]/, "", v); last=tolower(v)} END{print last}'
+      fi
     )
     case "$READ_KMSG" in
-      no|false|0|off) JOURNAL_HAS_KMSG=0 ;;
+      no) JOURNAL_HAS_KMSG=0 ;;
       *)
         if [ -n "$( (sudo journalctl -k -n 1 -q --no-pager 2>/dev/null || journalctl -k -n 1 -q --no-pager 2>/dev/null) | head -c 1)" ]; then
           JOURNAL_HAS_KMSG=1

@@ -5,12 +5,15 @@
 import importlib.util
 import os
 import pathlib
+import select
+import signal
 import socket
 import struct
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -136,6 +139,55 @@ class TestXnuVnc(unittest.TestCase):
         xrgb_be = xnu_vnc.bgra_to_pixel_bytes(red_bgra, 32, 1, 16, 8, 0, 1, 255, 255, 255)
         self.assertEqual(xrgb_be, b"\x00\xff\x00\x00")
 
+    def _read_line_with_timeout(self, proc, timeout=5.0):
+        fd = proc.stdout.fileno()
+        deadline = time.monotonic() + timeout
+        buf = bytearray()
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.fail(f"timed out after {timeout}s waiting for console output (partial={buf!r})")
+            ready, _, _ = select.select([fd], [], [], remaining)
+            if not ready:
+                self.fail(f"timed out after {timeout}s waiting for console output (partial={buf!r})")
+            chunk = os.read(fd, 1)
+            if not chunk:
+                break
+            buf.extend(chunk)
+            if chunk == b"\n":
+                break
+        return buf.decode("utf-8", errors="replace")
+
+    def _run_console_local(self, env, stdin_data=None, timeout=5.0):
+        proc = subprocess.Popen(
+            ["bash", str(ROOT / "scripts" / "xnu-console.sh"), "--local"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            start_new_session=True,
+        )
+        try:
+            line = self._read_line_with_timeout(proc, timeout=timeout)
+            if stdin_data is not None:
+                proc.stdin.write(stdin_data.encode("utf-8"))
+                proc.stdin.flush()
+            proc.stdin.close()
+            proc.wait(timeout=timeout)
+            self.assertEqual(proc.returncode, 0)
+            return line
+        finally:
+            if proc.poll() is None:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                proc.wait(timeout=5)
+            if proc.stdin and not proc.stdin.closed:
+                proc.stdin.close()
+            proc.stdout.close()
+            proc.stderr.close()
+
     def test_console_local_falls_back_when_journal_empty_or_readkmsg_no(self):
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir = pathlib.Path(tmp) / "bin"
@@ -167,24 +219,8 @@ class TestXnuVnc(unittest.TestCase):
                 "SYSTEMD_RUNTIME_DIR": str(systemd_dir),
                 "JOURNALD_CONF_DIR": str(conf_dir),
             }
-            proc = subprocess.Popen(
-                ["bash", str(ROOT / "scripts" / "xnu-console.sh"), "--local"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=env,
-                text=True,
-            )
-            try:
-                line = proc.stdout.readline()
-                self.assertEqual(line.strip(), "fallback-ok")
-                proc.stdin.write("echo hi\n")
-                proc.stdin.close()
-                proc.wait(timeout=5)
-                self.assertEqual(proc.returncode, 0)
-            finally:
-                proc.stdout.close()
-                proc.stderr.close()
+            line = self._run_console_local(env, stdin_data="echo hi\n")
+            self.assertEqual(line.strip(), "fallback-ok")
             self.assertTrue(probe_log.is_file(), "journalctl probe was not called")
             self.assertEqual(console_in.read_text(encoding="utf-8"), "echo hi\n")
 
@@ -193,23 +229,115 @@ class TestXnuVnc(unittest.TestCase):
             (bin_dir / "journalctl").write_text(
                 '#!/bin/sh\necho "[    0.000000] stale boot log"\n', encoding="utf-8"
             )
-            proc2 = subprocess.Popen(
-                ["bash", str(ROOT / "scripts" / "xnu-console.sh"), "--local"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=env,
-                text=True,
+            line2 = self._run_console_local(env)
+            self.assertEqual(line2.strip(), "fallback-ok")
+
+    def test_console_local_readkmsg_respects_journal_section_per_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = pathlib.Path(tmp) / "bin"
+            systemd_dir = pathlib.Path(tmp) / "systemd"
+            conf_dir = pathlib.Path(tmp) / "etc-systemd"
+            dropin_dir = conf_dir / "journald.conf.d"
+            bin_dir.mkdir()
+            systemd_dir.mkdir()
+            dropin_dir.mkdir(parents=True)
+            console_in = pathlib.Path(tmp) / "console-in"
+            console_in.touch()
+
+            (bin_dir / "sudo").write_text('#!/bin/sh\nexec "$@"\n', encoding="utf-8")
+            (bin_dir / "journalctl").write_text(
+                '#!/bin/sh\n'
+                'case " $* " in\n'
+                '  *" -f "*) printf "[    1.234567] fki: darwin console: journal-ok\\r\\n" ;;\n'
+                '  *) printf "[    0.000000] kernel msg\\n" ;;\n'
+                'esac\n',
+                encoding="utf-8",
             )
-            try:
-                line2 = proc2.stdout.readline()
-                self.assertEqual(line2.strip(), "fallback-ok")
-                proc2.stdin.close()
-                proc2.wait(timeout=5)
-                self.assertEqual(proc2.returncode, 0)
-            finally:
-                proc2.stdout.close()
-                proc2.stderr.close()
+            (bin_dir / "dmesg").write_text(
+                '#!/bin/sh\nprintf "[    1.234567] fki: darwin console: fallback-ok\\r\\n"\n',
+                encoding="utf-8",
+            )
+            for name in ("sudo", "journalctl", "dmesg"):
+                os.chmod(bin_dir / name, 0o755)
+
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "CONSOLE_IN": str(console_in),
+                "SYSTEMD_RUNTIME_DIR": str(systemd_dir),
+                "JOURNALD_CONF_DIR": str(conf_dir),
+            }
+
+            # Base config ends in [Journal], followed by headerless and non-[Journal] drop-ins:
+            # section state must reset per file so ReadKMsg=no outside [Journal] is ignored.
+            (conf_dir / "journald.conf").write_text("[Journal]\nReadKMsg=yes\n", encoding="utf-8")
+            (dropin_dir / "10-headerless.conf").write_text("ReadKMsg=no\n", encoding="utf-8")
+            (dropin_dir / "20-other-section.conf").write_text(
+                "[Other]\nReadKMsg=no\n", encoding="utf-8"
+            )
+            self.assertEqual(self._run_console_local(env).strip(), "journal-ok")
+
+            # Valid [Journal] ReadKMsg=no takes effect; invalid boolean later does not undo it.
+            (dropin_dir / "30-disable.conf").write_text(
+                "[Journal]\nReadKMsg=no\n", encoding="utf-8"
+            )
+            (dropin_dir / "40-invalid.conf").write_text(
+                "[Journal]\nReadKMsg=bogus\n", encoding="utf-8"
+            )
+            self.assertEqual(self._run_console_local(env).strip(), "fallback-ok")
+
+            # Later valid [Journal] ReadKMsg=yes overrides earlier ReadKMsg=no.
+            (dropin_dir / "50-reenable.conf").write_text(
+                "[Journal]\nReadKMsg=yes\n", encoding="utf-8"
+            )
+            self.assertEqual(self._run_console_local(env).strip(), "journal-ok")
+
+            # Also verify systemd-analyze cat-config path resets section state on file headers.
+            (bin_dir / "systemd-analyze").write_text(
+                '#!/bin/sh\n'
+                'cat <<\'EOF\'\n'
+                '# /etc/systemd/journald.conf\n'
+                '[Journal]\n'
+                'ReadKMsg=yes\n'
+                '\n'
+                '# /etc/systemd/journald.conf.d/10-headerless.conf\n'
+                'ReadKMsg=no\n'
+                'EOF\n',
+                encoding="utf-8",
+            )
+            os.chmod(bin_dir / "systemd-analyze", 0o755)
+            analyze_env = {**env, "JOURNALD_CONF_DIR": "/etc/systemd"}
+            self.assertEqual(self._run_console_local(analyze_env).strip(), "journal-ok")
+
+    def test_console_local_read_times_out_cleanly_on_filtered_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = pathlib.Path(tmp) / "bin"
+            systemd_dir = pathlib.Path(tmp) / "systemd"
+            conf_dir = pathlib.Path(tmp) / "etc-systemd"
+            bin_dir.mkdir()
+            systemd_dir.mkdir()
+            conf_dir.mkdir()
+            console_in = pathlib.Path(tmp) / "console-in"
+            console_in.touch()
+
+            # Simulate journalctl emitting only non-console lines so sed filters everything out.
+            (bin_dir / "sudo").write_text('#!/bin/sh\nexec "$@"\n', encoding="utf-8")
+            (bin_dir / "journalctl").write_text(
+                '#!/bin/sh\necho "[    0.000000] stale boot log"\n', encoding="utf-8"
+            )
+            (bin_dir / "dmesg").write_text('#!/bin/sh\nexit 0\n', encoding="utf-8")
+            for name in ("sudo", "journalctl", "dmesg"):
+                os.chmod(bin_dir / name, 0o755)
+
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "CONSOLE_IN": str(console_in),
+                "SYSTEMD_RUNTIME_DIR": str(systemd_dir),
+                "JOURNALD_CONF_DIR": str(conf_dir),
+            }
+            with self.assertRaisesRegex(AssertionError, "timed out"):
+                self._run_console_local(env, timeout=0.3)
 
 
 if __name__ == "__main__":

@@ -11,8 +11,19 @@
 #endif
 
 #define XNU_X86_U32_LIMIT ((xnu_boot_u64)0xffffffffU)
+#define XNU_X86_U32_END   (XNU_X86_U32_LIMIT + 1)
 
-static int range_fits_u32(xnu_boot_u64 start, xnu_boot_u64 size)
+/* A u32 physical base plus a u32 length may end exactly at 4 GiB. */
+static int pa_range_fits_u32(xnu_boot_u64 start, xnu_boot_u64 size)
+{
+	if (!start || !size || start > XNU_X86_U32_LIMIT ||
+	    size > XNU_X86_U32_END - start)
+		return 0;
+	return 1;
+}
+
+/* Tahoe XNU adds kaddr + ksize in uint32_t before widening the result. */
+static int kernel_range_fits_u32(xnu_boot_u64 start, xnu_boot_u64 size)
 {
 	if (!start || !size || start > XNU_X86_U32_LIMIT ||
 	    size > XNU_X86_U32_LIMIT - start)
@@ -48,10 +59,10 @@ int xnu_x86_boot_args_validate(const struct xnu_x86_boot_args *args)
 	    args->MemoryMapSize % args->MemoryMapDescriptorSize)
 		return -ENOEXEC;
 	map_end = (xnu_boot_u64)args->MemoryMap + args->MemoryMapSize;
-	if (map_end > XNU_X86_U32_LIMIT)
+	if (map_end > XNU_X86_U32_END)
 		return -ERANGE;
-	if (!range_fits_u32(args->deviceTreeP, args->deviceTreeLength) ||
-	    !range_fits_u32(args->kaddr, args->ksize))
+	if (!pa_range_fits_u32(args->deviceTreeP, args->deviceTreeLength) ||
+	    !kernel_range_fits_u32(args->kaddr, args->ksize))
 		return -ERANGE;
 	if (args->bootMemStart > ~(xnu_boot_u64)0 - args->bootMemSize)
 		return -ERANGE;
@@ -66,9 +77,9 @@ int xnu_x86_boot_args_build_core(struct xnu_x86_boot_args *out,
 	if (!out || !in || !in->command_line ||
 	    in->command_line_length >= XNU_X86_BOOT_ARGS_COMMAND_LINE_SIZE)
 		return -EINVAL;
-	if (!range_fits_u32(in->memory_map_pa, in->memory_map_size) ||
-	    !range_fits_u32(in->device_tree_pa, in->device_tree_size) ||
-	    !range_fits_u32(in->kernel_pa, in->kernel_size))
+	if (!pa_range_fits_u32(in->memory_map_pa, in->memory_map_size) ||
+	    !pa_range_fits_u32(in->device_tree_pa, in->device_tree_size) ||
+	    !kernel_range_fits_u32(in->kernel_pa, in->kernel_size))
 		return -ERANGE;
 	if (in->memory_map_size > XNU_X86_U32_LIMIT ||
 	    in->memory_map_descriptor_size > XNU_X86_U32_LIMIT ||

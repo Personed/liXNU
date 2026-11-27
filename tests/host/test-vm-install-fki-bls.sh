@@ -152,10 +152,16 @@ run_installer() {
     "$INSTALLER" "$@"
 }
 
-setup_case x86-preview 'root=UUID=fixture ro quiet'
-FIXTURE_HOST='Linux x86_64' run_installer --dry-run >"$CASE_DIR/out" 2>&1
-grep -Fq 'fki.ko args: carve_base=0x200000000 carve_mb=8156' "$CASE_DIR/out"
-[[ ! -e "$CASE_LOG" && ! -e "$CASE_UNIT" && ! -e "$CASE_SYSCTL_LOG" ]]
+for preview in --dry-run --print; do
+  setup_case "x86-preview-${preview#--}" 'root=UUID=fixture ro quiet'
+  FIXTURE_HOST='Linux x86_64' run_installer "$preview" >"$CASE_DIR/out" 2>&1
+  grep -Fq 'fki.ko args: carve_base=0x200000000 carve_mb=8156' "$CASE_DIR/out"
+  if [[ -e "$CASE_DROPIN_DIR/99-xnulinux.cfg" || -e "$CASE_LOG" || -e "$CASE_UPDATE_GRUB_LOG" ||
+        -e "$CASE_UNIT" || -e "$CASE_SYSCTL_LOG" ]]; then
+    printf '%s modified bootloader or systemd configuration\n' "$preview" >&2
+    exit 1
+  fi
+done
 
 # 1. Valid RHEL 9-style BLS entry with grubby only in sudo's secure PATH -> installs service
 setup_case good 'root=UUID=fixture ro quiet'

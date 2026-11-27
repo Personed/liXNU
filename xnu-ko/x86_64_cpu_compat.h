@@ -6,6 +6,10 @@
  * xnu-12377.121.6 (ac9718fb1af618d5ce8678d0dc6e8a58f252216f),
  * osfmk/i386/cpuid.h and cpuid.c. These checks describe this public source
  * pin; they do not prove compatibility with the unbuilt Tahoe 26.7.3 (25G342) image.
+ * Kernel capture must keep all CPUID leaves and Linux capability state on one
+ * pinned CPU. The result is that CPU's coherent eligibility snapshot, not an
+ * intersection across heterogeneous processors; XNU CPU bring-up remains
+ * unsupported until a separate all-CPU contract exists.
  */
 #ifdef __KERNEL__
 #include <linux/types.h>

@@ -10,6 +10,7 @@
 #include <linux/errno.h>
 #include <linux/module.h>
 #include <linux/printk.h>
+#include <linux/smp.h>
 #include <linux/types.h>
 #include <asm/cpufeature.h>
 #include <asm/processor.h>
@@ -40,8 +41,14 @@ static void xnu_read_cpu_profile(struct xnu_x86_cpu_profile *profile)
 	u32 max_basic, max_extended;
 	u32 base_family, base_model, extended_family, extended_model;
 	unsigned int i;
+	int cpu;
 
 	memset(profile, 0, sizeof(*profile));
+	/* Keep every raw CPUID leaf and Linux's enabled-feature view on one
+	 * coherent CPU snapshot. This validates the CPU that ran module init;
+	 * it is not an intersection across heterogeneous APs. XNU remains
+	 * fail-closed before any CPU bring-up contract exists. */
+	cpu = get_cpu();
 	cpuid(0, &eax, &ebx, &ecx, &edx);
 	max_basic = eax;
 	memcpy(profile->vendor, &ebx, 4);
@@ -91,9 +98,10 @@ static void xnu_read_cpu_profile(struct xnu_x86_cpu_profile *profile)
 	}
 	/* Respect Linux's disabled/cleared feature view as well as raw CPUID. */
 	for (i = 0; i < ARRAY_SIZE(xnu_required_cpu_features); i++)
-		if (boot_cpu_has(xnu_required_cpu_features[i].bit))
+		if (cpu_has(&cpu_data(cpu), xnu_required_cpu_features[i].bit))
 			profile->linux_enabled_x86_64h_features |=
 				xnu_required_cpu_features[i].profile_mask;
+	put_cpu();
 }
 
 static int xnu_cpu_preflight(char *missing, size_t missing_size)

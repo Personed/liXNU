@@ -18,6 +18,7 @@ The following requirements apply only to the separate native port; they are not 
 - Establish a safe Linux/XNU execution boundary before running foreign kernel code. Verify Linux register, floating-point, exception, syscall, and memory state through entry, return, fault recovery, and shutdown.
 - Use user-provided Tahoe 26 artifacts that match the selected XNU build. Do not add Apple system images, firmware, or local secrets to Git or logs.
 - Measure Intel and AMD requirements independently. Record the tested Linux kernel, CPU features, memory, page size, XNU build, and furthest boot stage. A QEMU/KVM macOS guest or TCG ARM64 guest does not establish the native module port.
+- The native x86 fail-closed CPU-profile VM test requires QEMU 8.2 or newer: QEMU 6.2 TCG does not expose FMA/AVX for the Haswell profile. The test script checks the installed version and reports a clear error below this floor. This is test tooling only and does not claim native runtime support.
 - Keep user-visible support tables precise: ARM64 direct hosted XNU is the existing supported path; x86_64 native hosting remains a separate experiment until its own target and host-integrity checks pass.
 
 ## Active QEMU TCG and PureDarwin acceptance path

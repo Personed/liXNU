@@ -13,6 +13,22 @@ REPO=$(cd "$(dirname "$0")/../.." && pwd)
 for tool in apt-get cat chmod cpio dpkg-deb find grep gzip install mkdir mktemp mknod qemu-system-x86_64 rm sort sudo timeout; do
   command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
+if ! QEMU_VERSION_OUTPUT=$(qemu-system-x86_64 --version 2>&1); then
+  echo "unable to determine qemu-system-x86_64 version" >&2
+  exit 1
+fi
+if [[ ! $QEMU_VERSION_OUTPUT =~ [Vv]ersion[[:space:]]+([0-9]+)\.([0-9]+) ]]; then
+  echo "unable to parse qemu-system-x86_64 version: $QEMU_VERSION_OUTPUT" >&2
+  exit 1
+fi
+QEMU_MAJOR=${BASH_REMATCH[1]}
+QEMU_MINOR=${BASH_REMATCH[2]}
+QEMU_VERSION="$QEMU_MAJOR.$QEMU_MINOR"
+if (( QEMU_MAJOR < 8 || (QEMU_MAJOR == 8 && QEMU_MINOR < 2) )); then
+  echo "QEMU >= 8.2 is required for the Haswell TCG AVX/FMA preflight; older TCG versions (including 6.2) may omit these flags (detected $QEMU_VERSION)" >&2
+  exit 1
+fi
+echo "Using QEMU $QEMU_VERSION for the x86 fail-closed VM preflight" >&2
 KERNEL_RELEASE=$(cat "$KDIR/include/config/kernel.release")
 test -n "$KERNEL_RELEASE" || { echo "kernel release metadata is missing from KDIR" >&2; exit 1; }
 STAGE=$(mktemp -d)

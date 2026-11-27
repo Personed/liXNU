@@ -58,7 +58,8 @@
 #define BPX_OFF_REC_SCRATCH_RBX   240
 #define BPX_OFF_REC_SCRATCH_RCX   248
 #define BPX_OFF_REC_SCRATCH_RDX   256
-#define BPX_SIZE                  264
+#define BPX_OFF_FAULT_ADDRESS   264
+#define BPX_SIZE                  272
 
 #define BPX_MAGIC                 0x4250584552434f4eULL
 #define BPX_STATE_ARMED             1

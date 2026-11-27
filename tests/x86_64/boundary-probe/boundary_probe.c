@@ -14,6 +14,7 @@
 #include <linux/sched/task_stack.h>
 #include <linux/smp.h>
 #include <linux/uaccess.h>
+#include <linux/vmalloc.h>
 #include <linux/workqueue.h>
 #include <asm/cpufeature.h>
 #include <asm/desc.h>
@@ -80,6 +81,7 @@ struct bp_exception_control {
 	u64 proof_flags;
 	u64 fault_scratch[4];
 	u64 recovery_scratch[4];
+	u64 fault_address;
 };
 
 struct bp_host_snapshot {
@@ -124,6 +126,7 @@ static_assert(offsetof(struct bp_exception_control, readback_desc) == BPX_OFF_RE
 static_assert(offsetof(struct bp_exception_control, terminal_code) == BPX_OFF_TERMINAL_CODE);
 static_assert(offsetof(struct bp_exception_control, fault_scratch) == BPX_OFF_FAULT_SCRATCH_RAX);
 static_assert(offsetof(struct bp_exception_control, recovery_scratch) == BPX_OFF_REC_SCRATCH_RAX);
+static_assert(offsetof(struct bp_exception_control, fault_address) == BPX_OFF_FAULT_ADDRESS);
 static_assert(BP_MODE_EXCEPTION_PF == X86_BOUNDARY_PROBE_MODE_EXCEPTION_PF);
 static_assert(BP_MODE_EXCEPTION_GP == X86_BOUNDARY_PROBE_MODE_EXCEPTION_GP);
 static_assert(BPX_RECOVERY_LOW_CANARY == BP_STACK_LOW_CANARY);
@@ -285,7 +288,15 @@ static int bp_prepare_exception(unsigned int mode,
 
 	WRITE_ONCE(*low_canary, BPX_RECOVERY_LOW_CANARY);
 	WRITE_ONCE(*high_canary, BPX_RECOVERY_HIGH_CANARY);
-	memset(control, 0, sizeof(*control));
+	{
+		u8 probe_byte;
+		void *fault_address = (void *)(recovery_base + PAGE_SIZE);
+
+		if (!copy_from_kernel_nofault(&probe_byte, fault_address, sizeof(probe_byte)))
+			return -EOPNOTSUPP;
+		memset(control, 0, sizeof(*control));
+		control->fault_address = (unsigned long)fault_address;
+	}
 	control->magic = BPX_MAGIC;
 	control->state = BPX_STATE_DISARMED;
 	control->expected_vector = mode == X86_BOUNDARY_PROBE_MODE_EXCEPTION_PF ?
@@ -372,7 +383,8 @@ static bool bp_exception_valid(const struct bp_exception_control *control,
 	    READ_ONCE(*high) != BPX_RECOVERY_HIGH_CANARY)
 		return false;
 	if (expected_vector == X86_TRAP_PF)
-		return control->fault_cr2 == 0 && (control->fault_error & 0x7) == 0;
+		return control->fault_cr2 == control->fault_address &&
+	       (control->fault_error & 0x7) == 0;
 	return control->fault_error == 0;
 }
 
@@ -383,7 +395,8 @@ static long bp_run_on_cpu(void *arg)
 	struct bp_asm_result result = {};
 	unsigned long irq_flags;
 	unsigned long stack_base, stack_limit;
-	struct page *stack_page, *shadow_page = NULL, *recovery_page = NULL;
+	struct page *stack_page, *shadow_page = NULL;
+	void *recovery_area = NULL;
 	unsigned long stack_top;
 	unsigned long recovery_base = 0;
 	void *shadow_idt = NULL;
@@ -397,13 +410,13 @@ static long bp_run_on_cpu(void *arg)
 	if (!stack_page)
 		return -ENOMEM;
 	shadow_page = alloc_page(GFP_KERNEL | __GFP_ZERO);
-	recovery_page = alloc_page(GFP_KERNEL | __GFP_ZERO);
-	if (!shadow_page || !recovery_page) {
+	recovery_area = vmalloc(PAGE_SIZE);
+	if (!shadow_page || !recovery_area) {
 		ret = -ENOMEM;
 		goto out_free;
 	}
 	shadow_idt = page_address(shadow_page);
-	recovery_base = (unsigned long)page_address(recovery_page);
+	recovery_base = (unsigned long)recovery_area;
 	stack_base = (unsigned long)page_address(stack_page);
 	stack_limit = stack_base + BP_STACK_SIZE;
 	low_canary = (u64 *)stack_base;
@@ -495,8 +508,8 @@ out_restore:
 out_free:
 	if (shadow_page)
 		__free_page(shadow_page);
-	if (recovery_page)
-		__free_page(recovery_page);
+	if (recovery_area)
+		vfree(recovery_area);
 	__free_pages(stack_page, BP_STACK_ORDER);
 	if (ret)
 		return ret;

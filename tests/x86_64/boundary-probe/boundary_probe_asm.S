@@ -126,7 +126,7 @@ SYM_FUNC_START(x86_boundary_probe_inner)
 	movq $14, BPX_OFF_EXPECTED_VECTOR(%rax)
 	movq $BPX_STATE_ARMED, BPX_OFF_STATE(%rax)
 	lidt BPX_OFF_SHADOW_DESC(%rax)
-	xorl %eax, %eax
+	movq BPX_OFF_FAULT_ADDRESS(%rax), %rax
 .Lpf_fault_instruction:
 	movb (%rax), %al
 	jmp .Lpost_exception_injection

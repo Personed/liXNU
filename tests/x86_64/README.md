@@ -78,7 +78,7 @@ compare its before/after value. The shim entry uses the SysV 16-byte stack rule;
 for bounds and restoration without imposing that user ABI on internal kernel calls. Userspace captures and compares
 the full standard XSAVE image for all XCR0-enabled user components around the raw ioctl syscall. The probe deliberately
 seeds and overwrites x87 ST(0), the x87 control word, MXCSR, and YMM0–YMM7. Other enabled user components have passive
-before/after comparison. The exception modes replace only the #PF/#GP gates in the copied table, record vector/RIP/error/CR2/frame metadata,
+before/after comparison. The #PF injection reads the guard byte after a vmalloc recovery allocation only after a nofault probe rejects a readable mapping. The exception modes replace the #PF/#GP gates in the copied table, record vector/RIP/error/CR2/frame metadata,
 recover once through a separate recovery stack, restore and reread the original IDTR, and verify envelope RSP/canary
 proof bits before C-level validation. The test also checks Linux syscalls before and after each ioctl. The VM must unload both modules and
 power off cleanly. TCG runs on every CI attempt; the script adds a KVM run when

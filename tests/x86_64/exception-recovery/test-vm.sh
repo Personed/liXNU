@@ -109,6 +109,8 @@ insmod /x86-exception-recovery.ko
 dmesg -n 5
 /exception-recovery-test 0
 /exception-recovery-test 1
+# Replay the buffered probe details once the marker lines have been written.
+dmesg | grep -F 'x86-exception-recovery:' || true
 dmesg -n 7
 rmmod x86_exception_recovery
 test ! -e /sys/module/x86_exception_recovery

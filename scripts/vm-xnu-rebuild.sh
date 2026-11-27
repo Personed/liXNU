@@ -63,8 +63,9 @@ if [ -e "$APPLE_KC" ]; then
     echo "kernel slots moved: linking the kernel again"
     JOBS="${JOBS:-12}" bash k27/build-kernel27.sh 2>&1 | tee out/k27/xnulinux-relink.log | tail -15
   fi
-elif [ "${BUILD_NATIVE_KEXTS:-0}" = 1 ]; then
-  # A source-built collection has no Apple kernelcache to define segment slots. Fit them to the kernel's __TEXT_EXEC.
+else
+  # A source-built collection has no Apple kernelcache to define segment slots. Fit them to the kernel's __TEXT_EXEC,
+  # regardless of whether this rebuild also adds the project's native PureDarwin kexts.
   fit_log=out/k27/kernel-slot-fit.log
   python3 "$POC/scripts/free-kc/fit_kernel_segments.py" out/k27/kernel-k27.macho k27/segaddrs.sh 2>&1 | tee "$fit_log"
   if grep -q '^relink kernel:' "$fit_log"; then

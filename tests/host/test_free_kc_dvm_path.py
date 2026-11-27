@@ -371,6 +371,7 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                 kernel_builder.write_text(
                     "#!/bin/sh\n"
                     "mkdir -p out/k27\n"
+                    "printf 'build\\n' >> \"$BUILD_CAPTURE\"\n"
                     "printf 'fixture kernel\\n' > out/k27/kernel-k27.macho\n",
                     encoding="utf-8",
                 )
@@ -391,6 +392,12 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                 python = fake_bin / "python3"
                 python.write_text(
                     "#!/bin/sh\n"
+                    "if [ \"$1\" = \"$POC/scripts/free-kc/fit_kernel_segments.py\" ]; then\n"
+                    "  printf '%s\\n' \"$2\" >> \"$FIT_CAPTURE\"\n"
+                    "  [ \"${2:-}\" = --check ] && exit 0\n"
+                    "  echo 'relink kernel: fixture layout changed'\n"
+                    "  exit 0\n"
+                    "fi\n"
                     "[ \"$1\" = scripts/build-native-kext.py ] || exit 88\n"
                     "printf 'CALL\\0' >> \"$KEXT_CAPTURE\"\n"
                     "printf '%s\\0' \"$@\" >> \"$KEXT_CAPTURE\"\n"
@@ -410,16 +417,23 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
 
                 capture = root / "kext-builds.txt"
                 capture.touch()
+                fit_capture = root / "segment-fit-calls.txt"
+                fit_capture.touch()
+                build_capture = root / "kernel-build-calls.txt"
+                build_capture.touch()
                 env = os.environ.copy()
                 env.update(
                     {
+                        "BUILD_CAPTURE": str(build_capture),
                         "DVM": str(dvm),
+                        "FIT_CAPTURE": str(fit_capture),
                         "KEXT_CAPTURE": str(capture),
                         "KEXT_OBJ": "objects with spaces",
                         "PATH": str(fake_bin) + os.pathsep + env["PATH"],
                         "POC": str(poc),
                     }
                 )
+                env.pop("BUILD_NATIVE_KEXTS", None)
                 if fail_kext is None:
                     env.pop("FAIL_KEXT", None)
                 else:
@@ -438,7 +452,9 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                     [value.decode() for value in call.split(b"\0") if value]
                     for call in capture.read_bytes().split(b"CALL\0")[1:]
                 ]
-                return result, calls, poc
+                fit_calls = fit_capture.read_text(encoding="utf-8").splitlines()
+                build_calls = build_capture.read_text(encoding="utf-8").splitlines()
+                return result, calls, poc, fit_calls, build_calls
 
         def expected_kext_args(poc, name):
             return [
@@ -451,15 +467,19 @@ class FreeKernelCollectionPathTest(unittest.TestCase):
                 "objects with spaces",
             ]
 
-        result, calls, poc = run_rebuild()
+        result, calls, poc, fit_calls, build_calls = run_rebuild()
         self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(fit_calls, ["out/k27/kernel-k27.macho", "--check"])
+        self.assertEqual(build_calls, ["build", "build"])
         self.assertEqual(
             calls,
             [expected_kext_args(poc, name) for name in ("XnuCPU", "XnuDisk", "XnuDrm")],
         )
 
-        result, calls, poc = run_rebuild(fail_kext="XnuDisk")
+        result, calls, poc, fit_calls, build_calls = run_rebuild(fail_kext="XnuDisk")
         self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(fit_calls, ["out/k27/kernel-k27.macho", "--check"])
+        self.assertEqual(build_calls, ["build", "build"])
         self.assertEqual(
             calls,
             [expected_kext_args(poc, name) for name in ("XnuCPU", "XnuDisk")],

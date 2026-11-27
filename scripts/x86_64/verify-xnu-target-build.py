@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import os
 import pathlib
@@ -42,8 +43,22 @@ class ValidationError(Exception):
     pass
 
 
-def canonical(path: str | pathlib.Path) -> pathlib.Path:
+@functools.lru_cache(maxsize=None)
+def canonical_cached(path: str) -> pathlib.Path:
     return pathlib.Path(os.path.realpath(path))
+
+
+def canonical(path: str | pathlib.Path) -> pathlib.Path:
+    return canonical_cached(str(path))
+
+
+@functools.lru_cache(maxsize=None)
+def is_file_cached(path: str) -> bool:
+    return pathlib.Path(path).is_file()
+
+
+def path_is_file(path: pathlib.Path) -> bool:
+    return is_file_cached(str(path))
 
 
 def classify_source(tokens: list[str], source: str) -> tuple[str, str]:
@@ -231,11 +246,14 @@ def dependency_entries(path: pathlib.Path) -> list[str]:
 
 
 def path_is_within(path: pathlib.Path, root: pathlib.Path) -> bool:
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False
+    # The verifier walks large compiler dependency closures. Compare canonical
+    # path strings directly instead of constructing pathlib relatives for each
+    # entry; both inputs have already been resolved to absolute canonical paths.
+    path_string = os.fspath(path)
+    root_string = os.fspath(root)
+    if root_string == os.sep:
+        return path_string.startswith(os.sep)
+    return path_string == root_string or path_string.startswith(root_string + os.sep)
 
 
 def resolve_dependency(token: str, depfile: pathlib.Path, source_root: pathlib.Path, objroot: pathlib.Path,
@@ -252,7 +270,7 @@ def resolve_dependency(token: str, depfile: pathlib.Path, source_root: pathlib.P
     ]
     for candidate in candidates:
         resolved = canonical(candidate)
-        if resolved.is_file():
+        if path_is_file(resolved):
             return resolved
     return canonical(candidates[0])
 
@@ -266,14 +284,14 @@ def resolve_depfile(token: str, objroot: pathlib.Path, source_root: pathlib.Path
     direct_candidates = [command_directory / raw, pathlib.Path.cwd() / raw, source_root / raw, objroot / raw]
     for candidate in direct_candidates:
         resolved = canonical(candidate)
-        if resolved.is_file():
+        if path_is_file(resolved):
             return resolved
 
     # XNU's -MF value is commonly relative to the object directory in which
     # Make invoked clang. Recover it under OBJROOT and prefer the path matching
     # the source's directory suffix if basenames are reused in several trees.
     if raw.name not in depfiles_by_name:
-        depfiles_by_name[raw.name] = [canonical(path) for path in objroot.rglob(raw.name) if path.is_file()]
+        depfiles_by_name[raw.name] = [canonical(path) for path in objroot.rglob(raw.name) if path_is_file(path)]
     matches = depfiles_by_name[raw.name]
     if len(matches) == 1:
         return matches[0]
@@ -403,7 +421,7 @@ def verify(log_path: pathlib.Path, objroot: pathlib.Path, sdk_root: pathlib.Path
         raise ValidationError(f"XNU target clang commands lack -MF dependency files: {commands_without_depfile[:10]}")
     if any(excluded_search_paths.values()):
         raise ValidationError(f"XNU target commands still search excluded generic SDK roots: {excluded_search_paths}")
-    missing_depfiles = [path for path in dependency_files if not path.is_file()]
+    missing_depfiles = [path for path in dependency_files if not path_is_file(path)]
     if missing_depfiles:
         raise ValidationError(f"XNU target clang dependency files are missing: {missing_depfiles[:10]}")
     if not dependency_files:
@@ -416,7 +434,7 @@ def verify(log_path: pathlib.Path, objroot: pathlib.Path, sdk_root: pathlib.Path
         for token in dependency_entries(depfile):
             resolved = resolve_dependency(token, depfile, source_root, objroot, command_directory)
             dependency_entries_seen.append((depfile, token, resolved))
-            if not resolved.is_file():
+            if not path_is_file(resolved):
                 missing_dependencies.append((depfile, token, resolved))
             for name, roots in excluded_paths.items():
                 if any(path_is_within(resolved, root) for root in roots):

@@ -557,6 +557,10 @@ ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 required_sources = ("kextsymboltool.c", "mkheaders.c")
 commands = {source: [] for source in required_sources}
 for raw_line in log_path.read_text(errors="replace").splitlines():
+    # The verbose XNU log can contain millions of lines. Only the pinned
+    # host-tool command lines need shell parsing; avoid shlex on every line.
+    if not any(source in raw_line for source in required_sources):
+        continue
     line = ansi.sub("", raw_line)
     try:
         tokens = shlex.split(line)

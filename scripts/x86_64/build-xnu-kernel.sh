@@ -296,11 +296,14 @@ verify_trustcache_header() {
       sdk_header_scan_status=$?
     fi
     if (( sdk_header_scan_status != 0 )); then
+      if (( sdk_header_scan_status == 2 )); then
+        if (( CHECK_ONLY )); then
+          fail 'cannot create the TrustCache SDK scan workspace in check mode; the SDK scan did not start and no absence claim is made'
+        fi
+        fail 'cannot create the TrustCache SDK scan workspace in build mode'
+      fi
       if (( CHECK_ONLY )); then
         fail 'full Xcode SDK TrustCache header scan failed; candidate and error contents are printed above before temporary files are removed, so no absence claim is made'
-      fi
-      if (( sdk_header_scan_status == 2 )); then
-        fail 'cannot create the TrustCache SDK scan workspace in build mode'
       fi
       fail "full Xcode SDK TrustCache header scan failed; no absence claim is made (candidate list: $XNU_TRUSTCACHE_SCAN_CANDIDATES_FILE; errors: $XNU_TRUSTCACHE_SCAN_ERRORS_FILE)"
     fi

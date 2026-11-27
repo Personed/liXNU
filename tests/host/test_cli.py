@@ -85,6 +85,7 @@ class TestCliAndInstaller(unittest.TestCase):
             fake_uname.write_text('#!/bin/sh\nprintf "%s\\n" "$TEST_HOST"\n', encoding="utf-8")
             fake_uname.chmod(0o755)
             sudo_log = shim / "sudo.log"
+            module_check_log = shim / "module-check.log"
             console_in = shim / "console-in"
             fake_sudo = shim / "sudo"
             fake_sudo.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$TEST_SUDO_LOG"\nexit 99\n', encoding="utf-8")
@@ -93,7 +94,10 @@ class TestCliAndInstaller(unittest.TestCase):
             # Simulate an idle ARM64 host without consulting the test runner's modules.
             bash_env.write_text(
                 '[() {\n'
-                '  if [[ "$*" == "-d /sys/module/xnu ]" ]]; then return 1; fi\n'
+                '  if [[ "$*" == "! -d /sys/module/xnu ]" ]]; then\n'
+                '    : > "$TEST_MODULE_CHECK_LOG"\n'
+                '    return 0\n'
+                '  fi\n'
                 '  builtin [ "$@"\n'
                 '}\n',
                 encoding="utf-8",
@@ -102,6 +106,7 @@ class TestCliAndInstaller(unittest.TestCase):
                 **os.environ,
                 "PATH": f"{shim}{os.pathsep}{os.environ.get('PATH', '')}",
                 "TEST_SUDO_LOG": str(sudo_log),
+                "TEST_MODULE_CHECK_LOG": str(module_check_log),
                 "CONSOLE_IN": str(console_in),
                 "BASH_ENV": str(bash_env),
             }
@@ -117,6 +122,7 @@ class TestCliAndInstaller(unittest.TestCase):
                         self.assertEqual(result.returncode, 1, result)
                         self.assertIn(f"requires ARM64 Linux for direct hosted XNU (detected {host})", result.stderr)
                         self.assertFalse(sudo_log.exists())
+                        self.assertFalse(module_check_log.exists())
                         self.assertFalse(console_in.exists())
 
             for command in (CLI, DIRECT_BOOT):
@@ -130,8 +136,10 @@ class TestCliAndInstaller(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result)
                     self.assertIn("no hosted system is running", result.stdout)
                     self.assertEqual(sudo_log.read_text(encoding="utf-8").splitlines(), ["systemctl stop xnudrmd"])
+                    self.assertTrue(module_check_log.exists())
                     self.assertFalse(console_in.exists())
                     sudo_log.unlink()
+                    module_check_log.unlink()
 
     def test_install_relative_prefix_and_uninstall(self):
         with tempfile.TemporaryDirectory() as tmp:

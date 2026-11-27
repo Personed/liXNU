@@ -284,6 +284,9 @@ def verify_system_volume_audit():
             b"<?xml version='1.0'?><plist><key>ProductVersion</key></plist>",
             b"<?xml version='1.0'?><plist><dict><key>date</key><date>invalid</date></dict></plist>",
             plist.replace(b'<plist version="1.0">', b'<plist version="1.0"><string>extra</string>'),
+            plist.replace(b"</dict>", b"<extra/></dict>"),
+            plist.replace(b"</dict>", b"<key>a</key><array><extra/></array></dict>"),
+            plist.replace(b"</dict>", b"<key>ProductVersion</key><string>26.7.3</string></dict>"),
         ):
             version.write_bytes(invalid)
             rejected = run_audit(1)

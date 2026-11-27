@@ -82,14 +82,34 @@ def inspect_collection(root, collection_report):
             raise AuditError("unable to run the fileset inspector") from error
 
 
+def validate_xml_plist_shape(data):
+    envelope = ElementTree.fromstring(data)
+    if envelope.tag != "plist" or len(envelope) != 1 or envelope[0].tag != "dict":
+        raise ValueError("expected a single plist dictionary")
+    pending = [envelope[0]]
+    scalars = {"string", "data", "date", "real", "integer", "true", "false"}
+    while pending:
+        value = pending.pop()
+        if value.tag == "array":
+            pending.extend(value)
+        elif value.tag == "dict":
+            children = list(value)
+            keys, values = children[::2], children[1::2]
+            if len(keys) != len(values) or any(key.tag != "key" or len(key) for key in keys):
+                raise ValueError("expected alternating plist keys and values")
+            if len({key.text or "" for key in keys}) != len(keys):
+                raise ValueError("duplicate plist dictionary key")
+            pending.extend(values)
+        elif value.tag not in scalars or len(value):
+            raise ValueError("invalid plist value element")
+
+
 def decode_version_plist(data):
     try:
         # plistlib also rejects entity declarations before we check the XML envelope.
         product = plistlib.loads(data)
         if not data.startswith(b"bplist00"):
-            envelope = ElementTree.fromstring(data)
-            if envelope.tag != "plist" or len(envelope) != 1 or envelope[0].tag != "dict":
-                raise ValueError("expected a single plist dictionary")
+            validate_xml_plist_shape(data)
     except (ValueError, ExpatError, ElementTree.ParseError, AttributeError,
             IndexError, TypeError, OverflowError, RecursionError) as error:
         raise AuditError("invalid SystemVersion.plist") from error

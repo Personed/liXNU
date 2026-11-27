@@ -41,6 +41,16 @@ struct xnu_macho_x86_64_segment {
 	xnu_macho_u16 chained_page_count;
 };
 
+/* File offsets are relative to the complete collection. */
+struct xnu_macho_x86_64_fixup_extent {
+	xnu_macho_u64 linkedit_vmaddr;
+	xnu_macho_u64 linkedit_vmsize;
+	xnu_macho_u64 linkedit_fileoff;
+	xnu_macho_u64 linkedit_filesize;
+	xnu_macho_u32 dataoff;
+	xnu_macho_u32 datasize; /* Zero when the command is absent. */
+};
+
 struct xnu_macho_x86_64_info {
 	xnu_macho_u64 vm_low;
 	xnu_macho_u64 vm_high;
@@ -65,15 +75,23 @@ struct xnu_macho_x86_64_info {
 	xnu_macho_u32 kernel_entry_cpusubtype;
 	xnu_macho_u32 kernel_entry_ncmds;
 	xnu_macho_u32 kernel_entry_sizeofcmds;
+	xnu_macho_u32 kernel_entry_segment_count;
 	xnu_macho_u64 kernel_entry_vmaddr;
 	xnu_macho_u64 kernel_entry_fileoff;
+	struct xnu_macho_x86_64_fixup_extent fileset_fixups;
+	struct xnu_macho_x86_64_fixup_extent kernel_entry_fixups;
+	/* Filesets index this array with kernel_entry_segment_count only. */
 	struct xnu_macho_x86_64_segment segments[XNU_MACHO_X86_64_MAX_SEGMENTS];
 };
 
 /*
  * Return 0 for the metadata inspection subset, including bounded outer and
  * embedded MH_FILESET header/load-command framing for exactly one
- * com.apple.kernel entry. Fileset metadata is not validated for loading.
+ * com.apple.kernel entry. Fileset segment extents are checked against the
+ * complete collection. Each chained-fixups command, if present, must fit
+ * within the file and VM range of the same header's unique __LINKEDIT.
+ * Fileset fixup bytes, section payloads and file/member ownership are not
+ * validated. segment_count and mapped_segment_count stay zero for filesets.
  * Return -EOPNOTSUPP for a required command, ABI, segment count, page size, or
  * pointer format outside that subset and -ENOEXEC for malformed input. The
  * output contains at most XNU_MACHO_X86_64_MAX_SEGMENTS descriptors in Mach-O
@@ -96,3 +114,16 @@ struct xnu_macho_x86_64_info {
  */
 int xnu_macho_x86_64_parse(const void *file, unsigned long file_size,
 			   struct xnu_macho_x86_64_info *out);
+
+#ifndef __KERNEL__
+/*
+ * Inspect the standalone XNU __HIB,__text entry variant in userspace.
+ * Report its file offset after finding exactly one file-backed __text
+ * section marked S_ATTR_PURE_INSTRUCTIONS under a read-write __HIB segment.
+ * The regular parser still requires an executable segment. Results describe
+ * artifact metadata only.
+ */
+int xnu_macho_x86_64_inspect_hib_entry(const void *file, unsigned long file_size,
+				     struct xnu_macho_x86_64_info *out,
+				     xnu_macho_u64 *entry_fileoff);
+#endif

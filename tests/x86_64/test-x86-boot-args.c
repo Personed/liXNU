@@ -157,6 +157,24 @@ static void test_last_u32_page_ranges(void)
 	assert(xnu_x86_boot_args_build_core(&args, &in) == -ERANGE);
 }
 
+static void test_initial_physfree_page_rounding(void)
+{
+	struct xnu_x86_boot_args args;
+	struct xnu_x86_boot_args_core in = valid_input();
+
+	/* The initial page-aligned physfree still fits in the low 4 GiB. */
+	in.kernel_pa = 0xffffe000ULL;
+	in.kernel_size = 0x1000U;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+	assert(xnu_x86_boot_args_validate(&args) == 0);
+
+	/* The byte end fits in uint32_t, but page rounding reaches 4 GiB. */
+	in.kernel_size++;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == -ERANGE);
+	args.ksize++;
+	assert(xnu_x86_boot_args_validate(&args) == -ERANGE);
+}
+
 static void test_validator_rejects_u32_overflow(void)
 {
 	struct xnu_x86_boot_args args;
@@ -249,6 +267,7 @@ int main(void)
 	test_malformed_lengths();
 	test_unrepresentable_ranges();
 	test_last_u32_page_ranges();
+	test_initial_physfree_page_rounding();
 	test_validator_rejects_u32_overflow();
 	test_reject_unsupported_or_malformed_output();
 	test_efi_memory_map_page_indices();

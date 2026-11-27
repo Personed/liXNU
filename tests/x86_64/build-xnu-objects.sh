@@ -21,8 +21,8 @@ trap 'rm -rf "$BUILD"' EXIT
 cp -a "$REPO/xnu-ko" "$BUILD/xnu-ko"
 cp -a "$REPO/fki-ko" "$BUILD/fki-ko"
 make -C "$KDIR" ARCH=x86_64 M="$BUILD/xnu-ko" \
-  macho.o macho_parse_x86_64.o adt.o x86_64_boot_args.o
-for object in macho.o macho_parse_x86_64.o adt.o x86_64_boot_args.o; do
+  macho.o macho_parse_x86_64.o adt.o x86_64_boot_args.o x86_64_boot_layout.o
+for object in macho.o macho_parse_x86_64.o adt.o x86_64_boot_args.o x86_64_boot_layout.o; do
   object_path="$BUILD/xnu-ko/$object"
   test -s "$object_path"
   header=$(LC_ALL=C readelf -h "$object_path")

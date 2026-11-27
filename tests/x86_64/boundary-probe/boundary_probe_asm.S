@@ -83,6 +83,12 @@ SYM_FUNC_END(x86_boundary_probe_switch_stack)
 
 SYM_FUNC_START(x86_boundary_probe_inner)
 	movq %rsp, %rax
+	cmpl $BP_COOP_MODE_RESUME, %esi
+	jne .Lstore_alt_entry_rsp
+	movq %rax, BP_OFF_COOP_RESUME_RSP(%rdi)
+	cmpq BP_OFF_ALT_ENTRY_RSP(%rdi), %rax
+	jne .Lcooperative_stale
+.Lstore_alt_entry_rsp:
 	movq %rax, BP_OFF_ALT_ENTRY_RSP(%rdi)
 
 	movabsq $0x5555666677778888, %rbp
@@ -104,9 +110,45 @@ SYM_FUNC_START(x86_boundary_probe_inner)
 	movq %rax, BP_OFF_RFLAGS_DURING(%rdi)
 	cld
 
+	cmpl $BP_COOP_MODE_STOP, %esi
+	je .Lcooperative_stop
+	cmpl $BP_COOP_MODE_RESUME, %esi
+	je .Lcooperative_resume
 	testl %esi, %esi
 	jnz .Lsoftware_abort
 	xorl %eax, %eax
+	jmp .Lreturn_with_changed_flags
+.Lcooperative_stop:
+	movq BP_OFF_COOP_GENERATION(%rdi), %rax
+	movabsq $BP_COOP_TOKEN_XOR, %r11
+	xorq %r11, %rax
+	movq %rax, BP_OFF_COOP_TOKEN(%rdi)
+	movq $0, BP_OFF_COOP_RESUME_COUNT(%rdi)
+	movq $-115, %rax /* -EINPROGRESS: return to the Linux task before it blocks. */
+	jmp .Lreturn_with_changed_flags
+.Lcooperative_resume:
+	cmpq $0, BP_OFF_COOP_RESUME_COUNT(%rdi)
+	jne .Lcooperative_already_resumed
+	cmpq $BP_COOP_STATE_REPLIED, BP_OFF_COOP_STATE(%rdi)
+	jne .Lcooperative_stale
+	movq BP_OFF_COOP_GENERATION(%rdi), %rax
+	movabsq $BP_COOP_TOKEN_XOR, %r11
+	xorq %r11, %rax
+	cmpq BP_OFF_COOP_TOKEN(%rdi), %rax
+	jne .Lcooperative_stale
+	movq BP_OFF_COOP_GENERATION(%rdi), %rax
+	movabsq $BP_COOP_REPLY_XOR, %r11
+	xorq %r11, %rax
+	cmpq BP_OFF_COOP_REPLY(%rdi), %rax
+	jne .Lcooperative_stale
+	incq BP_OFF_COOP_RESUME_COUNT(%rdi)
+	xorl %eax, %eax
+	jmp .Lreturn_with_changed_flags
+.Lcooperative_already_resumed:
+	movq $-114, %rax /* -EALREADY */
+	jmp .Lreturn_with_changed_flags
+.Lcooperative_stale:
+	movq $-116, %rax /* -ESTALE */
 	jmp .Lreturn_with_changed_flags
 .Lsoftware_abort:
 	movq $-125, %rax /* -ECANCELED */

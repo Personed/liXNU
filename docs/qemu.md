@@ -10,9 +10,10 @@ The launcher needs Python 3, `qemu-system-aarch64`, and a matching pair of AArch
 variable-store images. Use one writable copy of the variables image per VM. The defaults are 4
 guest CPUs and 16 GiB of guest RAM. Allow additional RAM for the physical host.
 
-The current complete PureDarwin reference profile assigns 16 GiB to the ARM64 guest. Before
-preparing its artifacts, record the total and available RAM visible to the operating system that
-will run QEMU. The CI planning screen is at least 20 GiB total and 4 GiB available. On a
+The 16 GiB default above is for the persistent UEFI VM. For the tested 6 GiB PureDarwin
+profile, follow the direct TCG boot instructions below.
+The historical 16 GiB PureDarwin profile used a CI planning screen of 20 GiB total host RAM
+and 4 GiB available before artifact preparation. On a
 virtualized host, these values describe the runner OS and do not establish the outer machine's
 physical RAM. This is a planning screen, not a measured minimum; the physical RAM floor is unknown.
 See the [validation matrix](portability-validation.md) for the evidence and limits.
@@ -93,23 +94,27 @@ This direct-boot profile uses the x86-64 host to run the ARM64 Linux guest under
 then loads FKI/XNU and reaches the PureDarwin console. It is separate from the UEFI
 installer-based Linux VM above. It does not require VT-x or AMD-V.
 
-For the exact tested input set, check out PR #98 head
-[`589c40e`](https://github.com/Personed/xnulinux/commit/589c40ead54a63946fb44e8bdb35eb6add9adffe).
-From a clone of this repository, fetch that pull request and check out the tested revision:
+For the exact input tree used by the synthetic CI merge revision
+[`1b3beb5`](https://github.com/Personed/xnulinux/commit/1b3beb5088c5f29be0888b41a526ff1fadd83aef) in PR #115 run
+[#172](https://github.com/Personed/xnulinux/actions/runs/45989875996), the merge combined PR #115 head
+[`0daaa50`](https://github.com/Personed/xnulinux/commit/0daaa50e4d2d363bd8d775131b3a298663cf26a2) with #89 base `763aef9`.
+The synthetic merge object may not be fetchable from a fresh clone. The reachable #115 head has
+Git tree `5f9b1e5`, the tree used by the tested merge. Fetch the PR head ref and check out its
+fixed SHA:
 
 ```sh
-git fetch origin pull/98/head:refs/remotes/origin/pr-98
-git checkout --detach 589c40ead54a63946fb44e8bdb35eb6add9adffe
+git fetch origin refs/pull/115/head:refs/remotes/origin/pr-115
+git checkout --detach 0daaa50e4d2d363bd8d775131b3a298663cf26a2
 ```
-
 Download and extract the paired
-[`puredarwin-e2e-guest` artifact](https://github.com/Personed/xnulinux/actions/runs/45911026412/artifacts/15161900498) and
-[`puredarwin-e2e-disk` artifact](https://github.com/Personed/xnulinux/actions/runs/45911026412/artifacts/15161666268) from [run #158](https://github.com/Personed/xnulinux/actions/runs/45911026412).
-Both artifacts expire on 2026-12-27. You can download them in the browser or with GitHub CLI:
+[`puredarwin-e2e-guest` artifact](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196743551) and
+[`puredarwin-e2e-disk` artifact](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196177348) from [run #172](https://github.com/Personed/xnulinux/actions/runs/45989875996).
+Both artifacts expire on 2026-12-27. Sign in to GitHub with an account that can access the run.
+To download from the terminal, authenticate GitHub CLI with `gh auth login`, then run:
 
 ```sh
-gh run download 45911026412 --repo Personed/xnulinux --name puredarwin-e2e-guest --dir artifacts/guest
-gh run download 45911026412 --repo Personed/xnulinux --name puredarwin-e2e-disk --dir artifacts/disk
+gh run download 45989875996 --repo Personed/xnulinux --name puredarwin-e2e-guest --dir artifacts/guest
+gh run download 45989875996 --repo Personed/xnulinux --name puredarwin-e2e-disk --dir artifacts/disk
 ```
 
 Keep the artifacts from that run paired. The guest archive contains `Image`,
@@ -119,10 +124,10 @@ the disk archive contains `pd.img`. The three boot inputs have these SHA-256 val
 | Input | SHA-256 |
 | --- | --- |
 | `Image` | `02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6` |
-| `initramfs.cpio.gz` | `fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667` |
-| `pd.img` | `7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f` |
+| `initramfs.cpio.gz` | `443333cfa8333e6fc7775b26641116827e3155ed61c78404ae2b652c0f0d84f4` |
+| `pd.img` | `c97e031cfd4f9adb4b1539ed9153eaf4b7125e90743d971d922a90395fea5645` |
 
-Install Python 3 and QEMU system AArch64 emulation 8.2 or later. QEMU 8.2 is the
+Install Python 3.9 or later and QEMU system AArch64 emulation 8.2 or later. QEMU 8.2 is the
 minimum version with the tested `cortex-a710` CPU model.
 
 - Ubuntu 24.04: `sudo apt-get install qemu-system-arm python3 coreutils util-linux`.
@@ -138,7 +143,7 @@ Check that the installed QEMU exposes the tested model:
 - POSIX: `qemu-system-aarch64 -cpu help | grep -F cortex-a710`
 - Windows PowerShell: `qemu-system-aarch64.exe -cpu help | Select-String cortex-a710`.
 
-Run the download commands from the repository root; they extract the files under `artifacts/guest` and `artifacts/disk`. The command below verifies the three hashes from run #158, then copies the disk so the source artifact remains unchanged.
+Run the download commands from the repository root; they extract the files under `artifacts/guest` and `artifacts/disk`. The command below verifies the three hashes from run #172, then copies the disk so the source artifact remains unchanged.
 
 ```sh
 (
@@ -149,8 +154,8 @@ from pathlib import Path
 
 expected = {
     "artifacts/guest/Image": "02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6",
-    "artifacts/guest/initramfs.cpio.gz": "fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667",
-    "artifacts/disk/pd.img": "7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f",
+    "artifacts/guest/initramfs.cpio.gz": "443333cfa8333e6fc7775b26641116827e3155ed61c78404ae2b652c0f0d84f4",
+    "artifacts/disk/pd.img": "c97e031cfd4f9adb4b1539ed9153eaf4b7125e90743d971d922a90395fea5645",
 }
 def sha256_file(name):
     digest = hashlib.sha256()
@@ -194,8 +199,8 @@ qemu-system-aarch64.exe --version
 $ErrorActionPreference = "Stop"
 $expected = @{
   ".\artifacts\guest\Image" = "02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6"
-  ".\artifacts\guest\initramfs.cpio.gz" = "fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667"
-  ".\artifacts\disk\pd.img" = "7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f"
+  ".\artifacts\guest\initramfs.cpio.gz" = "443333cfa8333e6fc7775b26641116827e3155ed61c78404ae2b652c0f0d84f4"
+  ".\artifacts\disk\pd.img" = "c97e031cfd4f9adb4b1539ed9153eaf4b7125e90743d971d922a90395fea5645"
 }
 foreach ($path in $expected.Keys) {
   $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -220,7 +225,7 @@ py -3 tests\puredarwin\run-tcg-e2e.py `
   .\artifacts\disk\puredarwin-tcg-serial.log
 ```
 
-The Windows runner did not measure QEMU RSS, so the harness reports that the optional
+The Windows runner in run #172 did not measure QEMU RSS, so the harness reports that the optional
 RSS ceiling was not evaluated on that platform.
 
 The manifest-aware validation script and optional exact-hash guard are in
@@ -229,10 +234,48 @@ The command runs TCG with a 6 GiB guest, Linux `mem=2G`, a 3,072 MiB FKI carve-o
 and 2,816 MiB XNU RAM. The harness requires the Darwin console and userland marker,
 guest-requested halt, successful XNU/FKI unload, and QEMU exit 0. It enforces the
 configured RSS limit on hosts where process RSS is measurable; when the runner cannot
-measure it, the log reports that fact instead of treating it as zero. In run #158,
+measure it, the log reports that fact instead of treating it as zero. In run #172,
 Windows boot passed but process RSS was not measured. This guest allocation is not a
 physical host-memory minimum.
 
 Run #158 passed once on each hosted Ubuntu, Windows Server 2025, and Intel macOS profile
 with `cortex-a710`. This supports the tested hosted profiles only; representative
 physical Intel/AMD PCs and PIE-enabled QEMU `-cpu max` remain separate validation items.
+
+### Measured host resources in run #158
+
+Each full-route job assigned 6 GiB to QEMU and recorded host memory immediately before
+starting QEMU. These readings are from hosted CI runners, not bare-metal PCs:
+
+| Hosted OS and CPU | QEMU | Host RAM total / available at launch | QEMU peak RSS |
+| --- | --- | --- | --- |
+| Ubuntu 24.04.5, Intel Xeon 6975P-C (4 logical CPUs) | 8.2.2 | 15.33 / 14.13 GiB | 3.67 GiB |
+| Windows Server 2025, AMD Family 25 Model 1 (4 logical CPUs) | 11.1.0 | 15.99 / 12.73 GiB | Not measured |
+| macOS 15, Intel Core i7-8700B (4 logical CPUs) | 11.1.0 | 14.00 / 9.78 GiB | 3.47 GiB |
+
+The lowest successful hosted-runner reading in this set was 14.00 GiB total and 9.78 GiB
+available at QEMU launch on Intel macOS. This is an observed CI profile, not a physical-PC
+minimum. QEMU RSS was not measured on Windows. The host RAM floor for physical Intel/AMD
+PCs remains unknown; these results do not establish that every PC can run the 6 GiB guest.
+
+### Current-head acceptance in run #172
+
+PR #115 run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996) completed
+all six workflow jobs for PR head `0daaa50`. CI checked out the GitHub-generated test merge
+`1b3beb5` (`refs/pull/115/merge`) against #89 head `763aef9`. The full source build,
+ARM64 guest preparation, and all three hosted boot
+profiles passed with the same 6 GiB guest, QEMU TCG `cortex-a710`, Linux `mem=2G`,
+3,072 MiB FKI carve-out at `0xc0000000`, and 2,816 MiB XNU RAM. Each boot reached the
+PureDarwin console and `XNULINUX_USERLAND_OK`, ran guest-requested `halt`, unloaded XNU/FKI,
+powered Linux off, and passed the harness's QEMU exit-0 requirement.
+
+| Hosted OS and CPU | QEMU | Host RAM total / available at launch | QEMU peak RSS |
+| --- | --- | --- | --- |
+| Ubuntu 24.04.5, Intel Xeon 6975P-C (4 logical CPUs) | 8.2.2 | 15.33 / 14.10 GiB | 3.67 GiB |
+| Windows Server 2025, AMD Family 25 Model 17 (4 logical CPUs) | 11.1.0 | 15.99 / 12.75 GiB | Not measured |
+| macOS 15, Intel Core i7-8700B (4 logical CPUs) | 11.1.0 | 14.00 / 9.76 GiB | 3.47 GiB |
+
+The run #172 logs and retained boot evidence are linked from
+[PR #115's acceptance comment](https://github.com/Personed/xnulinux/pull/115#issuecomment-7218481524).
+These are hosted virtual-machine profiles. The guest's 6 GiB is the validated configuration,
+not a measured guest minimum; the physical Intel/AMD PC RAM floor remains unknown.

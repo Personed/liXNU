@@ -38,6 +38,8 @@ extern unsigned long linux64_hook;
 extern unsigned long linux64_slide;
 extern unsigned int linux64_el0;
 extern unsigned int linux64_el0_caps;
+/* Linux enabled Permission Indirection Extension (TCR2_EL1.PIE) for its shared page tables. */
+extern unsigned int linux64_pie;
 /* This CPU's slot in the per-CPU arrays: valid before XNU knows its cpu number */
 static inline unsigned
 linux64_cpu_slot(void)

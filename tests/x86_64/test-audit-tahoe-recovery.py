@@ -16,6 +16,22 @@ SPEC.loader.exec_module(audit)
 
 
 class RecoveryInspectionTests(unittest.TestCase):
+    def test_intel_release_version_candidates(self):
+        image_bytes = b"\0".join((
+            b"root:xnu-12377.161.14~5/RELEASE_X86_64",
+            b"root:xnu-12377.161.15.701.48~2/RELEASE_X86_64",
+            b"root:xnu-12377.161.15.701.48/RELEASE_X86_64",
+            b"root:xnu-12377.161.15.701.48~2/DEVELOPMENT_X86_64",
+            b"root:xnu-12377.161.15.701.48~2/RELEASE_ARM64",
+            b"root:xnu-12377.161../RELEASE_X86_64",
+            b"root:xnu-12377.161/RELEASE_X86_64",
+        ))
+        self.assertEqual(audit.XNU_RELEASE_PATTERN.findall(image_bytes), [
+            b"12377.161.14~5",
+            b"12377.161.15.701.48~2",
+            b"12377.161.15.701.48",
+        ])
+
     def test_inspection_outcomes(self):
         cases = (
             ("accepted", True, False, "recovery_downloaded_and_inspected"),

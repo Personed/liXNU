@@ -160,6 +160,12 @@ for FKI carve-out setup; booting XNU also depends on the FKI backend and its mem
 - User-provided macOS Tahoe 26 x86_64 artifacts that match the selected XNU build. No Apple system image or binary is provided here.
 - The x86_64 FKI host-backend build merged in [#48](https://github.com/Personed/xnulinux/pull/48), and the fail-closed x86_64 XNU stub merged in [#47](https://github.com/Personed/xnulinux/pull/47). Neither milestone provides native XNU execution. The QEMU/KVM launcher below is a separate optional guest experiment.
 
+To record a Linux test machine's CPU vendor and model, kernel release, page size, memory, and reported x86 flags, run
+`python3 scripts/xnulinux-doctor.py --json`. If `qemu-system-aarch64` is missing, the command still prints the JSON
+report on x86_64 Linux and returns exit status 1. Automated collectors can save the report before handling that status.
+Use these facts with the [native validation checklist](tests/x86_64/README.md#acceptance-evidence-still-required)
+when reporting Intel and AMD results.
+
 ### Complementary Intel/AMD PC route via an ARM64 Linux VM (QEMU TCG)
 
 The route boots ARM64 Linux on the x86-64 host with QEMU TCG, then runs the hosted-XNU modules inside that guest. It

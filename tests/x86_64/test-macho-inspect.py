@@ -36,6 +36,8 @@ LC_SEGMENT_64 = 0x19
 LC_UNIXTHREAD = 0x5
 LC_DYLD_CHAINED_FIXUPS = 0x80000034
 SG_NORELOC = 4
+S_ATTR_PURE_INSTRUCTIONS = 0x80000000
+S_ATTR_SOME_INSTRUCTIONS = 0x00000400
 X86_THREAD_STATE64 = 4
 X86_THREAD_STATE64_COUNT = 42
 DYLD_CHAINED_PTR_X86_64_KERNEL_CACHE = 11
@@ -103,6 +105,20 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL):
     put_u32(data, THREAD_OFF + 8, X86_THREAD_STATE64)
     put_u32(data, THREAD_OFF + 12, X86_THREAD_STATE64_COUNT)
     put_u64(data, RIP_OFF, 0x1100)
+    return data
+
+
+def make_hib_image(flags=S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS):
+    data = make_valid_image()
+    put_name(data, TEXT_OFF + 8, "__HIB")
+    # Keep the HIB bytes separate from the header and load commands.
+    put_u64(data, TEXT_OFF + 40, 0x200)
+    put_u32(data, TEXT_OFF + 56, 3)
+    put_u32(data, TEXT_OFF + 60, 3)
+    put_name(data, SECTION_OFF + 16, "__HIB")
+    put_u32(data, SECTION_OFF + 48, 0x300)
+    put_u32(data, SECTION_OFF + 64, flags)
+    put_u64(data, RIP_OFF, 0x1110)
     return data
 
 
@@ -210,7 +226,8 @@ def make_chained_image_with_omitted_linkedit_slot():
 
 
 def run_case(
-    binary, name, data, expected_status, check_report=None, relative_name="kernel.development"
+    binary, name, data, expected_status, check_report=None, relative_name="kernel.development",
+    options=(),
 ):
     with tempfile.TemporaryDirectory(prefix="xnu-macho-inspect-") as tmp:
         path = os.fsencode(tmp) + b"/" + relative_name.encode("utf-8")
@@ -220,7 +237,8 @@ def run_case(
         with open(path, "rb") as image_file:
             before = hashlib.sha256(image_file.read()).digest()
         result = subprocess.run(
-            [os.fsencode(binary), path], check=False, capture_output=True, text=False
+            [os.fsencode(binary), *(os.fsencode(option) for option in options), path],
+            check=False, capture_output=True, text=False,
         )
         if result.returncode != expected_status:
             raise AssertionError(
@@ -450,6 +468,18 @@ def expect_output_write_error(binary):
             raise AssertionError("output write failure did not produce the I/O error status")
 
 
+def expect_hib_entry(report):
+    if report["hib_entry"] != {"section": "__HIB,__text", "file_offset": "0x0000000000000310"}:
+        raise AssertionError("incorrect __HIB entry file offset")
+    if report["entry"]["unslid"] != "0x0000000000001110":
+        raise AssertionError("incorrect __HIB RIP")
+    hib = report["segments"][1]
+    if hib["name"] != "__HIB" or hib["initprot"] != "rw-" or hib["maxprot"] != "rw-":
+        raise AssertionError("the report changed the parent's declared permissions")
+    if report["execution_attempted"] or report["load_status"] != "not_loaded":
+        raise AssertionError("the report must describe metadata inspection only")
+
+
 def main():
     if len(sys.argv) != 2:
         print(f"usage: {sys.argv[0]} INSPECTOR", file=sys.stderr)
@@ -535,6 +565,35 @@ def main():
     bad_entry = make_valid_image()
     put_u64(bad_entry, RIP_OFF, 0x3100)
     run_case(binary, "entry outside executable file range", bad_entry, 3)
+
+    hib_mode = ("--hib-entry-metadata",)
+    run_case(binary, "HIB requires opt-in", make_hib_image(), 3)
+    run_case(binary, "HIB text entry", make_hib_image(), 0, expect_hib_entry, options=hib_mode)
+    run_case(
+        binary, "HIB with only pure instructions", make_hib_image(S_ATTR_PURE_INSTRUCTIONS),
+        0, expect_hib_entry, options=hib_mode,
+    )
+    run_case(binary, "normal executable entry does not qualify", make_valid_image(), 3,
+             options=hib_mode)
+    for name, offset, value in (
+        ("HIB with only some instructions", SECTION_OFF + 64, S_ATTR_SOME_INSTRUCTIONS),
+        ("zero-fill HIB text", SECTION_OFF + 64, S_ATTR_PURE_INSTRUCTIONS | 1),
+        ("HIB text with mismatched file offset", SECTION_OFF + 48, 0x340),
+        ("HIB text without read-write max protections", TEXT_OFF + 56, 1),
+        ("RIP at HIB text's exclusive end", RIP_OFF, 0x1120),
+    ):
+        data = make_hib_image()
+        put_u32(data, offset, value)
+        run_case(binary, name, data, 3, options=hib_mode)
+
+    overlapping = make_hib_image()
+    append_command(overlapping, LC_SEGMENT_64, SEGMENT_COMMAND_SIZE)
+    put_name(overlapping, COMMANDS_END + 8, "__DATA")
+    put_u64(overlapping, COMMANDS_END + 24, 0x1000)
+    put_u64(overlapping, COMMANDS_END + 32, 0x1000)
+    put_u32(overlapping, COMMANDS_END + 56, 3)
+    put_u32(overlapping, COMMANDS_END + 60, 3)
+    run_case(binary, "overlapping HIB entry VM mappings", overlapping, 3, options=hib_mode)
 
     expect_invalid_path_bytes_are_escaped(binary)
     expect_ambiguous_display_bytes_preserve_originals(binary)

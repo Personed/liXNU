@@ -19,21 +19,63 @@
 
 #define MAX_COLLECTION_SIZE (1ULL << 30)
 
+static void print_segment(const struct xnu_macho_x86_64_segment *segment)
+{
+	unsigned int i;
+
+	printf("{\"name_bytes_hex\":\"");
+	for (i = 0; i < sizeof(segment->name); i++)
+		printf("%02x", (unsigned int)segment->name[i]);
+	printf("\",\"vmaddr\":\"0x%016" PRIx64 "\",\"vmsize\":\"0x%016" PRIx64 "\","
+	       "\"fileoff\":\"0x%016" PRIx64 "\",\"filesize\":\"0x%016" PRIx64 "\","
+	       "\"section_count\":%u}",
+	       (uint64_t)segment->vmaddr, (uint64_t)segment->vmsize,
+	       (uint64_t)segment->fileoff, (uint64_t)segment->filesize,
+	       segment->section_count);
+}
+
+static void print_fixups(const struct xnu_macho_x86_64_fixup_extent *fixups)
+{
+	if (!fixups->datasize) {
+		printf("null");
+		return;
+	}
+	printf("{\"dataoff\":\"0x%016" PRIx64 "\",\"datasize\":\"0x%016" PRIx64 "\","
+	       "\"linkedit_relative_offset\":\"0x%016" PRIx64 "\","
+	       "\"linkedit\":{\"vmaddr\":\"0x%016" PRIx64 "\",\"vmsize\":\"0x%016" PRIx64 "\","
+	       "\"fileoff\":\"0x%016" PRIx64 "\",\"filesize\":\"0x%016" PRIx64 "\"}}",
+	       (uint64_t)fixups->dataoff, (uint64_t)fixups->datasize,
+	       (uint64_t)(fixups->dataoff - fixups->linkedit_fileoff),
+	       (uint64_t)fixups->linkedit_vmaddr, (uint64_t)fixups->linkedit_vmsize,
+	       (uint64_t)fixups->linkedit_fileoff, (uint64_t)fixups->linkedit_filesize);
+}
+
 static void print_fileset(const struct xnu_macho_x86_64_info *info)
 {
+	unsigned int i;
+
 	printf("{\"status\":\"accepted\",\"parser_result\":0,"
 	       "\"file_type\":%u,\"cpu_subtype\":%u,"
 	       "\"load_command_count\":%u,\"load_command_bytes\":%u,"
-	       "\"fileset_entry_count\":%u,"
-	       "\"kernel\":{\"file_type\":%u,\"cpu_subtype\":%u,"
-	       "\"load_command_count\":%u,\"load_command_bytes\":%u,"
-	       "\"fileoff\":\"0x%016" PRIx64 "\",\"vmaddr\":\"0x%016" PRIx64 "\"}}\n",
+	       "\"fileset_entry_count\":%u,\"chained_fixups\":",
 	       info->file_type, info->cpu_subtype, info->load_command_count,
-	       info->load_command_bytes, info->fileset_entry_count,
+	       info->load_command_bytes, info->fileset_entry_count);
+	print_fixups(&info->fileset_fixups);
+	printf(",\"kernel\":{\"file_type\":%u,\"cpu_subtype\":%u,"
+	       "\"load_command_count\":%u,\"load_command_bytes\":%u,"
+	       "\"fileoff\":\"0x%016" PRIx64 "\",\"vmaddr\":\"0x%016" PRIx64 "\",\"chained_fixups\":",
 	       info->kernel_entry_filetype, info->kernel_entry_cpusubtype,
 	       info->kernel_entry_ncmds, info->kernel_entry_sizeofcmds,
 	       (uint64_t)info->kernel_entry_fileoff,
 	       (uint64_t)info->kernel_entry_vmaddr);
+	print_fixups(&info->kernel_entry_fixups);
+	printf(",\"segments\":[");
+	for (i = 0; i < info->kernel_entry_segment_count; i++) {
+		if (i)
+			putchar(',');
+		print_segment(&info->segments[i]);
+	}
+	puts("]}}");
 }
 
 int main(int argc, char **argv)

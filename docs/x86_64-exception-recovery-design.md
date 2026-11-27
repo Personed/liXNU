@@ -33,14 +33,14 @@ In 64-bit mode the architectural exception frame includes SS, RSP, RFLAGS, CS an
 - save the general-purpose registers it needs in per-vCPU test storage before touching them;
 - record the vector selected by the independent handler entry point;
 - record the error code and hardware frame fields exactly as delivered;
-- for `#PF`, save the full GPR set on the already validated fault stack, then read CR2 into R11 before any other handler data access; the entry pushes must not produce a passing recovery if they fault, and the handler must restore the saved fault-time R11 before `iretq`;
-- restore every general-purpose register it used before `iretq`, so the recovery path starts with the fault-time register state, and compare the captured full GPR image against the exact expected per-injection image before reporting success (including registers used to form injection operands);
+- for `#PF`, save all 15 non-RSP GPRs on the already validated fault stack, then read CR2 into R11 before any other handler data access; the entry pushes must not produce a passing recovery if they fault, and the handler must restore the saved fault-time R11 before `iretq`;
+- restore every general-purpose register it used before `iretq`, so the recovery path starts with the fault-time register state, and compare the captured 15 non-RSP GPR values against the exact expected per-injection image before reporting success (including registers used to form injection operands); validate RSP separately against the recorded fault-window RSP and the dedicated-stack transition;
 - rewrite the frame exactly once: set frame RIP to the test recovery stub, set frame RSP to the test-owned recovery-stack top, keep CS/RFLAGS/SS unchanged, and account for the error-code slot before executing `iretq`; and
 - increment no counter and perform no C call in the raw handler beyond the capture writes.
 
 The stack switch is therefore explicit: `iretq` first consumes the five-slot frame left by the exception on the fault stack, then loads the rewritten frame-RSP value. Recovery begins on the test-owned recovery stack with fault-time GPRs restored. The exact recovery point must execute once; a second caught `#PF` or `#GP` for the same armed case is a nested-fault failure and takes the terminal path. Other synchronous vectors use the no-return terminal gates described below.
 
-Before arming, the test control block records the armed vector/mode, exact injection RIP, post-injection recovery target, original envelope RSP and callee-saved GPRs, the expected full GPR image for this injection, fault-window RSP, original IDTR image, and both stack canaries. Capture the envelope RSP while still on the Linux task stack; then switch to the fault stack, validate it, and record the fault-window RSP immediately before the labeled injection. No push, pop, call, or other explicit RSP-changing instruction is allowed in the straight-line injection window. If the injection instruction returns normally, assembly must immediately restore and verify the original IDTR, restore the envelope RSP/GPRs, and return a distinct not-run configuration failure to C; it must never reach a pass marker. After entry on the recovery stack, the recovery stub remains assembly and follows this exact sequence:
+Before arming, the test control block records the armed vector/mode, exact injection RIP, post-injection recovery target, original envelope RSP and callee-saved GPRs, the expected 15 non-RSP GPR image for this injection, fault-window RSP, original IDTR image, and both stack canaries. Capture the envelope RSP while still on the Linux task stack; then switch to the fault stack, validate it, and record the fault-window RSP immediately before the labeled injection. No push, pop, call, or other explicit RSP-changing instruction is allowed in the straight-line injection window. If the injection instruction returns normally, assembly must immediately restore and verify the original IDTR, restore the envelope RSP/GPRs, and return a distinct not-run configuration failure to C; it must never reach a pass marker. After entry on the recovery stack, the recovery stub remains assembly and follows this exact sequence:
 
 1. store any scratch GPRs it needs in a dedicated recovery save area before using them;
 2. validate the arm token, vector, faulting RIP, one-shot recovery count, and recovery-stack canaries; any mismatch takes the terminal path below;
@@ -70,7 +70,7 @@ A pass requires all of the following for both `#PF` and `#GP`:
 
 - exact vector, RIP, error code, CPU, and recovery count metadata (`#GP` error code `0xfff8`);
 - CR2 equality and access-type consistency for `#PF`;
-- exact restoration of the expected full GPR image, including fault-time R11 across CR2 capture, and unchanged DS selector;
+- exact restoration of the expected 15 non-RSP GPR values, including fault-time R11 across CR2 capture, and unchanged DS selector; fault-frame RSP must equal the recorded fault-window RSP and `iretq` must enter the recovery stack;
 - exactly one recovery entry and no nested/unclassified exception;
 - normal Linux syscalls after return on the same vCPU as the recovered injection;
 - byte-for-byte restoration of IDTR state before cleanup;

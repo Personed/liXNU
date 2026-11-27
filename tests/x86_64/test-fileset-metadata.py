@@ -77,8 +77,9 @@ def main():
     )
     verify(binary, image[:-1], {"status": "parser_rejected", "parser_result": -8})
 
-    struct.pack_into("<I", image, 4, 0x0100000C)  # unsupported ARM64 container
-    verify(binary, image, {"status": "parser_rejected", "parser_result": -95})
+    wrong_cpu = bytearray(image)
+    struct.pack_into("<I", wrong_cpu, 4, 0x0100000C)  # unsupported ARM64 container
+    verify(binary, wrong_cpu, {"status": "parser_rejected", "parser_result": -95})
 
     struct.pack_into("<I", image, 12, MH_EXECUTE)
     verify(binary, image, {"status": "not_fileset", "parser_result": None})

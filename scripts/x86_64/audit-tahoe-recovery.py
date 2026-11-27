@@ -404,6 +404,7 @@ def audit_temporary_recovery(report: dict[str, Any], temporary_path: Path) -> No
     if compiler.returncode != 0:
         report["audit_status"] = "fileset_helper_build_failed"
         report["failure_class"] = error_class(compiler.stdout + compiler.stderr)
+        print(compiler.stderr, file=sys.stderr, end="")
         return
 
     source = temporary_path / "OpenCorePkg"

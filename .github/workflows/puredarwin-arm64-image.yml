@@ -361,11 +361,15 @@ jobs:
           sudo apt-get install -y -qq qemu-system-arm
       - name: Test exact QEMU RSS measurement
         run: python3 tests/puredarwin/test-run-tcg-e2e-rss.py
+      - name: Test strict PIE evidence handling
+        run: python3 tests/puredarwin/test-run-tcg-e2e-pie.py
       - name: Boot reduced-memory PureDarwin and require guest userspace plus clean halt
         id: boot
         run: |
           set -o pipefail
           python3 tests/puredarwin/run-tcg-e2e.py \
+            --qemu-cpu cortex-a710 \
+            --require-direct \
             --timeout-seconds 5400 \
             --qemu-memory 6G \
             --linux-memory 2G \
@@ -400,6 +404,7 @@ jobs:
             else
               echo '  - Not recorded'
             fi
+            echo '- CPU profile: QEMU `-cpu cortex-a710`; `--require-direct` requires TCR2_EL1.PIE=0 (or unsupported TCR2) and XNU PIE mapping mode=0.'
             for manifest in \
               "$RUNNER_TEMP/puredarwin-e2e-guest/guest-manifest.txt" \
               "$RUNNER_TEMP/puredarwin-e2e-guest/build-manifest.txt"; do
@@ -433,6 +438,116 @@ jobs:
             ${{ runner.temp }}/puredarwin-tcg-serial.log
             ${{ runner.temp }}/puredarwin-tcg-output.log
             ${{ runner.temp }}/puredarwin-tcg-host-memory.txt
+          if-no-files-found: ignore
+          retention-days: 30
+
+  puredarwin-tcg-pie-boot:
+    name: Boot ARM64 PureDarwin via QEMU 11.1 TCG PIE on x86-64
+    needs: [puredarwin-build, arm64-guest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      QEMU_REV: 84f07211cc5b4fc6a371559bf8a5de4fb068e648
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the ARM64 Linux guest inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: puredarwin-e2e-guest
+          path: ${{ runner.temp }}/puredarwin-e2e-guest
+      - name: Download the PureDarwin system disk
+        uses: actions/download-artifact@v4
+        with:
+          name: puredarwin-e2e-disk
+          path: ${{ runner.temp }}/puredarwin-e2e-disk
+      - name: Install QEMU build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential git libcapstone-dev libfdt-dev libglib2.0-dev \
+            libpixman-1-dev libslirp-dev ninja-build pkg-config python3-venv \
+            zlib1g-dev
+      - name: Build the pinned QEMU 11.1.0 AArch64 emulator
+        run: |
+          set -euo pipefail
+          source="$RUNNER_TEMP/qemu-11.1.0-src"
+          build="$RUNNER_TEMP/qemu-11.1.0-build"
+          git clone --depth 1 --branch v11.1.0 \
+            https://gitlab.com/qemu-project/qemu.git "$source"
+          actual_rev=$(git -C "$source" rev-parse HEAD)
+          test "$actual_rev" = "$QEMU_REV" || {
+            echo "QEMU v11.1.0 resolved to $actual_rev; expected $QEMU_REV" >&2
+            exit 1
+          }
+          mkdir -p "$build"
+          cd "$build"
+          "$source/configure" \
+            --target-list=aarch64-softmmu \
+            --enable-tcg \
+            --disable-docs \
+            --disable-kvm \
+            --disable-rust \
+            --disable-werror
+          ninja -j2 qemu-system-aarch64
+          "$build/qemu-system-aarch64" --version | tee "$RUNNER_TEMP/qemu-11.1-version.txt"
+          grep -Fq 'QEMU emulator version 11.1.0' "$RUNNER_TEMP/qemu-11.1-version.txt"
+          echo "qemu_source_revision=$actual_rev" >> "$GITHUB_STEP_SUMMARY"
+          echo 'qemu_target=aarch64-softmmu (TCG enabled, KVM disabled)' >> "$GITHUB_STEP_SUMMARY"
+      - name: Require real QEMU 11.1 max-profile PIE probes, PureDarwin userland, and shutdown
+        id: boot
+        run: |
+          set -o pipefail
+          python3 tests/puredarwin/run-tcg-e2e.py \
+            --qemu "$RUNNER_TEMP/qemu-11.1.0-build/qemu-system-aarch64" \
+            --qemu-cpu max \
+            --require-pie \
+            --timeout-seconds 5400 \
+            --qemu-memory 6G \
+            --linux-memory 2G \
+            --fki-carve-base 0xc0000000 \
+            --fki-carve-mb 3072 \
+            --xnu-ram-mb 2816 \
+            "$RUNNER_TEMP/puredarwin-e2e-guest/Image" \
+            "$RUNNER_TEMP/puredarwin-e2e-guest/initramfs.cpio.gz" \
+            "$RUNNER_TEMP/puredarwin-e2e-disk/pd.img" \
+            "$RUNNER_TEMP/puredarwin-tcg-pie-serial.log" 2>&1 |
+            tee "$RUNNER_TEMP/puredarwin-tcg-pie-output.log"
+      - name: Record strict PIE boot evidence
+        if: always()
+        env:
+          BOOT_OUTCOME: ${{ steps.boot.outcome }}
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/puredarwin-tcg-pie-output.log"
+          {
+            echo '## QEMU 11.1.0 TCG PIE boot'
+            echo
+            echo "- Boot step result: \`${BOOT_OUTCOME:-unknown}\`"
+            echo "- QEMU source revision: \`${QEMU_REV}\`"
+            echo '- CPU profile: QEMU `-cpu max`; `--require-pie` requires exactly one host TCR2_EL1.PIE=1 report and XNU PIE mapping mode=1.'
+            echo '- Required guest evidence: XNU bootstrap write/execute probes, stage-210 page-table write/exec probes, PureDarwin userland marker, guest halt, XNU unload, and QEMU power-off.'
+            echo '- Route: x86-64 runner → Linux ARM64 guest under QEMU TCG → FKI/XNU → PureDarwin console.'
+            echo '- This TCG guest profile is supplemental validation; native hosted-XNU x86_64 remains the project goal and ARM64 support is preserved.'
+            if [ -s "$output" ]; then
+              echo
+              echo '### Boot diagnostics'
+              echo '```text'
+              tail -n 160 "$output"
+              echo '```'
+            else
+              echo
+              echo 'No strict PIE boot output file was produced.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain strict PIE boot logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: puredarwin-tcg-pie-boot-log
+          path: |
+            ${{ runner.temp }}/puredarwin-tcg-pie-serial.log
+            ${{ runner.temp }}/puredarwin-tcg-pie-output.log
+            ${{ runner.temp }}/qemu-11.1-version.txt
           if-no-files-found: ignore
           retention-days: 30
 

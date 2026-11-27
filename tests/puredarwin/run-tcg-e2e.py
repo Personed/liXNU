@@ -108,6 +108,11 @@ def main() -> int:
     parser.add_argument("serial_log", type=Path)
     parser.add_argument("--timeout-seconds", type=int, default=14400)
     parser.add_argument("--qemu", default="qemu-system-aarch64")
+    parser.add_argument(
+        "--qemu-cpu",
+        default="max",
+        help="QEMU guest CPU model (default: max; direct profiles may select cortex-a710)",
+    )
     parser.add_argument("--qemu-memory", default="16G")
     parser.add_argument("--linux-memory", default="7G")
     parser.add_argument("--fki-carve-base", default="0x200000000")
@@ -120,7 +125,21 @@ def main() -> int:
         help="XNU's DRAM size in MiB; reserve additional FKI carve-out space for the XNU image and boot data",
     )
     parser.add_argument("--max-rss-mib", type=int)
+    parser.add_argument(
+        "--require-pie",
+        action="store_true",
+        help="require the guest to report TCR2_EL1.PIE=1 and pass XNU page-table probes before userland",
+    )
+    parser.add_argument(
+        "--require-direct",
+        action="store_true",
+        help="require TCR2_EL1.PIE=0 (or unsupported TCR2) and XNU PIE mapping mode=0",
+    )
     args = parser.parse_args()
+    if not args.qemu_cpu.strip():
+        parser.error("--qemu-cpu must not be empty")
+    if args.require_pie and args.require_direct:
+        parser.error("--require-pie and --require-direct are mutually exclusive")
     for path in (args.kernel, args.initramfs, args.disk):
         if not path.is_file():
             parser.error(f"missing input: {path}")
@@ -156,6 +175,8 @@ def main() -> int:
     required = (
         f"fki: {args.fki_carve_mb} MiB at {carve_base_hex} for the foreign kernel's DRAM",
         "xnu: contiguous DRAM at phys 0x",
+        "xnu: bootstrap window write probe passed",
+        "xnu: bootstrap window execute probe passed",
         "fki: darwin console: XNULINUX_USERLAND_OK",
         "xnu: the hosted system halted",
         "XNULINUX_E2E_PUREDARWIN_USERLAND_OK",
@@ -170,7 +191,7 @@ def main() -> int:
         "-name", "xnulinux-puredarwin-e2e",
         "-machine", "virt,virtualization=off",
         "-accel", "tcg,thread=multi",
-        "-cpu", "max",
+        "-cpu", args.qemu_cpu,
         "-smp", "2",
         "-m", args.qemu_memory,
         "-nodefaults",
@@ -208,7 +229,7 @@ def main() -> int:
     print(f"QEMU: {(version.stdout or version.stderr).splitlines()[0]}")
     print(
         "Profile: ARM64 QEMU virt, TCG, "
-        f"{args.qemu_memory} guest RAM, Linux mem={args.linux_memory}, "
+        f"{args.qemu_cpu} CPU, {args.qemu_memory} guest RAM, Linux mem={args.linux_memory}, "
         f"{args.fki_carve_mb} MiB FKI carve-out at {carve_base_hex}, "
         f"XNU RAM {args.xnu_ram_mb} MiB"
     )
@@ -234,6 +255,42 @@ def main() -> int:
         match = kmsg_prefix.match(line)
         messages.append(match.group(1) if match else line)
     missing = [marker for marker in required if not any(marker in line for line in messages)]
+    tcr2_logged = any("xnu: host TCR2_EL1 " in line for line in messages)
+    pie_values = []
+    xnu_pie_values = []
+    for line in messages:
+        match = re.search(r"xnu: host TCR2_EL1\.PIE (0x[0-9a-fA-F]+)(?:\s|$)", line)
+        if match:
+            pie_values.append(int(match.group(1), 16))
+        match = re.search(r"xnu: XNU PIE mapping mode (0x[0-9a-fA-F]+)(?:\s|$)", line)
+        if match:
+            xnu_pie_values.append(int(match.group(1), 16))
+    pie_logged = bool(pie_values)
+    tcr2_unsupported = any(
+        "xnu: host TCR2_EL1 unavailable; using direct permissions" in line for line in messages
+    )
+    if args.require_pie:
+        if not (tcr2_logged and len(pie_values) == 1 and pie_values[0] == 1):
+            missing.append("requires TCR2_EL1.PIE=1 (direct-permission fallback is not accepted)")
+        if len(xnu_pie_values) != 1 or xnu_pie_values[0] != 1:
+            missing.append("requires XNU PIE mapping mode=1")
+        for marker in (
+            "xnu: probe port_crumb (rw)",
+            "xnu: probe exec strlen through XNU tables",
+            "xnu: probes done",
+        ):
+            if not any(marker in line for line in messages):
+                missing.append(marker)
+    elif args.require_direct:
+        if tcr2_unsupported:
+            if pie_values:
+                missing.append("requires consistent TCR2_EL1 evidence for direct permissions")
+        elif not (tcr2_logged and len(pie_values) == 1 and pie_values[0] == 0):
+            missing.append("requires TCR2_EL1.PIE=0 or unsupported TCR2")
+        if len(xnu_pie_values) != 1 or xnu_pie_values[0] != 0:
+            missing.append("requires XNU PIE mapping mode=0")
+    elif not (tcr2_unsupported or (tcr2_logged and pie_logged)):
+        missing.append("TCR2_EL1 read and PIE-bit result (or unsupported-feature fallback)")
     darwin_line = "fki: darwin console: Darwin"
     if darwin_line not in messages:
         missing.append("exact Darwin uname output line")
@@ -248,8 +305,23 @@ def main() -> int:
         print("\n".join(log.splitlines()[-160:]), file=sys.stderr)
         return 1
 
+    printed_markers = list(required)
+    if args.require_pie:
+        printed_markers.extend((
+            "xnu: host TCR2_EL1",
+            "xnu: XNU PIE mapping mode",
+            "xnu: probe port_crumb (rw)",
+            "xnu: probe exec strlen through XNU tables",
+            "xnu: probes done",
+        ))
+    elif args.require_direct:
+        printed_markers.extend((
+            "xnu: host TCR2_EL1",
+            "xnu: host TCR2_EL1 unavailable",
+            "xnu: XNU PIE mapping mode",
+        ))
     for line in messages:
-        if line == darwin_line or any(marker in line for marker in required):
+        if line == darwin_line or any(marker in line for marker in printed_markers):
             print(line)
     if args.max_rss_mib is not None:
         if peak_rss_kib is None:

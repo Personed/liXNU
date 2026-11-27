@@ -464,6 +464,23 @@ EXPORT_SYMBOL(fki_contig_free);
 
 static void *window_l1_created[512];
 
+int fki_tcr2_read(fki_u64 *value)
+{
+	if (!value)
+		return -EINVAL;
+	/* Kernels that do not know this capability cannot have enabled PIE in their page tables. */
+#ifdef ARM64_HAS_TCR2
+	/* TCR2_EL1 is undefined when FEAT_TCR2 is absent; only read it after Linux finalized the cap. */
+	if (!cpus_have_final_cap(ARM64_HAS_TCR2))
+		return -EOPNOTSUPP;
+	*value = read_sysreg_s(sys_reg(3, 0, 2, 0, 3));
+	return 0;
+#else
+	return -EOPNOTSUPP;
+#endif
+}
+EXPORT_SYMBOL(fki_tcr2_read);
+
 int fki_window_l1(unsigned long va, unsigned long long **l1_va, fki_u64 *l1_pa)
 {
 	u64 tcr = read_sysreg(tcr_el1);

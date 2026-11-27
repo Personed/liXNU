@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-"""Inspect Apple's latest Tahoe Internet Recovery image without retaining it."""
+"""Inspect the Intel Internet Recovery image returned by the catalog."""
 
 from __future__ import annotations
 
@@ -475,6 +475,7 @@ def main() -> int:
         "target_runtime_goal": f"macOS Tahoe {TARGET_RUNTIME_VERSION}",
         "target_runtime_build": TARGET_RUNTIME_BUILD,
         "catalog_transport": "HTTP (OpenCore Internet Recovery protocol)",
+        # Chunklist validation authenticates image bytes, not catalog selection.
         "catalog_selection_authenticated": False,
         "recovery_product_identity_verified": False,
         "apple_chunklist_verified": False,

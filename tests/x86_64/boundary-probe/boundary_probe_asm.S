@@ -104,12 +104,75 @@ SYM_FUNC_START(x86_boundary_probe_inner)
 	movq %rax, BP_OFF_RFLAGS_DURING(%rdi)
 	cld
 
+	cmpl $BP_MODE_EXCEPTION_PF, %esi
+	jae .Lexception_window
 	testl %esi, %esi
 	jnz .Lsoftware_abort
 	xorl %eax, %eax
 	jmp .Lreturn_with_changed_flags
 .Lsoftware_abort:
 	movq $-125, %rax /* -ECANCELED */
+	jmp .Lreturn_with_changed_flags
+
+.Lexception_window:
+	leaq x86_boundary_probe_exception_control(%rip), %rax
+	movq %rsp, BPX_OFF_ENVELOPE_RSP(%rax)
+	leaq .Lpost_exception_injection(%rip), %rcx
+	movq %rcx, BPX_OFF_POST_INJECTION_RIP(%rax)
+	cmpl $BP_MODE_EXCEPTION_GP, %esi
+	je .Lexception_setup_gp
+	leaq .Lpf_fault_instruction(%rip), %rcx
+	movq %rcx, BPX_OFF_EXPECTED_RIP(%rax)
+	movq $14, BPX_OFF_EXPECTED_VECTOR(%rax)
+	movq $BPX_STATE_ARMED, BPX_OFF_STATE(%rax)
+	lidt BPX_OFF_SHADOW_DESC(%rax)
+	xorl %eax, %eax
+.Lpf_fault_instruction:
+	movb (%rax), %al
+	jmp .Lpost_exception_injection
+
+.Lexception_setup_gp:
+	leaq .Lgp_fault_instruction(%rip), %rcx
+	movq %rcx, BPX_OFF_EXPECTED_RIP(%rax)
+	movq $13, BPX_OFF_EXPECTED_VECTOR(%rax)
+	movq $BPX_STATE_ARMED, BPX_OFF_STATE(%rax)
+	lidt BPX_OFF_SHADOW_DESC(%rax)
+	movl $0xdeadbeef, %ecx
+.Lgp_fault_instruction:
+	rdmsr
+
+.Lpost_exception_injection:
+	leaq x86_boundary_probe_exception_control(%rip), %rax
+	lidt BPX_OFF_ORIGINAL_DESC(%rax)
+	sidt BPX_OFF_READBACK_DESC(%rax)
+	movzwl BPX_OFF_ORIGINAL_DESC(%rax), %ecx
+	movzwl BPX_OFF_READBACK_DESC(%rax), %edx
+	cmpl %edx, %ecx
+	jne .Lterminal_post
+	movq BPX_OFF_ORIGINAL_DESC+2(%rax), %rcx
+	cmpq BPX_OFF_READBACK_DESC+2(%rax), %rcx
+	jne .Lterminal_post
+	orq $BPX_PROOF_IDTR, BPX_OFF_PROOF_FLAGS(%rax)
+	movq BPX_OFF_ENVELOPE_RSP(%rax), %rcx
+	cmpq %rsp, %rcx
+	jne .Lterminal_post
+	movq %rsp, BPX_OFF_FINAL_RSP(%rax)
+	orq $BPX_PROOF_RSP, BPX_OFF_PROOF_FLAGS(%rax)
+	cmpq $1, BPX_OFF_RECOVERY_COUNT(%rax)
+	je .Lexception_recovered
+	cmpq $0, BPX_OFF_RECOVERY_COUNT(%rax)
+	je .Lexception_done
+	jmp .Lterminal_post
+.Lexception_recovered:
+	cmpq $BPX_STATE_DISARMED, BPX_OFF_STATE(%rax)
+	jne .Lterminal_post
+.Lexception_done:
+	xorl %eax, %eax
+	jmp .Lreturn_with_changed_flags
+
+.Lterminal_post:
+	movl $0x43, %eax
+	jmp x86_boundary_probe_terminal
 
 .Lreturn_with_changed_flags:
 	/* Make both CF and DF differ from the entry state so the outer restore is tested. */
@@ -129,3 +192,124 @@ SYM_FUNC_START(x86_boundary_probe_inner)
 	clc
 	RET
 SYM_FUNC_END(x86_boundary_probe_inner)
+
+/* Raw #GP/#PF entries for the disposable shadow-IDT test. */
+SYM_FUNC_START(x86_boundary_probe_gp_handler)
+	movq %rax, x86_boundary_probe_exception_control+BPX_OFF_FAULT_SCRATCH_RAX(%rip)
+	movl $13, %eax
+	jmp x86_boundary_probe_exception_common
+SYM_FUNC_END(x86_boundary_probe_gp_handler)
+
+SYM_FUNC_START(x86_boundary_probe_pf_handler)
+	movq %rax, x86_boundary_probe_exception_control+BPX_OFF_FAULT_SCRATCH_RAX(%rip)
+	movl $14, %eax
+	jmp x86_boundary_probe_exception_common
+SYM_FUNC_END(x86_boundary_probe_pf_handler)
+
+SYM_FUNC_START(x86_boundary_probe_exception_common)
+	movq %rbx, x86_boundary_probe_exception_control+BPX_OFF_FAULT_SCRATCH_RBX(%rip)
+	movq %rcx, x86_boundary_probe_exception_control+BPX_OFF_FAULT_SCRATCH_RCX(%rip)
+	movq %rdx, x86_boundary_probe_exception_control+BPX_OFF_FAULT_SCRATCH_RDX(%rip)
+	leaq x86_boundary_probe_exception_control(%rip), %rbx
+	mov %cr2, %rcx
+	movq %rcx, BPX_OFF_FAULT_CR2(%rbx)
+	movabs $BPX_MAGIC, %rcx
+	cmpq %rcx, BPX_OFF_MAGIC(%rbx)
+	jne .Lterminal_raw
+	cmpq $BPX_STATE_ARMED, BPX_OFF_STATE(%rbx)
+	jne .Lterminal_raw
+	cmpq BPX_OFF_EXPECTED_VECTOR(%rbx), %rax
+	jne .Lterminal_raw
+	cmpq $0, BPX_OFF_RECOVERY_COUNT(%rbx)
+	jne .Lterminal_raw
+	movq 8(%rsp), %rdx
+	cmpq BPX_OFF_EXPECTED_RIP(%rbx), %rdx
+	jne .Lterminal_raw
+	movq %rax, BPX_OFF_FAULT_VECTOR(%rbx)
+	movq 0(%rsp), %rcx
+	movq %rcx, BPX_OFF_FAULT_ERROR(%rbx)
+	movq %rdx, BPX_OFF_FAULT_RIP(%rbx)
+	movq 24(%rsp), %rcx
+	movq %rcx, BPX_OFF_FAULT_RFLAGS(%rbx)
+	movq 32(%rsp), %rcx
+	movq %rcx, BPX_OFF_FAULT_RSP(%rbx)
+	movq 16(%rsp), %rcx
+	movq %rcx, BPX_OFF_FAULT_CS(%rbx)
+	movq 40(%rsp), %rcx
+	movq %rcx, BPX_OFF_FAULT_SS(%rbx)
+	movq $1, BPX_OFF_RECOVERY_COUNT(%rbx)
+	leaq x86_boundary_probe_recovery(%rip), %rcx
+	movq %rcx, 8(%rsp)
+	movq BPX_OFF_RECOVERY_STACK_TOP(%rbx), %rcx
+	movq %rcx, 32(%rsp)
+	movq BPX_OFF_FAULT_SCRATCH_RDX(%rbx), %rdx
+	movq BPX_OFF_FAULT_SCRATCH_RCX(%rbx), %rcx
+	movq BPX_OFF_FAULT_SCRATCH_RBX(%rbx), %rbx
+	movq x86_boundary_probe_exception_control+BPX_OFF_FAULT_SCRATCH_RAX(%rip), %rax
+	addq $8, %rsp
+	iretq
+
+.Lterminal_raw:
+	movl $0x41, %eax
+	jmp x86_boundary_probe_terminal
+SYM_FUNC_END(x86_boundary_probe_exception_common)
+
+SYM_FUNC_START(x86_boundary_probe_recovery)
+	movq %rax, x86_boundary_probe_exception_control+BPX_OFF_REC_SCRATCH_RAX(%rip)
+	movq %rbx, x86_boundary_probe_exception_control+BPX_OFF_REC_SCRATCH_RBX(%rip)
+	movq %rcx, x86_boundary_probe_exception_control+BPX_OFF_REC_SCRATCH_RCX(%rip)
+	movq %rdx, x86_boundary_probe_exception_control+BPX_OFF_REC_SCRATCH_RDX(%rip)
+	leaq x86_boundary_probe_exception_control(%rip), %rbx
+	movabs $BPX_MAGIC, %rcx
+	cmpq %rcx, BPX_OFF_MAGIC(%rbx)
+	jne .Lterminal_recovery
+	cmpq $1, BPX_OFF_RECOVERY_COUNT(%rbx)
+	jne .Lterminal_recovery
+	cmpq $BPX_STATE_ARMED, BPX_OFF_STATE(%rbx)
+	jne .Lterminal_recovery
+	movq BPX_OFF_FAULT_VECTOR(%rbx), %rax
+	cmpq BPX_OFF_EXPECTED_VECTOR(%rbx), %rax
+	jne .Lterminal_recovery
+	movq BPX_OFF_FAULT_RIP(%rbx), %rax
+	cmpq BPX_OFF_EXPECTED_RIP(%rbx), %rax
+	jne .Lterminal_recovery
+	movq BPX_OFF_RECOVERY_LOW_CANARY_PTR(%rbx), %rax
+	movabs $BPX_RECOVERY_LOW_CANARY, %rcx
+	cmpq %rcx, (%rax)
+	jne .Lterminal_recovery
+	movq BPX_OFF_RECOVERY_HIGH_CANARY_PTR(%rbx), %rax
+	movabs $BPX_RECOVERY_HIGH_CANARY, %rcx
+	cmpq %rcx, (%rax)
+	jne .Lterminal_recovery
+	movq $BPX_STATE_DISARMED, BPX_OFF_STATE(%rbx)
+	lidt BPX_OFF_ORIGINAL_DESC(%rbx)
+	sidt BPX_OFF_READBACK_DESC(%rbx)
+	movzwl BPX_OFF_ORIGINAL_DESC(%rbx), %eax
+	movzwl BPX_OFF_READBACK_DESC(%rbx), %ecx
+	cmpl %ecx, %eax
+	jne .Lterminal_recovery
+	movq BPX_OFF_ORIGINAL_DESC+2(%rbx), %rax
+	cmpq BPX_OFF_READBACK_DESC+2(%rbx), %rax
+	jne .Lterminal_recovery
+	orq $(BPX_PROOF_CANARIES | BPX_PROOF_IDTR), BPX_OFF_PROOF_FLAGS(%rbx)
+	movq x86_boundary_probe_exception_control+BPX_OFF_REC_SCRATCH_RDX(%rip), %rdx
+	movq x86_boundary_probe_exception_control+BPX_OFF_REC_SCRATCH_RCX(%rip), %rcx
+	movq x86_boundary_probe_exception_control+BPX_OFF_REC_SCRATCH_RBX(%rip), %rbx
+	movq x86_boundary_probe_exception_control+BPX_OFF_REC_SCRATCH_RAX(%rip), %rax
+	movq x86_boundary_probe_exception_control+BPX_OFF_ENVELOPE_RSP(%rip), %rsp
+	jmp .Lpost_exception_injection
+
+.Lterminal_recovery:
+	movl $0x42, %eax
+	jmp x86_boundary_probe_terminal
+SYM_FUNC_END(x86_boundary_probe_recovery)
+
+SYM_FUNC_START(x86_boundary_probe_terminal)
+	movq %rax, x86_boundary_probe_exception_control+BPX_OFF_TERMINAL_CODE(%rip)
+	movl $0xf4, %edx
+	outb %al, %dx
+	cli
+.Lterminal_halt:
+	hlt
+	jmp .Lterminal_halt
+SYM_FUNC_END(x86_boundary_probe_terminal)

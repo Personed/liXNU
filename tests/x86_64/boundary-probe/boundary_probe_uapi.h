@@ -10,8 +10,10 @@ struct x86_boundary_probe_request {
 	__u32 mode;
 };
 
-#define X86_BOUNDARY_PROBE_MODE_RETURN 0
-#define X86_BOUNDARY_PROBE_MODE_ABORT  1
+#define X86_BOUNDARY_PROBE_MODE_RETURN       0
+#define X86_BOUNDARY_PROBE_MODE_ABORT        1
+#define X86_BOUNDARY_PROBE_MODE_EXCEPTION_PF 2
+#define X86_BOUNDARY_PROBE_MODE_EXCEPTION_GP 3
 #define X86_BOUNDARY_PROBE_RUN _IOW(0xb7, 1, struct x86_boundary_probe_request)
 
 #endif

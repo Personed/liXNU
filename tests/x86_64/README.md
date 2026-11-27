@@ -71,22 +71,25 @@ only a disposable Linux guest; it does not demonstrate macOS boot, KVM, Intel/AM
 
 The boundary probe builds a separate test module and boots it only in a disposable x86_64 Linux VM. It runs a synthetic
 assembly call on each requested online CPU via `work_on_cpu`, switches to a temporary stack with low/high canaries,
-deliberately clobbers callee-saved GPRs and RFLAGS, and checks normal and software-abort returns. Kernel snapshots
+deliberately clobbers callee-saved GPRs and RFLAGS, checks normal and software-abort returns, and injects one controlled #PF and one controlled #GP through a test-owned shadow IDT. Kernel snapshots
 compare task/CPU identity, task stack bounds/RSP, CR3 root plus PCID, FS/GS/KERNEL_GS bases, preemption/IRQ state and
 XCR0. The preemption-count check is nonzero only when the kernel is built with `CONFIG_PREEMPT_COUNT`; all builds still
 compare its before/after value. The shim entry uses the SysV 16-byte stack rule; the Linux kernel call frame is checked
 for bounds and restoration without imposing that user ABI on internal kernel calls. Userspace captures and compares
 the full standard XSAVE image for all XCR0-enabled user components around the raw ioctl syscall. The probe deliberately
 seeds and overwrites x87 ST(0), the x87 control word, MXCSR, and YMM0–YMM7. Other enabled user components have passive
-before/after comparison. The test also checks Linux syscalls before and after each ioctl. The VM must unload both modules and
+before/after comparison. The exception modes replace only the #PF/#GP gates in the copied table, record vector/RIP/error/CR2/frame metadata,
+recover once through a separate recovery stack, restore and reread the original IDTR, and verify envelope RSP/canary
+proof bits before C-level validation. The test also checks Linux syscalls before and after each ioctl. The VM must unload both modules and
 power off cleanly. TCG runs on every CI attempt; the script adds a KVM run when
 `/dev/kvm` and host XSAVE/AVX are available. On a local host whose QEMU is older than 8.2,
 setting `X86_BOUNDARY_ALLOW_KVM_ONLY=1` skips the unsupported TCG profile and instead requires
 the KVM/host run. That explicit fallback is complementary local validation only; it is not a
 substitute for the CI TCG profile.
 
-This is a host-only call/return test. It does not enter XNU, change `fki.h`, enable FKI capabilities, change CR3 or GS,
-inspect supervisor XSS state, install or replace Linux IDT, page-fault, general-protection, or syscall handlers, or run C under foreign host state.
+This is a host-only call/return and controlled-exception test. It does not enter XNU, change `fki.h`, enable FKI capabilities, change CR3 or GS,
+inspect supervisor XSS state, replace syscall handlers, or run C under foreign host state. The shadow-IDT replacement is disposable-VM-only;
+other synchronous vectors currently retain their copied Linux gates rather than dedicated terminal gates, and NMI remains outside the evidence.
 Passing it does not establish native XNU runtime support or prove the proposed early exception/syscall bridge.
 The separate [test-only entry/return contract](../../docs/x86_64-entry-return-contract.md) defines the remaining gates
 and lists the Tahoe artifact and ABI evidence still required before any XNU handoff can be considered.

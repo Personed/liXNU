@@ -8,6 +8,7 @@
 #include <linux/miscdevice.h>
 #include <linux/mm.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/preempt.h>
 #include <linux/sched.h>
 #include <linux/sched/task_stack.h>
@@ -21,6 +22,7 @@
 #include <asm/msr.h>
 #include <asm/processor-flags.h>
 #include <asm/special_insns.h>
+#include <asm/trapnr.h>
 
 #include "fki.h"
 #include "boundary_probe_asm.h"
@@ -49,6 +51,35 @@ struct bp_asm_result {
 	unsigned long gprs_entry[6];
 	unsigned long gprs_during[6];
 	unsigned long gprs_return[6];
+};
+
+struct bp_exception_control {
+	u64 magic;
+	u64 state;
+	u64 expected_vector;
+	u64 expected_rip;
+	u64 post_injection_rip;
+	u64 recovery_stack_top;
+	u64 recovery_low_canary_ptr;
+	u64 recovery_high_canary_ptr;
+	u64 envelope_rsp;
+	u64 final_rsp;
+	struct desc_ptr original_desc;
+	struct desc_ptr shadow_desc;
+	struct desc_ptr readback_desc;
+	u64 terminal_code;
+	u64 recovery_count;
+	u64 fault_vector;
+	u64 fault_error;
+	u64 fault_rip;
+	u64 fault_rflags;
+	u64 fault_rsp;
+	u64 fault_cs;
+	u64 fault_ss;
+	u64 fault_cr2;
+	u64 proof_flags;
+	u64 fault_scratch[4];
+	u64 recovery_scratch[4];
 };
 
 struct bp_host_snapshot {
@@ -86,10 +117,26 @@ static_assert(offsetof(struct bp_asm_result, gprs_during) == BP_OFF_GPRS_DURING)
 static_assert(offsetof(struct bp_asm_result, gprs_return) == BP_OFF_GPRS_RETURN);
 static_assert(-ECANCELED == -125);
 static_assert(X86_BOUNDARY_PROBE_RUN == _IOW(0xb7, 1, struct x86_boundary_probe_request));
+static_assert(sizeof(struct bp_exception_control) == BPX_SIZE);
+static_assert(offsetof(struct bp_exception_control, original_desc) == BPX_OFF_ORIGINAL_DESC);
+static_assert(offsetof(struct bp_exception_control, shadow_desc) == BPX_OFF_SHADOW_DESC);
+static_assert(offsetof(struct bp_exception_control, readback_desc) == BPX_OFF_READBACK_DESC);
+static_assert(offsetof(struct bp_exception_control, terminal_code) == BPX_OFF_TERMINAL_CODE);
+static_assert(offsetof(struct bp_exception_control, fault_scratch) == BPX_OFF_FAULT_SCRATCH_RAX);
+static_assert(offsetof(struct bp_exception_control, recovery_scratch) == BPX_OFF_REC_SCRATCH_RAX);
+static_assert(BP_MODE_EXCEPTION_PF == X86_BOUNDARY_PROBE_MODE_EXCEPTION_PF);
+static_assert(BP_MODE_EXCEPTION_GP == X86_BOUNDARY_PROBE_MODE_EXCEPTION_GP);
+static_assert(BPX_RECOVERY_LOW_CANARY == BP_STACK_LOW_CANARY);
+static_assert(BPX_RECOVERY_HIGH_CANARY == BP_STACK_HIGH_CANARY);
 
 void x86_boundary_probe_switch_stack(void *stack_top, struct bp_asm_result *result,
 				     unsigned int mode);
 void x86_boundary_probe_clobber_xstate(void);
+void x86_boundary_probe_gp_handler(void);
+void x86_boundary_probe_pf_handler(void);
+
+struct bp_exception_control x86_boundary_probe_exception_control;
+static DEFINE_MUTEX(bp_ioctl_mutex);
 
 static int bp_read_xcr0(u64 *xcr0)
 {
@@ -202,6 +249,95 @@ static bool bp_gprs_have_sentinels(const unsigned long *gprs)
 	return bp_gprs_match(gprs, sentinels);
 }
 
+static bool bp_mode_exception(unsigned int mode)
+{
+	return mode == X86_BOUNDARY_PROBE_MODE_EXCEPTION_PF ||
+	       mode == X86_BOUNDARY_PROBE_MODE_EXCEPTION_GP;
+}
+
+static int bp_prepare_exception(unsigned int mode,
+				const struct bp_host_snapshot *before,
+				void *shadow_idt, unsigned long recovery_base)
+{
+	struct bp_exception_control *control = &x86_boundary_probe_exception_control;
+	gate_desc *gates = shadow_idt;
+	size_t idt_bytes = before->idt_limit + 1;
+	u64 *low_canary = (u64 *)recovery_base;
+	u64 *high_canary = (u64 *)(recovery_base + PAGE_SIZE - sizeof(u64));
+
+	if (!idt_bytes || idt_bytes > PAGE_SIZE)
+		return -EOPNOTSUPP;
+	memcpy(shadow_idt, (const void *)before->idt_base, idt_bytes);
+	pack_gate(&gates[X86_TRAP_PF], GATE_INTERRUPT,
+		  (unsigned long)x86_boundary_probe_pf_handler, 0, 0, 0);
+	pack_gate(&gates[X86_TRAP_GP], GATE_INTERRUPT,
+		  (unsigned long)x86_boundary_probe_gp_handler, 0, 0, 0);
+
+	WRITE_ONCE(*low_canary, BPX_RECOVERY_LOW_CANARY);
+	WRITE_ONCE(*high_canary, BPX_RECOVERY_HIGH_CANARY);
+	memset(control, 0, sizeof(*control));
+	control->magic = BPX_MAGIC;
+	control->state = BPX_STATE_DISARMED;
+	control->expected_vector = mode == X86_BOUNDARY_PROBE_MODE_EXCEPTION_PF ?
+		X86_TRAP_PF : X86_TRAP_GP;
+	control->original_desc.address = before->idt_base;
+	control->original_desc.size = before->idt_limit;
+	control->shadow_desc.address = (unsigned long)shadow_idt;
+	control->shadow_desc.size = before->idt_limit;
+	control->recovery_stack_top = recovery_base + PAGE_SIZE - 2 * sizeof(u64);
+	control->recovery_low_canary_ptr = recovery_base;
+	control->recovery_high_canary_ptr = recovery_base + PAGE_SIZE - sizeof(u64);
+	return 0;
+}
+
+static bool bp_replaced_gate_byte(size_t byte)
+{
+	size_t pf = X86_TRAP_PF * sizeof(gate_desc);
+	size_t gp = X86_TRAP_GP * sizeof(gate_desc);
+
+	return (byte >= pf && byte < pf + sizeof(gate_desc)) ||
+	       (byte >= gp && byte < gp + sizeof(gate_desc));
+}
+
+static bool bp_shadow_idt_matches(const struct bp_host_snapshot *before,
+				  const void *shadow_idt)
+{
+	const u8 *original = (const u8 *)before->idt_base;
+	const u8 *shadow = shadow_idt;
+	size_t byte, bytes = before->idt_limit + 1;
+
+	for (byte = 0; byte < bytes; byte++) {
+		if (!bp_replaced_gate_byte(byte) && original[byte] != shadow[byte])
+			return false;
+	}
+	return true;
+}
+
+static bool bp_exception_valid(const struct bp_exception_control *control,
+			       const struct bp_host_snapshot *before,
+			       const void *shadow_idt)
+{
+	u64 expected_vector = control->expected_vector;
+	const u64 *low = (const u64 *)(unsigned long)control->recovery_low_canary_ptr;
+	const u64 *high = (const u64 *)(unsigned long)control->recovery_high_canary_ptr;
+	u64 expected_proofs = BPX_PROOF_CANARIES | BPX_PROOF_IDTR | BPX_PROOF_RSP;
+
+	if (!bp_shadow_idt_matches(before, shadow_idt) ||
+	    control->terminal_code || control->magic != BPX_MAGIC ||
+	    control->state != BPX_STATE_DISARMED || control->recovery_count != 1 ||
+	    control->proof_flags != expected_proofs ||
+	    !control->expected_rip || control->fault_rip != control->expected_rip ||
+	    control->fault_vector != expected_vector ||
+	    control->fault_rsp != control->envelope_rsp ||
+	    control->final_rsp != control->envelope_rsp || !control->fault_cs ||
+	    READ_ONCE(*low) != BPX_RECOVERY_LOW_CANARY ||
+	    READ_ONCE(*high) != BPX_RECOVERY_HIGH_CANARY)
+		return false;
+	if (expected_vector == X86_TRAP_PF)
+		return control->fault_cr2 == 0 && (control->fault_error & 0x7) == 0;
+	return control->fault_error == 0;
+}
+
 static long bp_run_on_cpu(void *arg)
 {
 	struct bp_work *work = arg;
@@ -209,8 +345,10 @@ static long bp_run_on_cpu(void *arg)
 	struct bp_asm_result result = {};
 	unsigned long irq_flags;
 	unsigned long stack_base, stack_limit;
-	struct page *stack_page;
+	struct page *stack_page, *shadow_page = NULL, *recovery_page = NULL;
 	unsigned long stack_top;
+	unsigned long recovery_base = 0;
+	void *shadow_idt = NULL;
 	u64 *low_canary, *high_canary;
 	long ret = 0;
 
@@ -220,6 +358,14 @@ static long bp_run_on_cpu(void *arg)
 	stack_page = alloc_pages(GFP_KERNEL | __GFP_ZERO, BP_STACK_ORDER);
 	if (!stack_page)
 		return -ENOMEM;
+	shadow_page = alloc_page(GFP_KERNEL | __GFP_ZERO);
+	recovery_page = alloc_page(GFP_KERNEL | __GFP_ZERO);
+	if (!shadow_page || !recovery_page) {
+		ret = -ENOMEM;
+		goto out_free;
+	}
+	shadow_idt = page_address(shadow_page);
+	recovery_base = (unsigned long)page_address(recovery_page);
 	stack_base = (unsigned long)page_address(stack_page);
 	stack_limit = stack_base + BP_STACK_SIZE;
 	low_canary = (u64 *)stack_base;
@@ -248,6 +394,12 @@ static long bp_run_on_cpu(void *arg)
 		goto out_restore;
 	}
 #endif
+	if (bp_mode_exception(work->request.mode)) {
+		ret = bp_prepare_exception(work->request.mode, &before, shadow_idt,
+					   recovery_base);
+		if (ret)
+			goto out_restore;
+	}
 	x86_boundary_probe_switch_stack((void *)stack_top, &result,
 					work->request.mode);
 	ret = bp_snapshot(&after);
@@ -279,19 +431,47 @@ static long bp_run_on_cpu(void *arg)
 		pr_err("x86-boundary-probe: state mismatch on cpu %u mode %u\n",
 		       work->request.cpu, work->request.mode);
 		ret = -EUCLEAN;
-	} else if (work->request.mode == X86_BOUNDARY_PROBE_MODE_RETURN) {
+	} else if (work->request.mode == X86_BOUNDARY_PROBE_MODE_RETURN ||
+		   bp_mode_exception(work->request.mode)) {
 		if (result.status != 0)
 			ret = -EUCLEAN;
 	} else if (result.status != -ECANCELED) {
+		ret = -EUCLEAN;
+	}
+	if (!ret && bp_mode_exception(work->request.mode) &&
+	    !bp_exception_valid(&x86_boundary_probe_exception_control, &before,
+				 shadow_idt)) {
+		pr_err("x86-boundary-probe: exception recovery mismatch on cpu %u mode %u "
+		       "count=%llu state=%llu proofs=%#llx terminal=%#llx\n",
+		       work->request.cpu, work->request.mode,
+		       x86_boundary_probe_exception_control.recovery_count,
+		       x86_boundary_probe_exception_control.state,
+		       x86_boundary_probe_exception_control.proof_flags,
+		       x86_boundary_probe_exception_control.terminal_code);
 		ret = -EUCLEAN;
 	}
 
 out_restore:
 	local_irq_restore(irq_flags);
 	preempt_enable();
+out_free:
+	if (shadow_page)
+		__free_page(shadow_page);
+	if (recovery_page)
+		__free_page(recovery_page);
 	__free_pages(stack_page, BP_STACK_ORDER);
 	if (ret)
 		return ret;
+	if (bp_mode_exception(work->request.mode))
+		pr_info("x86-boundary-probe: cpu %u mode %u exception vector=%llu rip=%#llx "
+			"error=%#llx cr2=%#llx recoveries=%llu idtr/rsp/canary proofs=%#llx\n",
+			work->request.cpu, work->request.mode,
+			x86_boundary_probe_exception_control.fault_vector,
+			x86_boundary_probe_exception_control.fault_rip,
+			x86_boundary_probe_exception_control.fault_error,
+			x86_boundary_probe_exception_control.fault_cr2,
+			x86_boundary_probe_exception_control.recovery_count,
+			x86_boundary_probe_exception_control.proof_flags);
 	pr_info("x86-boundary-probe: cpu %u mode %u restored host state "
 		"shim_entry_rsp_mod16=%lu preempt_count=%u "
 		"irqs_disabled=%u xcr0=%#llx stack_canaries=ok\n",
@@ -312,7 +492,9 @@ static long bp_ioctl(struct file *file, unsigned int command, unsigned long arg)
 	if (copy_from_user(&request, (void __user *)arg, sizeof(request)))
 		return -EFAULT;
 	if (request.mode != X86_BOUNDARY_PROBE_MODE_RETURN &&
-	    request.mode != X86_BOUNDARY_PROBE_MODE_ABORT)
+	    request.mode != X86_BOUNDARY_PROBE_MODE_ABORT &&
+	    request.mode != X86_BOUNDARY_PROBE_MODE_EXCEPTION_PF &&
+	    request.mode != X86_BOUNDARY_PROBE_MODE_EXCEPTION_GP)
 		return -EINVAL;
 	if (request.cpu >= nr_cpu_ids || !cpu_online(request.cpu))
 		return -EINVAL;
@@ -325,7 +507,9 @@ static long bp_ioctl(struct file *file, unsigned int command, unsigned long arg)
 	kernel_fpu_end();
 
 	work.request = request;
+	mutex_lock(&bp_ioctl_mutex);
 	ret = work_on_cpu(request.cpu, bp_run_on_cpu, &work);
+	mutex_unlock(&bp_ioctl_mutex);
 	return ret;
 }
 

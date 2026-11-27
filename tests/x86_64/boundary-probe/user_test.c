@@ -181,7 +181,7 @@ static int run_probe_ioctl(int fd, pid_t pid, unsigned int cpu, unsigned int mod
 	uint32_t after[8][8] __attribute__((aligned(32)));
 	void *xstate_before = NULL, *xstate_after = NULL;
 	long result;
-	long expected = mode == X86_BOUNDARY_PROBE_MODE_RETURN ? 0 : -ECANCELED;
+	long expected = mode == X86_BOUNDARY_PROBE_MODE_ABORT ? -ECANCELED : 0;
 	int alloc_error;
 	size_t mismatch;
 
@@ -267,14 +267,16 @@ int main(void)
 		return 1;
 	for (cpu = 0; cpu < cpu_count; cpu++) {
 		if (run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_RETURN, &xsave) ||
-		    run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_ABORT, &xsave))
+		    run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_ABORT, &xsave) ||
+		    run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_EXCEPTION_PF, &xsave) ||
+		    run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_EXCEPTION_GP, &xsave))
 			return 1;
 	}
 	if (close(fd)) {
 		perror("close probe device");
 		return 1;
 	}
-	printf("x86 boundary probe passed: %ld CPUs, return/abort, host state, enabled XSAVE/x87/MXCSR/YMM, Linux syscalls (xcr0=%#llx size=%zu)\n",
+	printf("x86 boundary probe passed: %ld CPUs, return/abort/#PF/#GP recovery, host state, enabled XSAVE/x87/MXCSR/YMM, Linux syscalls (xcr0=%#llx size=%zu)\n",
 	       cpu_count, (unsigned long long)xsave.mask, xsave.size);
 	return 0;
 }

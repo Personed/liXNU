@@ -69,6 +69,19 @@ tests/x86_64/test-boundary-probe-vm.sh /path/to/x86_64/kernel-headers
 The smoke initramfs must print `XNU_LINUX_TCG_BOOTED` on its serial console and shut down before the timeout. TCG boots
 only a disposable Linux guest; it does not demonstrate macOS boot, KVM, Intel/AMD compatibility or useful performance.
 
+The one-argument boundary probe command uses APT on Debian or Ubuntu. It needs an unsigned kernel image package
+matching the kernel headers and a `busybox-static` package in the configured repositories. To use local files on
+another x86_64 Linux distribution, pass a bootable kernel image for those headers and a static x86_64 BusyBox:
+
+```sh
+tests/x86_64/test-boundary-probe-vm.sh /path/to/kernel-headers /path/to/vmlinuz /path/to/busybox-static
+```
+
+The runner builds its own initramfs and checks the booted kernel release against the headers before loading a module.
+The BusyBox binary must support `--install -s` and include `sh`, `cat`, `uname`, `mount`, `insmod`, `rmmod`,
+`dmesg`, `sync`, and `poweroff`. Both modes require compiler and kernel build tools, static C libraries, `cpio`, and
+QEMU. Use the kernel configuration that produced the headers so the disposable guest can load the test modules.
+
 The boundary probe builds a separate test module and boots it only in a disposable x86_64 Linux VM. It runs a synthetic
 assembly call on each requested online CPU via `work_on_cpu`, switches to a temporary stack with low/high canaries,
 deliberately clobbers callee-saved GPRs and RFLAGS, and checks normal and software-abort returns. Kernel snapshots
@@ -76,11 +89,14 @@ compare task/CPU identity, task stack bounds/RSP, CR3 root plus PCID, FS/GS/KERN
 XCR0. The preemption-count check is nonzero only when the kernel is built with `CONFIG_PREEMPT_COUNT`; all builds still
 compare its before/after value. The shim entry uses the SysV 16-byte stack rule; the Linux kernel call frame is checked
 for bounds and restoration without imposing that user ABI on internal kernel calls. Userspace captures and compares
-the full standard XSAVE image for all XCR0-enabled user components around the raw ioctl syscall. Only YMM0–YMM7 are
-deliberately seeded and clobbered; other enabled components have passive before/after comparison, not an active
-pattern test. The test also checks Linux syscalls before and after each ioctl. The VM must unload both modules and
+the full standard XSAVE image for all XCR0-enabled user components around the raw ioctl syscall. The probe deliberately
+seeds and overwrites x87 ST(0), the x87 control word, MXCSR, and YMM0–YMM7. Other enabled user components have passive
+before/after comparison. The test also checks Linux syscalls before and after each ioctl. The VM must unload both modules and
 power off cleanly. TCG runs on every CI attempt; the script adds a KVM run when
-`/dev/kvm` and host XSAVE/AVX are available.
+`/dev/kvm` and host XSAVE/AVX are available. On a local host whose QEMU is older than 8.2,
+setting `X86_BOUNDARY_ALLOW_KVM_ONLY=1` skips the unsupported TCG profile and instead requires
+the KVM/host run. That explicit fallback is complementary local validation only; it is not a
+substitute for the CI TCG profile.
 
 This is a host-only call/return test. It does not enter XNU, change `fki.h`, enable FKI capabilities, change CR3 or GS,
 inspect supervisor XSS state, install or replace Linux IDT, page-fault, general-protection, or syscall handlers, or run C under foreign host state.

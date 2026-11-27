@@ -5,8 +5,10 @@
  *
  * ABI references (pinned public XNU headers):
  *   osfmk/mach/machine.h: CPU_TYPE_X86_64, CPU_SUBTYPE_X86_64_{ALL,H}
- *   EXTERNAL_HEADERS/mach-o/loader.h: Mach-O commands and segment layouts
+ *   EXTERNAL_HEADERS/mach-o/loader.h: Mach-O commands, fileset entries, and segments
  *   EXTERNAL_HEADERS/mach-o/fixup-chains.h: chained-fixup starts/layouts
+ *   dyld common/MachOFileAbstraction.hpp: fileset entry ID offset is relative to command
+ *   dyld mach_o/UnsafeHeader.cpp: fileset entry ID offset and string bounds validation
  *   osfmk/mach/i386/thread_status.h: x86_THREAD_STATE64 flavor and count
  *   osfmk/mach/i386/_structs.h: x86_thread_state64 register order
  */
@@ -21,6 +23,7 @@
 
 #define MH_MAGIC_64 0xfeedfacfU
 #define MH_EXECUTE 2U
+#define MH_FILESET 12U
 #define CPU_TYPE_X86_64 0x01000007U
 #define CPU_SUBTYPE_X86_64_ALL 3U
 #define CPU_SUBTYPE_X86_64_H 8U
@@ -33,14 +36,16 @@
 #define LC_DATA_IN_CODE 0x29U
 #define LC_DYLIB_CODE_SIGN_DRS 0x2bU
 #define LC_LINKER_OPTIMIZATION_HINT 0x2eU
+#define LC_REQ_DYLD 0x80000000U
 #define LC_DYLD_EXPORTS_TRIE 0x80000033U
 #define LC_DYLD_CHAINED_FIXUPS 0x80000034U
 #define LC_DYLD_INFO_ONLY 0x80000022U
+#define LC_FILESET_ENTRY (0x35U | LC_REQ_DYLD)
 #define LC_UNIXTHREAD 0x5U
 #define X86_THREAD_STATE64 4U
 #define X86_THREAD_STATE64_COUNT 42U
 #define X86_THREAD_STATE64_RIP_INDEX 16U
-#define LC_REQ_DYLD 0x80000000U
+#define FILESET_ENTRY_COMMAND_SIZE 32U
 #define LINKEDIT_DATA_COMMAND_SIZE 16U
 #define DYLD_INFO_COMMAND_SIZE 48U
 #define SYMTAB_COMMAND_SIZE 24U
@@ -76,6 +81,15 @@ struct segment_info {
 	xnu_macho_u32 flags;
 };
 
+struct header_region {
+	xnu_macho_u32 file_type;
+	xnu_macho_u32 cpu_subtype;
+	xnu_macho_u32 ncmds;
+	xnu_macho_u32 sizeofcmds;
+	unsigned long command_off;
+	unsigned long command_end;
+};
+
 static xnu_macho_u32 read_u32le(const unsigned char *p)
 {
 	return (xnu_macho_u32)p[0] |
@@ -108,6 +122,205 @@ static int reject(struct xnu_macho_x86_64_info *out, int error)
 {
 	clear_info(out);
 	return error;
+}
+
+static int validate_load_command_region(const unsigned char *file,
+					unsigned long command_off,
+					unsigned long command_end,
+					xnu_macho_u32 ncmds)
+{
+	xnu_macho_u32 i;
+
+	if (command_end < command_off ||
+	    (command_end - command_off) % LOAD_COMMAND_SIZE ||
+	    ncmds > (command_end - command_off) / LOAD_COMMAND_SIZE)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+
+	for (i = 0; i < ncmds; i++) {
+		xnu_macho_u32 command_size;
+
+		if (command_end - command_off < LOAD_COMMAND_SIZE)
+			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+		command_size = read_u32le(file + command_off + 4);
+		if (command_size < LOAD_COMMAND_SIZE ||
+		    (command_size & (LOAD_COMMAND_SIZE - 1U)) ||
+		    command_size > command_end - command_off)
+			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+		command_off += command_size;
+	}
+
+	if (command_off != command_end)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	return 0;
+}
+
+static int parse_header_region(const unsigned char *file,
+			       unsigned long file_size,
+			       xnu_macho_u64 header_fileoff,
+			       struct header_region *out)
+{
+	const unsigned char *header;
+	unsigned long header_off;
+	xnu_macho_u32 cputype;
+	xnu_macho_u32 sizeofcmds;
+	int err;
+
+	if (header_fileoff > (xnu_macho_u64)file_size)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	header_off = (unsigned long)header_fileoff;
+	if (file_size - header_off < MACH_HEADER_64_SIZE)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	header = file + header_off;
+	if (read_u32le(header) != MH_MAGIC_64)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	cputype = read_u32le(header + 4);
+	if (cputype != CPU_TYPE_X86_64)
+		return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
+	out->cpu_subtype = read_u32le(header + 8);
+	if (out->cpu_subtype != CPU_SUBTYPE_X86_64_ALL &&
+	    out->cpu_subtype != CPU_SUBTYPE_X86_64_H)
+		return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
+	out->file_type = read_u32le(header + 12);
+	if (read_u32le(header + 28) != 0)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	out->ncmds = read_u32le(header + 16);
+	sizeofcmds = read_u32le(header + 20);
+	if (!out->ncmds || sizeofcmds < LOAD_COMMAND_SIZE ||
+	    (unsigned long)sizeofcmds >
+		file_size - header_off - MACH_HEADER_64_SIZE ||
+	    (sizeofcmds & (LOAD_COMMAND_SIZE - 1U)) ||
+	    out->ncmds > sizeofcmds / LOAD_COMMAND_SIZE)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	out->sizeofcmds = sizeofcmds;
+	out->command_off = header_off + MACH_HEADER_64_SIZE;
+	out->command_end = out->command_off + (unsigned long)sizeofcmds;
+	err = validate_load_command_region(file, out->command_off,
+					   out->command_end, out->ncmds);
+	if (err)
+		return err;
+	return 0;
+}
+
+static int fileset_entry_id(const unsigned char *command,
+			    xnu_macho_u32 command_size,
+			    int *is_kernel_entry)
+{
+	static const unsigned char kernel_id[] = "com.apple.kernel";
+	xnu_macho_u32 entry_id;
+	const unsigned char *id;
+	unsigned long available;
+	unsigned long id_size = 0;
+	unsigned long string_end;
+	unsigned long padding;
+	unsigned long i;
+	int match = 1;
+
+	if (command_size < FILESET_ENTRY_COMMAND_SIZE ||
+	    read_u32le(command + 28) != 0)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	entry_id = read_u32le(command + 24);
+	if (entry_id < FILESET_ENTRY_COMMAND_SIZE || entry_id >= command_size)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	for (i = FILESET_ENTRY_COMMAND_SIZE; i < entry_id; i++)
+		if (command[i] != 0)
+			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	id = command + entry_id;
+	available = command_size - entry_id;
+	while (id_size < available && id[id_size] != '\0')
+		id_size++;
+	if (!id_size || id_size == available)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	/* lc_str is relative to command start; keep the string inside cmdsize. */
+	string_end = (unsigned long)entry_id + id_size + 1UL;
+	padding = (LOAD_COMMAND_SIZE -
+		   (string_end & (LOAD_COMMAND_SIZE - 1U))) &
+		  (LOAD_COMMAND_SIZE - 1U);
+	if (padding > command_size - string_end ||
+	    string_end + padding != command_size)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	for (i = id_size + 1UL; i < available; i++)
+		if (id[i] != 0)
+			return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	if (id_size != sizeof(kernel_id) - 1UL)
+		match = 0;
+	else {
+		for (i = 0; i < id_size; i++)
+			if (id[i] != kernel_id[i])
+				match = 0;
+	}
+	*is_kernel_entry = match;
+	return 0;
+}
+
+static int parse_fileset(const unsigned char *file, unsigned long file_size,
+			struct xnu_macho_x86_64_info *out)
+{
+	struct header_region outer;
+	struct header_region kernel;
+	unsigned long command_off;
+	unsigned long kernel_fileoff = 0;
+	xnu_macho_u64 kernel_vmaddr = 0;
+	xnu_macho_u32 kernel_entry_count = 0;
+	xnu_macho_u32 fileset_entry_count = 0;
+	xnu_macho_u32 i;
+	int err;
+
+	err = parse_header_region(file, file_size, 0, &outer);
+	if (err)
+		return err;
+	if (outer.file_type != MH_FILESET)
+		return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
+	command_off = outer.command_off;
+	for (i = 0; i < outer.ncmds; i++) {
+		xnu_macho_u32 command = read_u32le(file + command_off);
+		xnu_macho_u32 command_size = read_u32le(file + command_off + 4);
+
+		if (command == LC_FILESET_ENTRY) {
+			int is_kernel;
+			xnu_macho_u64 fileoff;
+
+			if (fileset_entry_id(file + command_off, command_size,
+					    &is_kernel))
+				return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+			fileset_entry_count++;
+			fileoff = read_u64le(file + command_off + 16);
+			if (fileoff > (xnu_macho_u64)file_size ||
+			    file_size - (unsigned long)fileoff < MACH_HEADER_64_SIZE)
+				return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+			if (is_kernel) {
+				/* fileoff is the byte offset; vmaddr remains opaque metadata. */
+				kernel_entry_count++;
+				kernel_fileoff = (unsigned long)fileoff;
+				kernel_vmaddr = read_u64le(file + command_off + 8);
+			}
+		}
+		command_off += command_size;
+	}
+	if (command_off != outer.command_end)
+		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
+	if (kernel_entry_count != 1)
+		return kernel_entry_count ? -XNU_MACHO_X86_64_PARSE_ENOEXEC :
+			-XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
+	err = parse_header_region(file, file_size, kernel_fileoff, &kernel);
+	if (err)
+		return err;
+	if (kernel.file_type != MH_EXECUTE)
+		return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
+
+	out->file_type = outer.file_type;
+	out->cpu_subtype = outer.cpu_subtype;
+	out->load_command_count = outer.ncmds;
+	out->load_command_bytes = outer.sizeofcmds;
+	out->fileset_entry_count = fileset_entry_count;
+	out->kernel_entry_filetype = kernel.file_type;
+	out->kernel_entry_cpusubtype = kernel.cpu_subtype;
+	out->kernel_entry_ncmds = kernel.ncmds;
+	out->kernel_entry_sizeofcmds = kernel.sizeofcmds;
+	out->kernel_entry_vmaddr = kernel_vmaddr;
+	out->kernel_entry_fileoff = (xnu_macho_u64)kernel_fileoff;
+	out->inspection_flags |= XNU_MACHO_X86_64_IS_FILESET |
+				 XNU_MACHO_X86_64_HAS_KERNEL_ENTRY;
+	return 0;
 }
 
 static int fixed_name_is(const unsigned char *name, const char *expected,
@@ -616,6 +829,11 @@ int xnu_macho_x86_64_parse(const void *input, unsigned long file_size,
 	if (read_u32le(file + 8) != CPU_SUBTYPE_X86_64_ALL &&
 	    read_u32le(file + 8) != CPU_SUBTYPE_X86_64_H)
 		return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
+	if (read_u32le(file + 12) == MH_FILESET) {
+		int err = parse_fileset(file, file_size, out);
+
+		return err ? reject(out, err) : 0;
+	}
 	if (read_u32le(file + 12) != MH_EXECUTE)
 		return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
 	if (read_u32le(file + 28) != 0)
@@ -765,6 +983,10 @@ int xnu_macho_x86_64_parse(const void *input, unsigned long file_size,
 	if (entry_matches != 1)
 		return reject(out, -XNU_MACHO_X86_64_PARSE_ENOEXEC);
 
+	out->file_type = MH_EXECUTE;
+	out->cpu_subtype = read_u32le(file + 8);
+	out->load_command_count = ncmds;
+	out->load_command_bytes = sizeofcmds;
 	out->entry = entry;
 	return 0;
 }

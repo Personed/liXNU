@@ -5,20 +5,40 @@ on:
     paths:
       - ".github/workflows/x86_64-tahoe-recovery-audit.yml"
       - "scripts/x86_64/audit-tahoe-recovery.py"
+      - "tests/x86_64/test-fileset-metadata.py"
+      - "tests/x86_64/test-audit-tahoe-recovery.py"
+      - "tools/dev/x86_64/xnu-fileset-metadata.c"
+      - "xnu-ko/macho_parse_x86_64.c"
+      - "xnu-ko/macho_parse_x86_64.h"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  inspect-official-recovery:
+  validate-fileset-metadata:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and exercise the fileset JSON helper
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror \
+            tools/dev/x86_64/xnu-fileset-metadata.c xnu-ko/macho_parse_x86_64.c \
+            -o "$RUNNER_TEMP/xnu-fileset-metadata"
+          python3 tests/x86_64/test-fileset-metadata.py "$RUNNER_TEMP/xnu-fileset-metadata"
+
+      - name: Verify inspection and cleanup status
+        run: python3 tests/x86_64/test-audit-tahoe-recovery.py
+
+  inspect-catalog-recovery:
     runs-on: macos-26-intel
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch and inspect official Tahoe Recovery
+      - name: Audit the signed Intel Recovery image
         run: python3 scripts/x86_64/audit-tahoe-recovery.py "$RUNNER_TEMP/tahoe-recovery-audit.json"
       - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
         with:
           name: tahoe-recovery-audit-${{ github.sha }}
           path: ${{ runner.temp }}/tahoe-recovery-audit.json

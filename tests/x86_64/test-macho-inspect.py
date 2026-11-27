@@ -14,27 +14,32 @@ import tempfile
 
 FILE_SIZE = 1024
 HEADER_SIZE = 32
-PAGEZERO_SIZE = 72
-TEXT_SIZE = 72 + 80
+SEGMENT_COMMAND_SIZE = 72
+SECTION_SIZE = 80
+TEXT_SIZE = SEGMENT_COMMAND_SIZE + SECTION_SIZE
 THREAD_SIZE = 8 + 8 + 42 * 4
-COMMAND_BYTES = PAGEZERO_SIZE + TEXT_SIZE + THREAD_SIZE
+COMMAND_BYTES = SEGMENT_COMMAND_SIZE + TEXT_SIZE + THREAD_SIZE
 PAGEZERO_OFF = HEADER_SIZE
-TEXT_OFF = PAGEZERO_OFF + PAGEZERO_SIZE
-SECTION_OFF = TEXT_OFF + 72
+TEXT_OFF = PAGEZERO_OFF + SEGMENT_COMMAND_SIZE
+SECTION_OFF = TEXT_OFF + SEGMENT_COMMAND_SIZE
 THREAD_OFF = TEXT_OFF + TEXT_SIZE
 COMMANDS_END = HEADER_SIZE + COMMAND_BYTES
 RIP_OFF = THREAD_OFF + 8 + 8 + 16 * 8
 
 MH_MAGIC_64 = 0xFEEDFACF
 MH_EXECUTE = 2
+MH_FILESET = 12
 CPU_TYPE_X86_64 = 0x01000007
 CPU_SUBTYPE_X86_64_ALL = 3
 CPU_SUBTYPE_X86_64_H = 8
 LC_SEGMENT_64 = 0x19
 LC_UNIXTHREAD = 0x5
 LC_DYLD_CHAINED_FIXUPS = 0x80000034
+SG_NORELOC = 4
 X86_THREAD_STATE64 = 4
 X86_THREAD_STATE64_COUNT = 42
+DYLD_CHAINED_PTR_X86_64_KERNEL_CACHE = 11
+DYLD_CHAINED_PTR_START_NONE = 0xFFFF
 
 
 def put_u32(data, off, value):
@@ -69,7 +74,7 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL):
         put_u32(data, off * 4, value)
 
     put_u32(data, PAGEZERO_OFF, LC_SEGMENT_64)
-    put_u32(data, PAGEZERO_OFF + 4, PAGEZERO_SIZE)
+    put_u32(data, PAGEZERO_OFF + 4, SEGMENT_COMMAND_SIZE)
     put_name(data, PAGEZERO_OFF + 8, "__PAGEZERO")
     put_u64(data, PAGEZERO_OFF + 24, 0)
     put_u64(data, PAGEZERO_OFF + 32, 0x1000)
@@ -106,6 +111,102 @@ def append_command(data, command, command_size):
     put_u32(data, COMMANDS_END + 4, command_size)
     put_u32(data, 16, 4)
     put_u32(data, 20, COMMAND_BYTES + command_size)
+
+
+def make_chained_image(text_page_start=None):
+    data = make_valid_image()
+    append_command(data, LC_DYLD_CHAINED_FIXUPS, 16)
+    payload = 512
+    starts = payload + 28
+    table_size = 12  # count and offsets for __PAGEZERO and __TEXT
+    record_size = 24 if text_page_start is not None else 0
+    payload_size = 28 + table_size + record_size
+    put_u32(data, COMMANDS_END + 8, payload)
+    put_u32(data, COMMANDS_END + 12, payload_size)
+    put_u32(data, payload + 4, 28)  # starts_offset
+    put_u32(data, payload + 8, payload_size)  # empty imports
+    put_u32(data, payload + 12, payload_size)  # empty symbols
+    put_u32(data, payload + 20, 1)  # imports_format
+    put_u32(data, starts, 2)
+    if text_page_start is not None:
+        put_u32(data, starts + 8, table_size)
+        # __TEXT at the preferred VM address, only its first page described.
+        struct.pack_into(
+            "<IHHQIHH",
+            data,
+            starts + table_size,
+            record_size,
+            0x1000,
+            DYLD_CHAINED_PTR_X86_64_KERNEL_CACHE,
+            0,  # segment_offset
+            0,  # max_valid_pointer
+            1,  # page_count
+            text_page_start,
+        )
+    return data
+
+
+def make_chained_image_with_omitted_linkedit_slot():
+    data = make_valid_image()
+    ctf = COMMANDS_END
+    ctf_section = ctf + SEGMENT_COMMAND_SIZE
+    ctf_command_size = SEGMENT_COMMAND_SIZE + SECTION_SIZE
+    linkedit = ctf + ctf_command_size
+    fixups_command = linkedit + SEGMENT_COMMAND_SIZE
+    put_u32(data, 16, 6)
+    put_u32(data, 20, COMMAND_BYTES + ctf_command_size + SEGMENT_COMMAND_SIZE + 16)
+
+    ctf_address = 0x3000
+    ctf_fileoff = 768
+    ctf_filesize = 128
+    put_u64(data, TEXT_OFF + 48, ctf_fileoff)
+    put_u32(data, ctf, LC_SEGMENT_64)
+    put_u32(data, ctf + 4, ctf_command_size)
+    put_name(data, ctf + 8, "__CTF")
+    put_u64(data, ctf + 24, ctf_address)
+    put_u64(data, ctf + 40, ctf_fileoff)
+    put_u64(data, ctf + 48, ctf_filesize)
+    put_u32(data, ctf + 56, 1)  # maxprot: read-only
+    put_u32(data, ctf + 60, 1)  # initprot: read-only
+    put_u32(data, ctf + 64, 1)  # nsects
+    put_u32(data, ctf + 68, SG_NORELOC)
+    put_name(data, ctf_section, "__ctf")
+    put_name(data, ctf_section + 16, "__CTF")
+    put_u64(data, ctf_section + 32, ctf_address)
+    put_u64(data, ctf_section + 40, 64)  # CTF bytes before segment padding
+    put_u32(data, ctf_section + 48, ctf_fileoff)
+
+    payload = ctf_fileoff + ctf_filesize
+    payload_size = 72
+    put_u32(data, linkedit, LC_SEGMENT_64)
+    put_u32(data, linkedit + 4, SEGMENT_COMMAND_SIZE)
+    put_name(data, linkedit + 8, "__LINKEDIT")
+    put_u64(data, linkedit + 24, 0x4000)
+    put_u64(data, linkedit + 32, 0x1000)
+    put_u64(data, linkedit + 40, payload)
+    put_u64(data, linkedit + 48, payload_size)
+    put_u32(data, linkedit + 56, 1)
+    put_u32(data, linkedit + 60, 1)
+    struct.pack_into("<4I", data, fixups_command, LC_DYLD_CHAINED_FIXUPS, 16, payload, payload_size)
+    struct.pack_into("<7I", data, payload, 0, 28, payload_size, payload_size, 0, 1, 0)
+    # Three slots for four segments: the zero-VM __CTF slot is empty
+    # and the final __LINKEDIT slot is omitted.
+    starts = payload + 28
+    struct.pack_into("<4I", data, starts, 3, 0, 16, 0)
+    struct.pack_into(
+        "<IHHQIHHH",
+        data,
+        starts + 16,
+        26,  # record_size
+        0x1000,
+        DYLD_CHAINED_PTR_X86_64_KERNEL_CACHE,
+        0,  # segment_offset
+        0,  # max_valid_pointer
+        2,  # page_count
+        0x2B0,  # first start after the load commands, within __TEXT
+        DYLD_CHAINED_PTR_START_NONE,
+    )
+    return data
 
 
 def run_case(
@@ -166,6 +267,7 @@ def expect_valid_all(report):
     ], report
     assert report["segments"][0]["mapped"] is False, report
     assert report["segments"][0]["name_bytes_hex"] == b"__PAGEZERO\0".ljust(16, b"\0").hex(), report
+    assert report["segments"][0]["chained_starts"] is None, report
     assert report["segments"][1] == {
         "name": "__TEXT",
         "name_bytes_hex": b"__TEXT\0".ljust(16, b"\0").hex(),
@@ -178,19 +280,49 @@ def expect_valid_all(report):
         "nsects": 1,
         "flags": "0x00000000",
         "mapped": True,
+        "chained_starts": None,
     }, report
+    assert report["linkedit_metadata"]["has_chained_fixups"] is False, report
+    assert report["linkedit_metadata"]["chained_starts_segment_count"] == 0, report
+    assert report["linkedit_metadata"]["chained_starts_nonempty_segment_count"] == 0, report
     assert report["load_status"] == "not_loaded", report
     assert report["fixups_interpreted"] is False, report
     assert report["execution_attempted"] is False, report
 
 
-def expect_valid_fixups_are_not_interpreted(report):
+def expect_chained_starts(report, text_starts):
     assert report["inspection_flags"] == 1 << 2, report
     assert report["linkedit_metadata"]["has_chained_fixups"] is True, report
+    assert report["linkedit_metadata"]["chained_starts_segment_count"] == 2, report
+    assert report["linkedit_metadata"]["chained_starts_nonempty_segment_count"] == (
+        0 if text_starts is None else 1
+    ), report
+    assert [segment["name"] for segment in report["segments"]] == ["__PAGEZERO", "__TEXT"], report
+    assert [segment["chained_starts"] for segment in report["segments"]] == [
+        None, text_starts
+    ], report
     assert report["linkedit_data_command_count"] == 1, report
     assert report["load_status"] == "not_loaded", report
     assert report["fixups_interpreted"] is False, report
     assert report["execution_attempted"] is False, report
+
+
+def expect_chained_starts_with_omitted_linkedit_slot(report):
+    assert report["segment_count"] == 4, report
+    assert [segment["name"] for segment in report["segments"]] == [
+        "__PAGEZERO", "__TEXT", "__CTF", "__LINKEDIT"
+    ], report
+    assert report["linkedit_metadata"]["has_chained_fixups"] is True, report
+    assert report["linkedit_metadata"]["chained_starts_segment_count"] == 3, report
+    assert report["linkedit_metadata"]["chained_starts_nonempty_segment_count"] == 1, report
+    assert [segment["chained_starts"] for segment in report["segments"]] == [
+        None,
+        {"pointer_format": 11, "page_size": 4096, "page_count": 2},
+        None,
+        None,
+    ], report
+    assert report["segments"][2]["filesize"] == "0x0000000000000080", report
+    assert report["segments"][2]["mapped"] is False, report
 
 
 def expect_x86_64_h(report):
@@ -341,28 +473,31 @@ def main():
         expect_x86_64_h,
     )
 
-    chained = make_valid_image()
-    append_command(chained, LC_DYLD_CHAINED_FIXUPS, 16)
-    put_u32(chained, COMMANDS_END + 8, 512)
-    put_u32(chained, COMMANDS_END + 12, 40)
-    payload = 512
-    starts = payload + 28
-    put_u32(chained, payload, 0)  # fixups_version
-    put_u32(chained, payload + 4, 28)  # starts_offset
-    put_u32(chained, payload + 8, 40)  # empty imports after starts table
-    put_u32(chained, payload + 12, 40)  # empty symbols after imports
-    put_u32(chained, payload + 16, 0)  # imports_count
-    put_u32(chained, payload + 20, 1)  # imports_format
-    put_u32(chained, payload + 24, 0)  # uncompressed symbol strings
-    put_u32(chained, starts, 2)  # PAGEZERO and TEXT, no starts records
-    put_u32(chained, starts + 4, 0)
-    put_u32(chained, starts + 8, 0)
     run_case(
         binary,
-        "bounded chained-fixup metadata",
-        chained,
+        "chained fixups with empty segment slots",
+        make_chained_image(),
         0,
-        expect_valid_fixups_are_not_interpreted,
+        lambda report: expect_chained_starts(report, None),
+    )
+    text_starts = {"pointer_format": 11, "page_size": 4096, "page_count": 1}
+    for name, page_start in (
+        ("chained start in __TEXT", 0x1F0),
+        ("__TEXT starts record with no active chain", DYLD_CHAINED_PTR_START_NONE),
+    ):
+        run_case(
+            binary,
+            name,
+            make_chained_image(page_start),
+            0,
+            lambda report: expect_chained_starts(report, text_starts),
+        )
+    run_case(
+        binary,
+        "chained starts table leaves __CTF empty and omits the __LINKEDIT slot",
+        make_chained_image_with_omitted_linkedit_slot(),
+        0,
+        expect_chained_starts_with_omitted_linkedit_slot,
     )
 
     bad_fixup_extent = make_valid_image()
@@ -386,7 +521,7 @@ def main():
     run_case(binary, "unsupported CPU", wrong_cpu, 4)
 
     fileset = make_valid_image()
-    put_u32(fileset, 12, 12)
+    put_u32(fileset, 12, MH_FILESET)
     run_case(binary, "unsupported fileset", fileset, 4)
 
     unknown_required = make_valid_image()

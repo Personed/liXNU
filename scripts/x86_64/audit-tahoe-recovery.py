@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Inspect Apple's latest Tahoe Internet Recovery image without retaining it."""
 
 from __future__ import annotations

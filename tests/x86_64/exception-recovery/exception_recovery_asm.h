@@ -3,6 +3,9 @@
 #define X86_EXCEPTION_RECOVERY_ASM_H
 
 #define ER_ARM_TOKEN                 0x45584350524f4245
+#define ER_HANDOFF_TOKEN             0x455248414e444f46
+/* Defined/restorable RFLAGS except RF/VM, which PUSHFQ clears. */
+#define ER_RFLAGS_RETURNED_MASK      0x00000000003c7fd5
 #define ER_GP_SELECTOR               0xfff8
 #define ER_SENTINEL_RAX              0x4a01f00d4a01f00d
 #define ER_SENTINEL_RBX              0x4a02f00d4a02f00d
@@ -65,7 +68,12 @@
 #define ER_OFF_RESULT_SS             344
 #define ER_OFF_EXPECTED_RAX          352
 #define ER_OFF_SAVED_DS              360
+#define ER_OFF_ENVELOPE_RIP          368
+#define ER_OFF_TASK_STACK_LOW        376
+#define ER_OFF_TASK_STACK_END        384
 #define ER_RESULT_GPRS_MATCHED       0x40
+#define ER_RESULT_ENVELOPE_MATCHED   0x80
+#define ER_TASK_STACK_FAULT_HEADROOM 256
 
 #define ER_IDTR_LIMIT_OFF             0
 #define ER_IDTR_BASE_OFF              2
@@ -87,5 +95,8 @@
 #define ER_SCRATCH_R15              112
 #define ER_SCRATCH_FLAGS            120
 #define ER_SCRATCH_ENVELOPE_RSP     128
+#define ER_SCRATCH_ENVELOPE_RIP     136
+#define ER_SCRATCH_TASK_STACK_LOW   144
+#define ER_SCRATCH_TASK_STACK_END   152
 
 #endif

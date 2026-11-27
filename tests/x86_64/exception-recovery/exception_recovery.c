@@ -41,9 +41,11 @@
 #define ER_IDTR_PROOF_RESTORED (1ULL << 0)
 #define ER_IDTR_PROOF_READBACK (1ULL << 1)
 #define ER_GP_SELECTOR_LIMIT_VALID(limit) ((limit) < ER_GP_SELECTOR)
-#define ER_RFLAGS_CONTROL (X86_EFLAGS_IF | X86_EFLAGS_DF | X86_EFLAGS_IOPL | \
-			   X86_EFLAGS_NT | X86_EFLAGS_RF | X86_EFLAGS_VM | \
-			   X86_EFLAGS_AC | X86_EFLAGS_VIF | X86_EFLAGS_VIP)
+/* C snapshots may change arithmetic flags while evaluating the comparison. */
+#define ER_RFLAGS_HOST_CONTROL (X86_EFLAGS_IF | X86_EFLAGS_DF | X86_EFLAGS_IOPL | \
+			    X86_EFLAGS_NT | X86_EFLAGS_AC | X86_EFLAGS_VIF | \
+			    X86_EFLAGS_VIP)
+#define ER_RFLAGS_RETURNED ER_RFLAGS_RETURNED_MASK
 
 struct er_idtr_operand {
 	unsigned short limit;
@@ -97,6 +99,9 @@ struct er_asm_control {
 	unsigned long result_ss;
 	unsigned long expected_rax;
 	unsigned long saved_ds;
+	unsigned long envelope_rip;
+	unsigned long task_stack_low;
+	unsigned long task_stack_end;
 };
 
 struct er_host_snapshot {
@@ -153,6 +158,9 @@ struct er_gpr_scratch {
 	unsigned long r15;
 	unsigned long rflags;
 	unsigned long envelope_rsp;
+	unsigned long envelope_rip;
+	unsigned long task_stack_low;
+	unsigned long task_stack_end;
 };
 
 struct er_cpu_state {
@@ -217,7 +225,7 @@ static void (*const er_terminal_entry[ER_IDT_ENTRIES])(void) = {
 
 static_assert(sizeof(struct er_idtr_operand) == 10);
 static_assert(sizeof(struct er_idt_gate) == 16);
-static_assert(sizeof(struct er_gpr_scratch) == 136);
+static_assert(sizeof(struct er_gpr_scratch) == 160);
 static_assert(sizeof(struct x86_exception_recovery_result) == 40);
 static_assert(sizeof(struct x86_exception_recovery_request) == 48);
 static_assert(offsetof(struct er_asm_control, armed) == ER_OFF_ARMED);
@@ -263,13 +271,19 @@ static_assert(offsetof(struct er_asm_control, result_rsp) == ER_OFF_RESULT_RSP);
 static_assert(offsetof(struct er_asm_control, result_ss) == ER_OFF_RESULT_SS);
 static_assert(offsetof(struct er_asm_control, expected_rax) == ER_OFF_EXPECTED_RAX);
 static_assert(offsetof(struct er_asm_control, saved_ds) == ER_OFF_SAVED_DS);
-static_assert(sizeof(struct er_asm_control) == 368);
+static_assert(sizeof(struct er_asm_control) == 392);
 static_assert(ER_SENTINEL_R11 != 0,
 	      "R11 sentinel must differ from the expected #GP CR2 value");
 static_assert(offsetof(struct er_gpr_scratch, rax) == ER_SCRATCH_RAX);
 static_assert(offsetof(struct er_gpr_scratch, r15) == ER_SCRATCH_R15);
 static_assert(offsetof(struct er_gpr_scratch, rflags) == ER_SCRATCH_FLAGS);
 static_assert(offsetof(struct er_gpr_scratch, envelope_rsp) == ER_SCRATCH_ENVELOPE_RSP);
+static_assert(offsetof(struct er_gpr_scratch, envelope_rip) == ER_SCRATCH_ENVELOPE_RIP);
+static_assert(offsetof(struct er_gpr_scratch, task_stack_low) == ER_SCRATCH_TASK_STACK_LOW);
+static_assert(offsetof(struct er_gpr_scratch, task_stack_end) == ER_SCRATCH_TASK_STACK_END);
+static_assert(offsetof(struct er_asm_control, envelope_rip) == ER_OFF_ENVELOPE_RIP);
+static_assert(offsetof(struct er_asm_control, task_stack_low) == ER_OFF_TASK_STACK_LOW);
+static_assert(offsetof(struct er_asm_control, task_stack_end) == ER_OFF_TASK_STACK_END);
 static_assert(ER_GP_SELECTOR == X86_EXCEPTION_RECOVERY_GP_ERROR);
 static_assert(ER_GP_SELECTOR_LIMIT_VALID(ER_GP_SELECTOR - 1));
 static_assert(!ER_GP_SELECTOR_LIMIT_VALID(ER_GP_SELECTOR));
@@ -356,7 +370,7 @@ static bool er_snapshots_match(const struct er_host_snapshot *before,
 	       before->idt_limit == after->idt_limit &&
 	       before->ldt == after->ldt && before->tr == after->tr &&
 	       before->ds == after->ds &&
-	       ((before->rflags ^ after->rflags) & ER_RFLAGS_CONTROL) == 0 &&
+	       ((before->rflags ^ after->rflags) & ER_RFLAGS_HOST_CONTROL) == 0 &&
 	       before->fs_base == after->fs_base && before->gs_base == after->gs_base &&
 	       before->kernel_gs_base == after->kernel_gs_base;
 }
@@ -444,6 +458,7 @@ static long er_run_on_cpu(void *argument)
 	struct er_asm_control *control = &state->control;
 	struct desc_ptr current_idtr;
 	unsigned long irq_flags;
+	unsigned long injection_call_rsp;
 	long ret;
 	u32 required_flags;
 	struct desc_ptr current_gdt;
@@ -478,6 +493,8 @@ static long er_run_on_cpu(void *argument)
 #endif
 
 	memset(control, 0, sizeof(*control));
+	control->task_stack_low = state->before.stack_page;
+	control->task_stack_end = state->before.stack_end;
 	control->fault_stack_base = (unsigned long)page_address(state->fault_stack_pages);
 	control->fault_stack_top = control->fault_stack_base + ER_STACK_SIZE -
 				   2 * ER_STACK_GUARD_BYTES;
@@ -518,6 +535,14 @@ static long er_run_on_cpu(void *argument)
 			goto out_restore;
 		}
 	}
+	asm volatile("mov %%rsp, %0" : "=r"(injection_call_rsp));
+	if (injection_call_rsp < state->before.stack_page ||
+	    injection_call_rsp >= state->before.stack_end ||
+	    injection_call_rsp - state->before.stack_page <
+		ER_TASK_STACK_FAULT_HEADROOM + 7 * sizeof(unsigned long)) {
+		ret = -EUCLEAN;
+		goto out_snapshot;
+	}
 	er_active_state = control;
 	smp_wmb();
 	ret = x86_er_inject(control, work->request.vector);
@@ -537,7 +562,7 @@ static long er_run_on_cpu(void *argument)
 	    control->fault_cs != __KERNEL_CS || !control->fault_ss ||
 	    control->result_cs != control->fault_cs ||
 	    control->result_ss != control->fault_ss ||
-	    control->result_rflags != control->fault_rflags ||
+	    ((control->result_rflags ^ control->fault_rflags) & ER_RFLAGS_RETURNED) ||
 	    (control->fault_rflags & X86_EFLAGS_IF) ||
 	    control->recovery_count != 1 ||
 	    control->idtr_proof != (ER_IDTR_PROOF_RESTORED | ER_IDTR_PROOF_READBACK)) {
@@ -560,7 +585,8 @@ static long er_run_on_cpu(void *argument)
 		X86_EXCEPTION_RECOVERY_IDTR_RESTORED |
 		X86_EXCEPTION_RECOVERY_ONCE |
 		X86_EXCEPTION_RECOVERY_STACKS_INTACT |
-		X86_EXCEPTION_RECOVERY_CPU_MATCHED;
+		X86_EXCEPTION_RECOVERY_CPU_MATCHED |
+		ER_RESULT_ENVELOPE_MATCHED;
 	if (work->request.vector == X86_EXCEPTION_RECOVERY_PF)
 		required_asm_flags |= X86_EXCEPTION_RECOVERY_CR2_MATCHED;
 	if (control->result_flags != required_asm_flags) {

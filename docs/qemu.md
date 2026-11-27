@@ -224,7 +224,7 @@ The Windows runner did not measure QEMU RSS, so the harness reports that the opt
 RSS ceiling was not evaluated on that platform.
 
 The manifest-aware validation script and optional exact-hash guard are in
-[`docs/portability-validation.md`](portability-validation.md#reproducing-the-active-qemu-tcg-boot).
+[`docs/portability-validation.md`](portability-validation.md#reproducing-the-complementary-qemu-tcg-boot-profile).
 The command runs TCG with a 6 GiB guest, Linux `mem=2G`, a 3,072 MiB FKI carve-out,
 and 2,816 MiB XNU RAM. The harness requires the Darwin console and userland marker,
 guest-requested halt, successful XNU/FKI unload, and QEMU exit 0. It enforces the

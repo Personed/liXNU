@@ -7,6 +7,15 @@ separately in PR #47; it is not part of this FKI change and does not execute XNU
 context switch, address-space and fault paths remain to be implemented and verified before macOS can run natively on
 x86_64.
 
+The source-pinned boot argument fixtures also check EFI map contents. The preflight reads the caller's byte
+buffer using the declared descriptor stride and rejects physical page ranges that would truncate in XNU.
+Pages 0 and UINT32_MAX pass the representation check, but the pinned XNU ignores them. Firmware memory
+types, physical ownership, usable ranges, and placement in the host carve-out need separate validation.
+
+```sh
+bash tests/x86_64/test-x86-boot-args.sh
+```
+
 ## Supplemental QEMU/KVM guest path
 
 The optional x86_64 launcher runs a user-prepared macOS Tahoe 26 guest through QEMU/KVM. This guest path complements

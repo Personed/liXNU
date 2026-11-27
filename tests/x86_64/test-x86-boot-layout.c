@@ -150,10 +150,12 @@ static void test_bootstrap_budget_components(void)
 	assert(xnu_x86_boot_layout_validate(&args, &layout) == 0);
 
 	layout.bootstrap_bytes = 0x2000000;
-	args.PhysicalMemorySize = (14 * 512 - 255 - 4) * GIB_BYTES;
+	args.PhysicalMemorySize = 2048 * GIB_BYTES;
 	assert(xnu_x86_boot_layout_validate(&args, &layout) == 0);
 	args.PhysicalMemorySize++;
 	assert(xnu_x86_boot_layout_validate(&args, &layout) == -ERANGE);
+	args.PhysicalMemorySize = 0;
+	assert(xnu_x86_boot_layout_validate(&args, &layout) == -EINVAL);
 
 	args = boot_args();
 	layout.hib_bytes = GIB_BYTES;

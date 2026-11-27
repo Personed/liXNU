@@ -14,9 +14,9 @@
 #define BOOT_PD_PAGES 4ULL
 #define BOOT_LAST_PA 0xffffffffULL
 #define BOOT_GIB (1ULL << 30)
+#define BOOT_MAX_MEMORY (2048ULL * BOOT_GIB) /* K64_MAXMEM in vm_param.h */
 #define BOOT_LARGE_PAGE_SIZE (1ULL << 21)
 #define BOOT_PHYSMAP_MAX_OFFSET 255ULL
-#define BOOT_PHYSMAP_MAX_PML4_SLOTS 14ULL
 
 struct boot_span {
 	xnu_boot_u64 start;
@@ -51,6 +51,8 @@ int xnu_x86_boot_layout_validate(const struct xnu_x86_boot_args *args,
 		return -EINVAL;
 	if (layout->carveout_size > ~(xnu_boot_u64)0 - layout->carveout_pa)
 		return -ERANGE;
+	if (args->PhysicalMemorySize > BOOT_MAX_MEMORY)
+		return -ERANGE;
 	carveout_end = layout->carveout_pa + layout->carveout_size;
 
 	kernel_end = (xnu_boot_u64)args->kaddr + args->ksize;
@@ -66,17 +68,14 @@ int xnu_x86_boot_layout_validate(const struct xnu_x86_boot_args *args,
 		       BOOT_PAGE_SIZE;
 	/*
 	 * One L2 page per GiB, including the 4 GiB MMIO allowance. The
-	 * first L3 can start as late as index 255. Bound the full physmap
-	 * at that offset rather than rely on XNU's release-build clamp.
+	 * first L3 can start as late as index 255. The K64_MAXMEM bound
+	 * above keeps the physmap inside the pinned 14-slot capacity.
 	 */
 	physmap_l2_pages = args->PhysicalMemorySize / BOOT_GIB + 4;
 	if (args->PhysicalMemorySize % BOOT_GIB)
 		physmap_l2_pages++;
 	physmap_l3_pages = (physmap_l2_pages + BOOT_PHYSMAP_MAX_OFFSET +
 			  BOOT_PTE_PER_PAGE - 1) / BOOT_PTE_PER_PAGE;
-	if (physmap_l3_pages > BOOT_PHYSMAP_MAX_PML4_SLOTS)
-		return -ERANGE;
-
 	/* doublemap_init(): one L3 and L2, one L1 per 2 MiB of __HIB. */
 	dblmap_l1_pages = layout->hib_bytes / BOOT_LARGE_PAGE_SIZE;
 	if (layout->hib_bytes % BOOT_LARGE_PAGE_SIZE)

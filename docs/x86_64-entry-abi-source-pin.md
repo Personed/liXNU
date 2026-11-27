@@ -50,6 +50,8 @@ This means the entry is not a normal Linux long-mode kernel call. A host impleme
 
 The core placement preflight takes the contiguous physical reservation from the host. It requires disjoint boot arguments, EFI map, and ADT below the image and checks that the image and bootstrap budget fit in the reservation. The budget begins at the page-rounded image end, where `vstart()` starts allocating before it reads the EFI memory map. The placement check bounds the initial `fillkpt()` write by the selected build's `NKPT` capacity. It also checks the page table budget for the largest physmap randomization offset and the image's `__HIB` extent, within the table counts in `Idle_PTs_init()`. The loader must obtain `NKPT` and the `__HIB` size from the selected build, confirm this non-KASAN allocation sequence, and hold the reservation throughout XNU execution. Builds that move the allocation start before `Idle_PTs_init()` need their own placement calculation.
 
+Placement requires a nonzero `PhysicalMemorySize` up to the pinned `K64_MAXMEM` of 2 TiB. Development and debug builds check that ceiling before setting up the physmap, and the pinned release build uses it as the default allocator cap. The core argument builder only checks the wire layout and allows a zero placeholder before placement.
+
 ## AP entry protocol boundary
 
 `slave_pstart` is the AP protected-mode entry. It explicitly clears `%edi`, uses `mp_slave_stack + PAGE_SIZE`, then joins the same long-mode transition and calls `vstart(0)`. It is reached through XNU's real-mode bootstrap installation path, not through the BSP contract. AP startup, ACPI topology, APIC ownership, IPI delivery, and Linux CPU hotplug interaction are separate design gates and are not pinned here.

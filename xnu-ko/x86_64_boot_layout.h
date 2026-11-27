@@ -19,7 +19,9 @@ struct xnu_x86_boot_layout {
  * Validate placement for the source-pinned core boot objects. The caller
  * supplies a host-owned contiguous reservation and the bootstrap budget for
  * the selected artifact. This checks address arithmetic, containment and the
- * pinned non-KASAN Idle_PTs_init() allocation bound.
+ * pinned non-KASAN Idle_PTs_init() allocation bound. Unlike the core
+ * boot_args format check, placement requires nonzero PhysicalMemorySize
+ * at or below the pinned K64_MAXMEM (2 TiB).
  * It does not verify ownership, EFI/ADT content, optional boot fields,
  * mappings, or that the supplied budget covers all build-specific writes.
  *

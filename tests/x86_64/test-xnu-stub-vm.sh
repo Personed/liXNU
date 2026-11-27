@@ -10,7 +10,7 @@ fi
 
 KDIR=$(cd "$1" && pwd)
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
-for tool in apt-get cat chmod cpio dpkg-deb find grep gzip install mkdir mktemp mknod qemu-system-x86_64 rm sort sudo timeout; do
+for tool in apt-cache apt-get cat chmod cpio dpkg-deb find grep gzip install mkdir mktemp mknod qemu-system-x86_64 rm sort sudo timeout; do
   command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
 if ! QEMU_VERSION_OUTPUT=$(qemu-system-x86_64 --version 2>&1); then
@@ -31,6 +31,17 @@ fi
 echo "Using QEMU $QEMU_VERSION for the x86 fail-closed VM preflight" >&2
 KERNEL_RELEASE=$(cat "$KDIR/include/config/kernel.release")
 test -n "$KERNEL_RELEASE" || { echo "kernel release metadata is missing from KDIR" >&2; exit 1; }
+KERNEL_IMAGE_PACKAGE=
+for candidate in "linux-image-unsigned-$KERNEL_RELEASE" "linux-image-$KERNEL_RELEASE-unsigned"; do
+  if apt-cache show "$candidate" 2>/dev/null | grep -F "Package: $candidate" >/dev/null; then
+    KERNEL_IMAGE_PACKAGE=$candidate
+    break
+  fi
+done
+test -n "$KERNEL_IMAGE_PACKAGE" || {
+  echo "no Debian/Ubuntu unsigned kernel image package found for $KERNEL_RELEASE" >&2
+  exit 1
+}
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 
@@ -38,10 +49,10 @@ test -s "$REPO/xnu-ko/xnu.ko" || { echo "build xnu-ko/xnu.ko before running this
 
 (
   cd "$STAGE"
-  apt-get download "linux-image-unsigned-$KERNEL_RELEASE" busybox-static >/dev/null
+  apt-get download "$KERNEL_IMAGE_PACKAGE" busybox-static >/dev/null
 )
 
-IMAGE_DEB=$(find "$STAGE" -maxdepth 1 -name "linux-image-unsigned-${KERNEL_RELEASE}_*.deb" -print -quit)
+IMAGE_DEB=$(find "$STAGE" -maxdepth 1 -name "${KERNEL_IMAGE_PACKAGE}_*.deb" -print -quit)
 BUSYBOX_DEB=$(find "$STAGE" -maxdepth 1 -name 'busybox-static_*.deb' -print -quit)
 test -n "$IMAGE_DEB" || { echo "matching unsigned kernel image package not found" >&2; exit 1; }
 test -n "$BUSYBOX_DEB" || { echo "busybox-static package not found" >&2; exit 1; }
@@ -50,9 +61,9 @@ mkdir -p "$STAGE/kernel" "$STAGE/busybox"
 dpkg-deb -x "$IMAGE_DEB" "$STAGE/kernel"
 dpkg-deb -x "$BUSYBOX_DEB" "$STAGE/busybox"
 KERNEL="$STAGE/kernel/boot/vmlinuz-$KERNEL_RELEASE"
-BUSYBOX=$(find "$STAGE/busybox" -type f -name busybox -print -quit)
+BUSYBOX=$(find "$STAGE/busybox" -type f -name busybox -perm /111 -print -quit)
 test -s "$KERNEL" || { echo "matching kernel image not found: $KERNEL" >&2; exit 1; }
-test -s "$BUSYBOX" || { echo "busybox-static binary not found" >&2; exit 1; }
+test -s "$BUSYBOX" || { echo "executable busybox-static binary not found" >&2; exit 1; }
 
 ROOTFS="$STAGE/rootfs"
 mkdir -p "$ROOTFS/bin" "$ROOTFS/dev" "$ROOTFS/proc" "$ROOTFS/sys"
@@ -158,6 +169,17 @@ grep -E 'xnu: (CPU is missing required x86_64 features:|pinned XNU source requir
 }
 if grep -F 'xnu: native x86_64 world switch is not implemented; refusing to load' "$MISSING_LOG" >/dev/null; then
   echo "feature-limited disposable VM reached the world-switch refusal before CPU validation" >&2
+  exit 1
+fi
+
+AMD_LOG="$STAGE/qemu-serial-amd-vendor.log"
+run_stub_vm tcg 'max,vendor=AuthenticAMD' "$AMD_LOG"
+grep -F 'xnu: pinned XNU source requires GenuineIntel; this CPU vendor is unsupported' "$AMD_LOG" >/dev/null || {
+  echo "AMD-vendor disposable VM did not report the pinned-source vendor refusal" >&2
+  exit 1
+}
+if grep -E 'xnu: (CPU is missing required x86_64 features:|pinned XNU source does not recognize Intel family|native x86_64 world switch is not implemented; refusing to load)' "$AMD_LOG" >/dev/null; then
+  echo "AMD-vendor disposable VM did not stop at the vendor preflight" >&2
   exit 1
 fi
 

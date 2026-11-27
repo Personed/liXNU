@@ -32,6 +32,34 @@ jobs:
           echo "KDIR=/usr/src/$pkg" >> "$GITHUB_ENV"
       - name: Build x86_64 FKI host backend
         run: tests/x86_64/build-fki.sh "$KDIR"
+  x86_64-vms-debian13:
+    runs-on: ubuntu-24.04
+    container:
+      image: debian:trixie
+      # The stub VM creates /dev/console and /dev/null in its initramfs.
+      options: --cap-add=MKNOD
+    timeout-minutes: 45
+    steps:
+      - name: Install Git for checkout
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Install Debian 13 headers and VM tools
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq build-essential linux-headers-amd64 qemu-system-x86 busybox-static cpio kmod sudo
+          kdir=$(find /usr/src -mindepth 1 -maxdepth 1 -type d -name 'linux-headers-*-amd64' | sort -V | tail -1)
+          case "$kdir" in */linux-headers-6.12.*-amd64) ;; *) echo "expected Debian 13 Linux 6.12 x86_64 headers; got $kdir" >&2; exit 1;; esac
+          echo "KDIR=$kdir" >> "$GITHUB_ENV"
+      - name: Build x86_64 FKI
+        run: make -C "$KDIR" ARCH=x86_64 M="$PWD/fki-ko" CONFIG_DEBUG_INFO_BTF_MODULES= modules
+      - name: Build x86_64 fail-closed XNU module
+        run: make -C "$KDIR" ARCH=x86_64 M="$PWD/xnu-ko" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
+      - name: Test x86_64 XNU stub refusal on Debian 13
+        run: tests/x86_64/test-xnu-stub-vm.sh "$KDIR"
+      - name: Test x86_64 host-state boundary on Debian 13
+        run: tests/x86_64/test-boundary-probe-vm.sh "$KDIR"
   build:
     runs-on: ubuntu-24.04-arm
     steps:

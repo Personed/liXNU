@@ -252,6 +252,10 @@ static int fileset_entry_id(const unsigned char *command,
 	return 0;
 }
 
+static int collect_fileset_segments(const unsigned char *file, unsigned long file_size,
+				    const struct header_region *kernel,
+				    struct xnu_macho_x86_64_info *out);
+
 static int parse_fileset(const unsigned char *file, unsigned long file_size,
 			struct xnu_macho_x86_64_info *out)
 {
@@ -306,6 +310,9 @@ static int parse_fileset(const unsigned char *file, unsigned long file_size,
 		return err;
 	if (kernel.file_type != MH_EXECUTE)
 		return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
+	err = collect_fileset_segments(file, file_size, &kernel, out);
+	if (err)
+		return err;
 
 	out->file_type = outer.file_type;
 	out->cpu_subtype = outer.cpu_subtype;
@@ -670,15 +677,11 @@ static int parse_symtab(const unsigned char *file, unsigned long file_size,
 	return 0;
 }
 
-static int parse_segment(const unsigned char *file, unsigned long file_size,
-			 unsigned long command_off, xnu_macho_u32 command_size,
-			 struct segment_info *segment)
+static int read_segment_bounds(const unsigned char *file, unsigned long file_size,
+			       unsigned long command_off, xnu_macho_u32 command_size,
+			       struct segment_info *segment)
 {
-	xnu_macho_u64 vm_end;
-	xnu_macho_u32 maxprot;
-	xnu_macho_u32 i;
-	unsigned long sections_size;
-	int file_only_ctf;
+	unsigned long section_bytes;
 
 	if (command_size < SEGMENT_COMMAND_64_SIZE)
 		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
@@ -688,30 +691,44 @@ static int parse_segment(const unsigned char *file, unsigned long file_size,
 	segment->vmsize = read_u64le(file + command_off + 32);
 	segment->fileoff = read_u64le(file + command_off + 40);
 	segment->filesize = read_u64le(file + command_off + 48);
-	maxprot = read_u32le(file + command_off + 56);
-	segment->maxprot = maxprot;
+	segment->maxprot = read_u32le(file + command_off + 56);
 	segment->initprot = read_u32le(file + command_off + 60);
 	segment->nsects = read_u32le(file + command_off + 64);
 	segment->flags = read_u32le(file + command_off + 68);
-	file_only_ctf = is_file_only_ctf(segment);
 
-	if (segment->nsects >
-	    (command_size - SEGMENT_COMMAND_64_SIZE) / SECTION_64_SIZE)
+	section_bytes = command_size - SEGMENT_COMMAND_64_SIZE;
+	if (section_bytes % SECTION_64_SIZE ||
+	    segment->nsects != section_bytes / SECTION_64_SIZE)
 		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
-	sections_size = (unsigned long)segment->nsects * SECTION_64_SIZE;
-	if (sections_size != command_size - SEGMENT_COMMAND_64_SIZE)
+	if (segment->fileoff > file_size ||
+	    segment->filesize > file_size - (unsigned long)segment->fileoff ||
+	    segment->vmaddr > ~0ULL - segment->vmsize)
 		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
-	if ((segment->filesize > segment->vmsize &&
-	     !(file_only_ctf && segment->flags == SG_NORELOC)) ||
-	    segment->fileoff > file_size ||
-	    segment->filesize > file_size - (unsigned long)segment->fileoff)
+	return 0;
+}
+
+static int parse_segment(const unsigned char *file, unsigned long file_size,
+			 unsigned long command_off, xnu_macho_u32 command_size,
+			 struct segment_info *segment)
+{
+	xnu_macho_u64 vm_end;
+	xnu_macho_u32 maxprot;
+	xnu_macho_u32 i;
+	int file_only_ctf;
+	int err;
+
+	err = read_segment_bounds(file, file_size, command_off, command_size, segment);
+	if (err)
+		return err;
+	maxprot = segment->maxprot;
+	file_only_ctf = is_file_only_ctf(segment);
+	if (segment->filesize > segment->vmsize &&
+	    !(file_only_ctf && segment->flags == SG_NORELOC))
 		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
 	if (file_only_ctf &&
 	    (segment->flags != SG_NORELOC || segment->nsects != 1 ||
 	     segment->maxprot != VM_PROT_READ ||
 	     segment->initprot != VM_PROT_READ))
-		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
-	if (segment->vmaddr > ~0ULL - segment->vmsize)
 		return -XNU_MACHO_X86_64_PARSE_ENOEXEC;
 	vm_end = segment->vmaddr + segment->vmsize;
 	if ((maxprot | segment->initprot) &
@@ -779,7 +796,7 @@ static int parse_segment(const unsigned char *file, unsigned long file_size,
 	return 0;
 }
 
-static void export_segment_plan(struct xnu_macho_x86_64_segment *out,
+static void export_segment(struct xnu_macho_x86_64_segment *out,
 				const struct segment_info *in)
 {
 	unsigned long i;
@@ -794,6 +811,36 @@ static void export_segment_plan(struct xnu_macho_x86_64_segment *out,
 	out->initprot = in->initprot;
 	out->flags = in->flags;
 	out->section_count = in->nsects;
+}
+
+static int collect_fileset_segments(const unsigned char *file, unsigned long file_size,
+				    const struct header_region *kernel,
+				    struct xnu_macho_x86_64_info *out)
+{
+	unsigned long command_off = kernel->command_off;
+	xnu_macho_u32 i;
+
+	for (i = 0; i < kernel->ncmds; i++) {
+		xnu_macho_u32 command = read_u32le(file + command_off);
+		xnu_macho_u32 command_size = read_u32le(file + command_off + 4);
+
+		if (command == LC_SEGMENT_64) {
+			struct segment_info segment;
+			int err;
+
+			if (out->kernel_entry_segment_count >= XNU_MACHO_X86_64_MAX_SEGMENTS)
+				return -XNU_MACHO_X86_64_PARSE_EOPNOTSUPP;
+			/* Member offsets are relative to the containing collection. */
+			err = read_segment_bounds(file, file_size, command_off,
+						  command_size, &segment);
+			if (err)
+				return err;
+			export_segment(&out->segments[out->kernel_entry_segment_count++],
+				       &segment);
+		}
+		command_off += command_size;
+	}
+	return 0;
 }
 
 int xnu_macho_x86_64_parse(const void *input, unsigned long file_size,
@@ -875,7 +922,7 @@ int xnu_macho_x86_64_parse(const void *input, unsigned long file_size,
 					preferred_load_address = segment.vmaddr;
 			}
 			plan_segment = &out->segments[out->segment_count];
-			export_segment_plan(plan_segment, &segment);
+			export_segment(plan_segment, &segment);
 			out->segment_count++;
 			if (segment.vmsize && !is_pagezero(segment.name)) {
 				vm_end = segment.vmaddr + segment.vmsize;

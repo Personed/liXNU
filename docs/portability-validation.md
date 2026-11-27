@@ -21,15 +21,18 @@ Report the profile alongside the stage:
   from the Linux guest. The ARM64 QEMU path in [#3] uses TCG, including on Intel/AMD hosts;
   distinguish it from the Apple Silicon krunkit path. The module smoke test in [#1]
   is a separate check. Neither substitutes for the PureDarwin test below.
-- **Intel/AMD x86-64 PC through QEMU TCG:** QEMU emulates an ARM64 Linux host. The acceptance
-  profile uses `qemu-system-aarch64`, `-machine virt,virtualization=off`, `-accel tcg`,
-  `-cpu max`, 16 GiB guest RAM, and 2 guest CPUs. It gives Linux `mem=7G` and maps an
-  8,156 MiB FKI carve-out at physical address `0x200000000`, with 7,900 MiB for XNU.
-  The guest kernel must use 4 KiB pages, expose pointer authentication (`paca`), and run
-  at EL1. TCG does not require Intel VT-x or AMD-V. Keep extra physical RAM available
-  for the host alongside the 16 GiB guest allocation. PCs without sufficient memory,
-  QEMU's ARM system emulator, or time for software emulation may not be practical for
-  this profile.
+- **Intel/AMD x86-64 PC through QEMU TCG:** QEMU emulates an ARM64 Linux host. The current
+  reduced cross-host acceptance profile uses `qemu-system-aarch64`,
+  `-machine virt,virtualization=off`, `-accel tcg,thread=multi`, `-cpu cortex-a710`,
+  6 GiB guest RAM, and 2 guest CPUs. It gives Linux `mem=2G`, reserves 3,072 MiB for FKI
+  at `0xc0000000`, and gives XNU 2,816 MiB. The guest kernel must use 4 KiB pages, expose
+  pointer authentication (`paca`), and run at EL1. TCG does not require Intel VT-x or
+  AMD-V. This profile passed on hosted Ubuntu 24.04, Windows Server 2025, and Intel macOS
+  15 runners in PR #98 run [#158](https://github.com/Personed/xnulinux/actions/runs/45911026412).
+  These hosted-runner passes do not establish physical-PC support or a universal RAM floor.
+  The 6 GiB assignment needs additional host memory for the OS and QEMU; actual runner
+  capacities are recorded below. The configurable `--qemu-cpu max` is a different profile
+  and is not covered by this A710 matrix; QEMU 11 may expose S1PIE on `max`.
 - **ARM64 module build prerequisites:** the host must have headers matching its running
   Linux kernel (`/lib/modules/$(uname -r)/build`) and a compiler. The normal
   `scripts/vm-xnu-build.sh` setup reuses that headers tree or installs
@@ -53,6 +56,20 @@ VM launch path. Neither check establishes a graphical PureDarwin or macOS deskto
 acceleration, or acceptable performance on every PC. FKI requires PAC, 4 KiB pages and EL1; it refuses unsupported
 profiles such as a Linux kernel running at EL2/VHE or a CPU without pointer authentication. An x86 host must use TCG
 because Intel/AMD KVM cannot virtualize the ARM64 guest CPU.
+
+## Cross-host QEMU TCG results
+
+PR #98 run [#158](https://github.com/Personed/xnulinux/actions/runs/45911026412), head `589c40e` stacked on this validation branch, completed the full image, disk/collection, ARM64 guest-preparation, and three-host boot path. Every host used `cortex-a710`, 6 GiB QEMU RAM, Linux `mem=2G`, a 3,072 MiB FKI carve-out at `0xc0000000`, and 2,816 MiB XNU RAM. Each job reached the Darwin console, ran the guest-requested `halt`, unloaded XNU/FKI, powered off Linux, and passed the QEMU exit check.
+
+| x86-64 host runner | QEMU | Runner CPU / logical CPUs | RAM total / available before QEMU | Peak QEMU RSS | Result |
+| --- | --- | --- | --- | --- | --- |
+| Ubuntu 24.04 | 8.2.2 | Intel Xeon 6975P-C / 4 | 16,464,297,984 / 15,174,471,680 bytes | 3,844,540 KiB (3.67 GiB) | Full route passed |
+| Windows Server 2025 | 11.1.0 | AMD64 Family 25 Model 1 / 4 | 17,174,360,064 / 13,663,916,032 bytes | Not measured | Full route passed |
+| Intel macOS 15 | 11.1.0 | Intel Core i7-8700B / 4 | 15,032,385,536 / 10,498,539,520 bytes | 3,640,304 KiB (3.47 GiB) | Full route passed |
+
+The three jobs verified the same inputs: Image SHA-256 `02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6`, initramfs SHA-256 `fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667`, and disk SHA-256 `7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f`.
+
+PR #89 run #151 used the previous `-cpu max` profile: Ubuntu passed, while Windows and macOS/QEMU 11.1.0 failed at the same XNU bootstrap write fault. The A710 matrix pass validates this deterministic non-PIE profile; it does not isolate S1PIE as the cause or validate a `max`/PIE-enabled boot. PR #102 tracks that separate ARM64 PIE path. The hosted runners do not establish a physical Intel/AMD PC result, support for every Windows/macOS release, or a minimum physical RAM requirement.
 
 ## First end-to-end check for a new FKI host profile
 

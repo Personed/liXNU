@@ -108,7 +108,9 @@ jobs:
           if-no-files-found: error
           retention-days: 5
       - name: Test x86_64 XNU stub refusal on Debian 13
-        run: tests/x86_64/test-xnu-stub-vm.sh "$KDIR"
+        run: |
+          cp -- "$RUNNER_TEMP/debian13-x86_64-module-build/xnu.ko" xnu-ko/xnu.ko
+          tests/x86_64/test-xnu-stub-vm.sh "$KDIR"
       - name: Test x86_64 host-state boundary on Debian 13
         run: tests/x86_64/test-boundary-probe-vm.sh "$KDIR"
   build:

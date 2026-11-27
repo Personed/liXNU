@@ -122,24 +122,42 @@ the disk archive contains `pd.img`. The three boot inputs have these SHA-256 val
 | `initramfs.cpio.gz` | `fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667` |
 | `pd.img` | `7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f` |
 
-Install QEMU system ARM emulation 8.2 or later and Python 3. The `cortex-a710`
-model used in run #158 is available starting with QEMU 8.2. On Ubuntu 24.04 or a
-Debian release whose package meets this version requirement:
+Install Python 3 and QEMU system AArch64 emulation 8.2 or later. QEMU 8.2 is the
+minimum version with the tested `cortex-a710` CPU model.
 
-```sh
-sudo apt-get install qemu-system-arm python3 coreutils util-linux
-qemu-system-aarch64 -cpu help | grep -F cortex-a710
-```
+- Ubuntu 24.04: `sudo apt-get install qemu-system-arm python3 coreutils util-linux`.
+- Debian: install QEMU 8.2 or newer. Debian 12 ships QEMU 7.2, which is too old for
+  this profile; use a newer Debian release or a newer QEMU build.
+- Intel macOS: `brew install qemu python3`.
+- Windows: install Python 3 with the Python launcher, then install QEMU with
+  `choco install qemu --yes` or the [official Windows QEMU build](https://www.qemu.org/download/#windows).
+  Add QEMU's executable directory to `PATH` (usually `C:\Program Files\qemu`).
 
-Debian 12 ships QEMU 7.2, which is too old for this profile; install a QEMU 8.2+
-build there or use the tested Ubuntu 24.04 package.
+Check that the installed QEMU exposes the tested model:
+
+- POSIX: `qemu-system-aarch64 -cpu help | grep -F cortex-a710`
+- Windows PowerShell: `qemu-system-aarch64.exe -cpu help | Select-String cortex-a710`.
 
 Run the download commands from the repository root; they extract the files under `artifacts/guest` and `artifacts/disk`. The command below verifies the three hashes from run #158, then copies the disk so the source artifact remains unchanged.
 
 ```sh
 (
   set -e
-  sha256sum --check - <<'EOF'
+  python3 - <<'PY'
+import hashlib
+from pathlib import Path
+
+expected = {
+    "artifacts/guest/Image": "02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6",
+    "artifacts/guest/initramfs.cpio.gz": "fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667",
+    "artifacts/disk/pd.img": "7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f",
+}
+for name, digest in expected.items():
+    actual = hashlib.sha256(Path(name).read_bytes()).hexdigest()
+    if actual != digest:
+        raise SystemExit(f"{name}: expected {digest}, got {actual}")
+    print(f"{name}: SHA-256 matches")
+PY'
 02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6  artifacts/guest/Image
 fd6aec2eac9b6a2d77e6c223869d2cf7cf1379150358267329c83c8f9588d667  artifacts/guest/initramfs.cpio.gz
 7c6e4e694e72a748b602142aebb02b06f5bec0d18b0ff9aed85cc4b816df662f  artifacts/disk/pd.img
@@ -160,6 +178,38 @@ python3 tests/puredarwin/run-tcg-e2e.py \
   artifacts/disk/puredarwin-tcg-serial.log
 )
 ```
+
+
+On Windows PowerShell, install QEMU, add its executable directory to the current session's
+`PATH`, and confirm the QEMU binary is available. Install Python 3 with the Python launcher
+if `py -3 --version` is not already available. The following commands use the same extracted
+artifact directories:
+
+```powershell
+$env:Path += ";$env:ProgramFiles\qemu"
+qemu-system-aarch64.exe --version
+Get-FileHash .\artifacts\guest\Image -Algorithm SHA256
+Get-FileHash .\artifacts\guest\initramfs.cpio.gz -Algorithm SHA256
+Get-FileHash .\artifacts\disk\pd.img -Algorithm SHA256
+Copy-Item .\artifacts\disk\pd.img .\artifacts\disk\pd-tcg-test.img
+py -3 tests\puredarwin\run-tcg-e2e.py `
+  --timeout-seconds 5400 `
+  --qemu qemu-system-aarch64.exe `
+  --qemu-memory 6G `
+  --qemu-cpu cortex-a710 `
+  --linux-memory 2G `
+  --fki-carve-base 0xc0000000 `
+  --fki-carve-mb 3072 `
+  --xnu-ram-mb 2816 `
+  --max-rss-mib 6144 `
+  .\artifacts\guest\Image `
+  .\artifacts\guest\initramfs.cpio.gz `
+  .\artifacts\disk\pd-tcg-test.img `
+  .\artifacts\disk\puredarwin-tcg-serial.log
+```
+
+The Windows runner did not measure QEMU RSS, so the harness reports that the optional
+RSS ceiling was not evaluated on that platform.
 
 The manifest-aware validation script and optional exact-hash guard are in
 [`docs/portability-validation.md`](portability-validation.md#reproducing-the-active-qemu-tcg-boot).

@@ -244,14 +244,3 @@ index 75d172f13d69239a60e80f13bd01efa1a6de304e..a07d49be31a80df66f05c4bb823540a3
  
  	size_t oldsize, newsize;
  	hw_lck_ptr_t *oldarray;
---- a/bsd/netinet6/frag6.c
-+++ b/bsd/netinet6/frag6.c
-@@ -195,7 +195,7 @@
- static int
- frag6_restore_context(struct mbuf *m)
- {
--	return (int)m->m_pkthdr.pkt_hdr;
-+	return (int)(uintptr_t)m->m_pkthdr.pkt_hdr;
- }
- 
- /*

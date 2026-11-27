@@ -7,8 +7,8 @@ on:
     branches: [main]
   pull_request:
 concurrency:
-  group: modules-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 jobs:
   cli-installer:
     runs-on: ubuntu-24.04
@@ -24,6 +24,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Kernel headers
         run: |
+          scripts/ci/disable-microsoft-apt-feed.sh
           sudo apt-get update -qq
           pkg=$(apt-cache search --names-only '^linux-headers-[0-9.]+-[0-9]+-generic$' | awk '{print $1}' | sort -V | tail -1)
           test -n "$pkg" || { echo "no x86_64 generic kernel headers found" >&2; exit 1; }
@@ -31,6 +32,34 @@ jobs:
           echo "KDIR=/usr/src/$pkg" >> "$GITHUB_ENV"
       - name: Build x86_64 FKI host backend
         run: tests/x86_64/build-fki.sh "$KDIR"
+  x86_64-vms-debian13:
+    runs-on: ubuntu-24.04
+    container:
+      image: debian:trixie
+      # The stub VM creates /dev/console and /dev/null in its initramfs.
+      options: --cap-add=MKNOD
+    timeout-minutes: 45
+    steps:
+      - name: Install Git for checkout
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Install Debian 13 headers and VM tools
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq build-essential linux-headers-amd64 qemu-system-x86 busybox-static cpio kmod sudo
+          kdir=$(find /usr/src -mindepth 1 -maxdepth 1 -type d -name 'linux-headers-*-amd64' | sort -V | tail -1)
+          case "$kdir" in */linux-headers-6.12.*-amd64) ;; *) echo "expected Debian 13 Linux 6.12 x86_64 headers; got $kdir" >&2; exit 1;; esac
+          echo "KDIR=$kdir" >> "$GITHUB_ENV"
+      - name: Build x86_64 FKI
+        run: make -C "$KDIR" ARCH=x86_64 M="$PWD/fki-ko" CONFIG_DEBUG_INFO_BTF_MODULES= modules
+      - name: Build x86_64 fail-closed XNU module
+        run: make -C "$KDIR" ARCH=x86_64 M="$PWD/xnu-ko" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
+      - name: Test x86_64 XNU stub refusal on Debian 13
+        run: tests/x86_64/test-xnu-stub-vm.sh "$KDIR"
+      - name: Test x86_64 host-state boundary on Debian 13
+        run: tests/x86_64/test-boundary-probe-vm.sh "$KDIR"
   build:
     runs-on: ubuntu-24.04-arm
     steps:
@@ -38,6 +67,7 @@ jobs:
       - name: Kernel headers
         id: kernel
         run: |
+          scripts/ci/disable-microsoft-apt-feed.sh
           sudo apt-get update -qq
           pkg=$(apt-cache search --names-only '^linux-headers-[0-9.]+-[0-9]+-generic$' | awk '{print $1}' | sort -V | tail -1)
           echo "headers: $pkg"
@@ -92,15 +122,33 @@ jobs:
       - name: Install QEMU on Linux
         if: runner.os == 'Linux'
         run: |
+          scripts/ci/disable-microsoft-apt-feed.sh
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends qemu-system-arm
       - name: Install QEMU on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install qemu --yes --no-progress
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Join-Path $env:ProgramFiles 'qemu' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $qemuDirectory = Join-Path $env:ProgramFiles 'qemu'
+          $qemuSystem = Join-Path $qemuDirectory 'qemu-system-aarch64.exe'
+          $installed = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            choco install qemu --yes --no-progress
+            $chocoExitCode = $LASTEXITCODE
+            $present = Test-Path -LiteralPath $qemuSystem -PathType Leaf
+            if ($chocoExitCode -eq 0 -and $present) {
+              $installed = $true
+              break
+            }
+            if ($attempt -lt 3) {
+              Write-Warning "QEMU install attempt $attempt did not provide qemu-system-aarch64.exe (Chocolatey exit $chocoExitCode); retrying."
+              Start-Sleep -Seconds (10 * $attempt)
+            }
+          }
+          if (-not $installed) {
+            throw "QEMU install did not provide qemu-system-aarch64.exe after 3 attempts (Chocolatey exit $chocoExitCode)."
+          }
+          $qemuDirectory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install QEMU on macOS
         if: runner.os == 'macOS'
         run: brew install qemu

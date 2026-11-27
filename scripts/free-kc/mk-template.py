@@ -3,7 +3,7 @@
 """An empty MH_FILESET kernel collection to link into, made from numbers alone (layout.json) and the kernel's own
 pseudo-extensions, so that nothing of a vendor's kernelcache goes into the collection scripts/free-kc/build.sh links.
 
-    mk-template.py LAYOUT.json XNU_SOURCE KERNEL_VERSION OUTPUT
+    mk-template.py LAYOUT.json XNU_SOURCE KERNEL_VERSION OUTPUT KERNEL.macho
 
 scripts/kclink/kclink.py links into a collection it is given: its top-level segments, the kernel's fileset entry (where
 the kernel's header goes), the prelink info and the chained fixups. This writes a file with exactly that structure and
@@ -14,6 +14,11 @@ config/System.kext/PlugIns.
 import hashlib, json, plistlib, struct, sys
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR.parent / 'kclink'))
+from macho import Image
+from template_layout import adjust_prelink_info
+
 LC_SEGMENT_64, LC_UUID, LC_BUILD_VERSION, LC_UNIXTHREAD = 0x19, 0x1b, 0x32, 0x5
 LC_CHAINED_FIXUPS, LC_FILESET_ENTRY = 0x80000034, 0x80000035
 BASE = 0xfffffff007004000   # VM_KERNEL_LINK_ADDRESS the kernel is linked for: the collection needs no move
@@ -21,9 +26,21 @@ KPI = {'BSDKernel': 'com.apple.kpi.bsd', 'MACFramework': 'com.apple.kpi.dsep', '
        'Libkern': 'com.apple.kpi.libkern', 'Mach': 'com.apple.kpi.mach', 'Private': 'com.apple.kpi.private',
        'Unsupported': 'com.apple.kpi.unsupported'}
 
+if len(sys.argv) != 6:
+    raise SystemExit('usage: mk-template.py LAYOUT.json XNU_SOURCE KERNEL_VERSION OUTPUT KERNEL.macho')
+
 layout = json.loads(Path(sys.argv[1]).read_text())
-xnu, version, output = Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4])
+xnu, version, output, kernel_path = Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4]), Path(sys.argv[5])
 num = lambda s: int(s, 16)   # noqa: E731
+kernel = Image(kernel_path.read_bytes())
+kernel_text = kernel.segment('__TEXT')
+if kernel_text is None:
+    raise SystemExit(f'{kernel_path}: no __TEXT segment')
+kernel_header = kernel_text.vmaddr - num(layout['kernel_header'])
+layout, moved = adjust_prelink_info(layout, kernel_header, kernel.segments)
+if moved:
+    old, new = moved
+    print(f'moved __PRELINK_INFO after source kernel __TEXT_EXEC: {old:#x} -> {new:#x}')
 segs = [(name, num(off), num(size), prot, sect) for name, off, size, prot, sect in layout['segments']]
 linkinfo_off, linkinfo_size = map(num, layout['kernel_linkinfo'])
 linkedit_off = num(layout['kernel_linkedit'])

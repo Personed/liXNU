@@ -16,6 +16,7 @@ Port the hosted-XNU runtime to native x86_64 Linux PCs while preserving the work
 - Establish a safe Linux/XNU execution boundary before running foreign kernel code. Verify Linux register, floating-point, exception, syscall, and memory state through entry, return, fault recovery, and shutdown.
 - Use user-provided Tahoe 26 artifacts that match the selected XNU build. Do not add Apple system images, firmware, or local secrets to Git or logs.
 - Measure Intel and AMD requirements independently. Record the tested Linux kernel, CPU features, memory, page size, XNU build, and furthest boot stage. A QEMU/KVM macOS guest or TCG ARM64 guest does not establish the native module port.
+- The native x86 fail-closed CPU-profile VM test requires QEMU 8.2 or newer: QEMU 6.2 TCG does not expose FMA/AVX for the Haswell profile. The test script checks the installed version and reports a clear error below this floor. This is test tooling only and does not claim native runtime support.
 - Keep user-visible support tables precise: ARM64 direct hosted XNU is the existing supported path; x86_64 native hosting remains experimental until its target, host-integrity, and shutdown checks pass.
 
 ## Complementary QEMU TCG and PureDarwin checks
@@ -46,7 +47,7 @@ Do not leave parallel agents to infer ownership from the code. Use the PR commen
 
 The following module-build commands cover the x86_64 development path and the direct ARM64 runtime. Module builds and refusal smoke tests do not establish native hosted-XNU runtime support.
 
-Keep x86_64 and ARM64 kernel header trees separate, and pass the architecture explicitly to Kbuild. Run the x86_64 commands on an x86_64 Linux host with matching headers; the ARM64 commands below run on an ARM64 Linux host with matching headers. The x86_64 FKI build compiles only the host backend; the x86_64 XNU target is a refusal stub, not a runtime implementation. The stub-load script starts its own disposable VM and taints only that guest kernel. On Debian/Ubuntu, module builds need `build-essential` and matching kernel headers; the stub VM test needs `qemu-system-x86`, `busybox-static`, `cpio`, `kmod`, and `sudo`, plus APT download access to the matching `linux-image-unsigned-$KERNEL_RELEASE` package. CI covers the x86_64 FKI build, the x86_64 fail-closed XNU test, and the ARM64 module build.
+Keep x86_64 and ARM64 kernel header trees separate, and pass the architecture explicitly to Kbuild. Run the x86_64 commands on an x86_64 Linux host with matching headers; the ARM64 commands below run on an ARM64 Linux host with matching headers. The x86_64 FKI build compiles only the host backend; the x86_64 XNU target is a refusal stub, not a runtime implementation. The VM scripts boot disposable guests and taint only the stub-test guest kernel. On Debian/Ubuntu, module builds need `build-essential` and matching kernel headers; the VM tests need `qemu-system-x86`, `busybox-static`, `cpio`, `kmod`, and `sudo`, plus APT download access to the matching unsigned kernel image package (`linux-image-unsigned-$KERNEL_RELEASE` on Ubuntu or `linux-image-$KERNEL_RELEASE-unsigned` on Debian). CI covers the x86_64 fail-closed/profile checks, the x86_64 host-state boundary probe, and the ARM64 module build.
 
 ```sh
 X86_KDIR=/path/to/x86_64/kernel-headers

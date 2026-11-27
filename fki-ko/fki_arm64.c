@@ -474,10 +474,23 @@ static void *window_l1_created[512];
 
 int fki_window_l1(unsigned long va, unsigned long long **l1_va, fki_u64 *l1_pa)
 {
-	u64 ttbr1 = read_sysreg(ttbr1_el1) & GENMASK_ULL(47, 1);
-	u64 *l0 = phys_to_virt(ttbr1 & ~0xfffULL);
-	unsigned idx = (va >> 39) & 511;
-	u64 e = READ_ONCE(l0[idx]);
+	u64 tcr = read_sysreg(tcr_el1);
+	u64 ttbr1;
+	u64 *l0;
+	unsigned idx;
+	u64 e;
+
+	/* T1SZ=16, TG1=0b10 (4 KiB), IPS<=48, and no LPA2 descriptor format. */
+	if (((tcr >> 16) & 0x3f) != 16 ||
+	    ((tcr >> 30) & 0x3) != 2 ||
+	    ((tcr >> 32) & 0x7) > 5 ||
+	    (tcr & (1ULL << 59)))
+		return -EOPNOTSUPP;
+
+	ttbr1 = read_sysreg(ttbr1_el1) & GENMASK_ULL(47, 1);
+	l0 = phys_to_virt(ttbr1 & ~0xfffULL);
+	idx = (va >> 39) & 511;
+	e = READ_ONCE(l0[idx]);
 
 	if ((e & 3) != 3) {
 		unsigned long long *page;

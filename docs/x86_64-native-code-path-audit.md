@@ -1,8 +1,8 @@
 # Native x86_64 code-path audit
 
-Status on 2026-11-27, based on main `e69f0a0309bc32d61266201eb2420aebeef33b87`.
-This audit covers only the separate native hosted-XNU experiment. It does not
-change the project goal or the ARM64 implementation.
+Status on 2026-11-27, after the Intel source build in #187 and the Recovery
+audit in #217. This audit covers the experimental native x86_64 hosted-XNU
+path for Tahoe 26.7.3.
 
 ## Current path and gates
 
@@ -15,16 +15,29 @@ change the project goal or the ARM64 implementation.
 | ARM64 loader and handoff | `xnu-ko/xnu_main.c`, `world.S`, and `world.h` use `_arm_init`, `linux64_abi.h`, PAC, AArch64 system registers, and ARM page-table setup. | These are not an x86 boot path. `tests/x86_64/build-xnu-main.sh` is only a diagnostic compile attempt and is not in the required x86 workflow; its Kbuild invocation also needs an explicit architecture before it can be treated as x86 evidence. |
 | Host boundary probe | Merged PR #97 strengthens the disposable Linux-to-Linux call/return probe for normal return and software abort. | It does not switch CR3/GS, route XNU syscalls or faults, validate XNU boot arguments, or enter a kernel image. The #87 contract keeps exception-ownership design and real-artifact ABI pinning as separate gates. |
 
-## Artifact blocker
+## Build and collection evidence
 
-PR #56 is pinned to public XNU source `xnu-12377.121.6` (26.5) while the
-runtime target is Tahoe 26.7.3 (25G342). Its current Intel-native run failed closed
-before kernel compilation because the official Xcode SDK scan found no
-`TrustCache/API.h` v4; the Apple Silicon cross-build was skipped without a
-matching KDK. No `kernel.development` artifact exists. The missing official
-TrustCache/KDK input blocks real-image inspection and source-to-artifact ABI
-confirmation. It does not block isolated checks derived from the pinned public
-source, but those checks cannot establish 26.7.3 compatibility.
+The [Intel build in #187](https://github.com/Personed/liXNU/actions/runs/46073430260)
+used the verified KDK `26.5/25F71` to build public XNU `xnu-12377.121.6`.
+Its [artifact](https://github.com/Personed/liXNU/actions/runs/46073430260/artifacts/15235905935)
+contains a 24,730,344 byte `kernel.development` with SHA-256
+`77c60cb9be541ce818fa1ece614667df39423117da0cf86cf5428d525de05b9d`.
+The matching manifest records 404,791 dependency entries across 1,123 files,
+with zero missing. The Apple Silicon job skipped the cross-build without a
+matching KDK. The source artifact is evidence for the 26.5 build.
+
+The [Recovery audit in #217](https://github.com/Personed/liXNU/actions/runs/46077603347)
+verified the Apple chunklist and inspected the downloaded volume's Intel
+`BootKernelExtensions.kc`. Its fileset report has 204 entries. The Recovery
+catalog's `latest` selector returned 26.6.2 (`25G83`). The standalone kernel
+audit in #185 identified the 26.7.3 (`25G342`) kernel in the KDK. The installed
+boot collection for `25G342` still needs inspection.
+
+The [full installer catalog recorded by #187](https://github.com/Personed/liXNU/actions/runs/46073430260/job/140755502992)
+lists `25G342` at 17,957,880 KiB (about 17.1 GiB). That exceeds the 14 GB of
+SSD documented for the [standard Intel runner](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+Use a compatible Intel Mac with enough free storage and an installation made
+from the [Apple full installer](https://support.apple.com/en-us/102662).
 
 ## Safe slice in this change
 
@@ -61,10 +74,37 @@ handoff ABI.
 
 ## Next step
 
-After #56 produces an official Intel-native kernel artifact, run the existing
-read-only inspector against that exact file and compare its source/configuration
-manifest with the boot-argument version and entry protocol. If the artifact
-confirms this layout, extend the isolated fixture to the artifact-required
-fields and memory-map rules. Keep `fki_caps()==0` and the normal x86 refusal
-stub until the loader, context transaction, exception/syscall ownership, and
-return paths have their own reviewed evidence.
+For a prepared Intel Tahoe installation, mount its System volume read-only.
+Record the installer source and snapshot or volume identity locally. From the
+liXNU checkout on macOS with Command Line Tools installed, substitute the
+mounted path and verify the build identifiers before inspecting the collection
+from that same volume.
+
+```sh
+(
+  set -eu
+  volume='/Volumes/Tahoe System'
+  version='System/Library/CoreServices/SystemVersion.plist'
+  collection='System/Library/KernelCollections/BootKernelExtensions.kc'
+  test "$(plutil -extract ProductVersion raw -o - "$volume/$version")" = 26.7.3
+  test "$(plutil -extract ProductBuildVersion raw -o - "$volume/$version")" = 25G342
+
+  scratch=$(mktemp -d "${TMPDIR:-/tmp}/lixnu-kc.XXXXXX")
+  trap 'rm -rf "$scratch"' EXIT
+  cc -std=c11 -Wall -Wextra -Werror \
+    tools/dev/x86_64/xnu-fileset-metadata.c xnu-ko/macho_parse_x86_64.c \
+    -o "$scratch/xnu-fileset-metadata"
+  cd "$volume"
+  shasum -a 256 "$version" "$collection"
+  "$scratch/xnu-fileset-metadata" "$collection"
+)
+```
+
+Record the liXNU commit, the hashes, and the fileset JSON. For a passing
+structural check, require `status=accepted`, `parser_result=0`, and the nested
+kernel segment list. The plist establishes the version reported by the supplied
+volume. Keep the paired files on the operator's machine and share only the
+reviewed metadata and hashes. Use this evidence to compare the 25G342 layout
+against the loader and handoff contract. The normal x86 module retains its
+refusal until the loader, context transaction, exception and syscall ownership,
+and return paths have their own reviewed evidence.

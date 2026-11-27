@@ -123,6 +123,7 @@ static int run_switch(struct page **pages, bool abort)
 	memcpy(private_root, linux_root, PAGE_SIZE);
 	private_root[CR3_PROBE_SLOT] = page_to_phys(pages[PROBE_PDPT]) |
 				     _PAGE_PRESENT;
+	pr_info("x86-cr3-switch: switch attempt\n");
 	ret = x86_cr3_switch_once(private_raw, CR3_PROBE_ALIAS, abort, &obs);
 	/* Never release the private root or resume scheduling with it live. */
 	if (unlikely(__read_cr3() != saved_raw))

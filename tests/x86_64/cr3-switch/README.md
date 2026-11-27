@@ -27,6 +27,9 @@ The module checks the original CR3 both in the result and live after each
 of the normal-return and cooperative-abort paths. The VM checks that a
 Linux syscall still works, the module unloads, and the guest powers off.
 A second guest with two possible CPUs must refuse before the switch.
+Each invocation logs an attempt immediately before calling the assembly.
+The harness requires two attempts in the positive guest and zero in the
+rejection guest.
 
 Run with matching x86_64 Linux headers, an unsigned or local Linux kernel
 image and a static BusyBox:

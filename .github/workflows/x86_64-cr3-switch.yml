@@ -8,6 +8,7 @@ on:
       - tests/x86_64/test-cr3-switch-vm.sh
       - fki-ko/fki.h
       - fki-ko/fki_x86_64_cr3.h
+      - scripts/ci/disable-microsoft-apt-feed.sh
   push:
     branches: [main]
     paths:
@@ -16,6 +17,7 @@ on:
       - tests/x86_64/test-cr3-switch-vm.sh
       - fki-ko/fki.h
       - fki-ko/fki_x86_64_cr3.h
+      - scripts/ci/disable-microsoft-apt-feed.sh
 
 permissions:
   contents: read

@@ -40,7 +40,11 @@ if grep -qw cr3_probe_reject /proc/cmdline; then
 	if insmod /x86-cr3-switch.ko; then
 		exit 1
 	fi
-	dmesg | grep -F 'x86-cr3-switch: requires exactly one possible CPU'
+	probe_log=$(dmesg)
+	printf '%s\n' "$probe_log" | grep -F 'x86-cr3-switch: requires exactly one possible CPU'
+	if printf '%s\n' "$probe_log" | grep -Fq 'x86-cr3-switch: switch attempt'; then
+		exit 1
+	fi
 	marker=X86_CR3_SWITCH_VM_REJECT_PASS
 else
 	insmod /x86-cr3-switch.ko
@@ -75,9 +79,10 @@ run_vm() {
 }
 
 run_vm 1 "" X86_CR3_SWITCH_VM_PASS
+test "$(grep -Fc 'x86-cr3-switch: switch attempt' "$stage/qemu-1.log")" -eq 2
 grep -Fq 'x86-cr3-switch: return verified' "$stage/qemu-1.log"
 grep -Fq 'x86-cr3-switch: abort verified' "$stage/qemu-1.log"
 run_vm 2 cr3_probe_reject X86_CR3_SWITCH_VM_REJECT_PASS
-if grep -Eq 'x86-cr3-switch: (return|abort) verified' "$stage/qemu-2.log"; then
+if grep -Eq 'x86-cr3-switch: (switch attempt|(return|abort) verified)' "$stage/qemu-2.log"; then
 	exit 1
 fi

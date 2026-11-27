@@ -187,6 +187,8 @@ jobs:
         run: bash tests/host/test-vm-net-up-sudo-path.sh
       - name: FKI setup applies and verifies BLS memory limits
         run: bash tests/host/test-vm-install-fki-bls.sh
+      - name: Hosted service installer accepts configured disk paths
+        run: bash tests/host/test-install-service.sh
       - name: Every source file has an SPDX-License-Identifier
         run: |
           missing=$(git ls-files '*.c' '*.h' '*.cpp' '*.mm' '*.m' '*.rs' '*.S' '*.s' '*.sh' '*.py' '*.metal' '*.comp' '*Makefile' |

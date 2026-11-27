@@ -29,15 +29,17 @@ Native x86_64 hosting of Tahoe 26 remains a separate workstream; direct ARM64 ho
 
 These profiles use the existing direct ARM64 Linux host path; they are separate from the
 x86-64 host → QEMU TCG → ARM64 Linux guest route. Both tested ARM64 setups require an ARM64
-Linux kernel with PAC support and 4 KiB pages, running at EL1. Hosted XNU obtains a contiguous
-memory allocation from Linux CMA. The values below describe tested configurations, not
-minimum host requirements. See the [ARM64 host setup](hosted-service.md) and
-[README evidence](../README.md#status).
+Linux kernel with PAC support and 4 KiB pages, running at EL1. FKI's contiguous memory source
+is host-specific: it can map a pre-reserved carve-out or request CMA allocations where
+available. The DGX Spark profile reserves memory with Linux `mem=` and FKI `carve_base`/
+`carve_mb`; that range is not allocated from CMA. Do not reuse its addresses or sizes on a
+different host. These are tested configurations, not minimum host requirements. See the
+[ARM64 host setup](hosted-service.md) and [README evidence](../README.md#status).
 
 | ARM64 host profile | Verified configuration and result | Hardware and evidence limits |
 | --- | --- | --- |
 | Apple Silicon Mac in an ARM64 Linux VM (`krunkit`) | macOS 27.2.1 reached the desktop with 1–6 hosted CPUs in 31–48 seconds. A 30-minute application and disk stress run completed without panic or crash report. The documented GPU bridge exposes the M5 Max through Virtio-GPU/Venus when a render node is available; CPU rendering remains the fallback. | No total host/VM RAM measurement or RAM floor is recorded. This result covers the tested Apple Silicon `krunkit` VM profile. [README evidence](../README.md#status). |
-| NVIDIA DGX Spark, bare-metal ARM64 Linux | Ubuntu 24.04.5 LTS, Linux `7.0.0-1025-nvidia`; 4 hosted CPUs and 8 GiB assigned to XNU. macOS 27 reached the desktop, with Screen Sharing and SSH available. | The tested desktop uses CPU rendering. Hardware GPU pass-through is not supported by the current bridge, which forwards virtio-gpu/Venus ioctls. The 8 GiB value is the tested XNU allocation, not a host RAM floor. [README evidence](../README.md#status). |
+| NVIDIA DGX Spark, bare-metal ARM64 Linux | Ubuntu 24.04.5 LTS, Linux `7.0.0-1025-nvidia`; 4 hosted CPUs; Linux `mem=112G`; FKI carve-out `carve_base=0x1E00000000`, `carve_mb=8156` (8,156 MiB). macOS 27 reached the desktop with Screen Sharing and SSH; About This Mac reports 7.80 GB memory. | The recorded desktop used CPU rendering. A separate DGX-specific setup exposes the GB10 via virglrenderer 1.2.0 and Venus; that optional path is documented in [`tools/dgx-spark/README.md`](../tools/dgx-spark/README.md) and was not exercised by this CPU-rendered evidence. Other bare-metal GPU models and a universal RAM floor remain unvalidated. [README evidence](../README.md#status). |
 
 ## Active QEMU TCG host matrix and resource evidence
 

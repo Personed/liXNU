@@ -65,13 +65,15 @@ own architecture-specific entry, exception, register, and memory-management impl
 - **CPUs**: each hosted CPU is a Linux kernel thread pinned to a Linux CPU. XNU runs on it until it calls the host
   (idle, I/O, a timer); Linux keeps its own exception vectors, and `fki.ko` forwards the faults and user exceptions of
   XNU code to XNU's handlers.
-- **Memory**: XNU gets one physically contiguous block from Linux (CMA) and manages it with its own pmap; XNU and Linux
-  share the user half of the address space layout (4K pages).
+- **Memory**: XNU manages a physically contiguous region supplied through FKI. Its source is host-profile-specific:
+  a pre-reserved range configured with Linux `mem=` and FKI `carve_base`/`carve_mb` on DGX Spark, or contiguous pages
+  from CMA where that allocation path is used. See the [host-preparation guide](docs/hosted-service.md) and
+  [DGX Spark profile](tools/dgx-spark/README.md). XNU and Linux share the user half of the address space layout (4K pages).
 - **Devices**: kexts in `kexts/` give macOS a disk (a file on the Linux side), a display (a framebuffer Linux reads), a
   keyboard and pointer, an Ethernet link (a Linux network interface), a keystore and a GPU bridge.
-- **GPU**: Metal in the hosted macOS runs on `gpu/xnu-cpu-metal` (metal2vulkan over Vulkan). Vulkan reaches the Linux
-  host's GPU through the DRM bridge (`kexts/XnuDrm` → host call → `gpu/xnu-drm/xnudrmd` → the Linux render node), using
-  Mesa's Venus driver; without a supported DRM bridge backend it falls back to Mesa lavapipe on the CPU.
+- **GPU**: Metal in the hosted macOS runs on `gpu/xnu-cpu-metal` (metal2vulkan over Vulkan). The DRM backend is host-specific:
+  `xnudrmd` serves virtio-gpu/Venus render nodes, while the DGX Spark profile uses `xnudrmd_virgl.c`, virglrenderer, and
+  Venus to reach its NVIDIA GB10 GPU. Hosts without a configured backend fall back to Mesa lavapipe on the CPU.
 
 ## Status
 
@@ -87,10 +89,11 @@ Working on two arm64 Linux setups:
   - The GPU bridge gives hosted apps the host GPU (`Virtio-GPU Venus (Apple M5 Max)`) and is enabled by default
     (`GPU=auto`) when a virtio-gpu render node is present, falling back to CPU rendering (`GPU=off`) otherwise.
 - **Bare-metal NVIDIA DGX Spark (Ubuntu 24.04.5 LTS aarch64, Linux `7.0.0-1025-nvidia`)**:
-  - Boots to the full macOS desktop (Screen Sharing and SSH working) directly on bare-metal arm64 Linux with `CPUS=4`
-    and 8 GiB of RAM reserved for XNU.
-  - Currently renders on the CPU (Mesa lavapipe, `GPU=off`): `xnudrmd` only forwards `virtio-gpu` (Venus) ioctls today,
-    so hardware GPU pass-through on the GB10 GPU requires a new DRM bridge backend.
+  - Boots to the full macOS desktop (Screen Sharing and SSH working) directly on bare-metal arm64 Linux with 4 hosted CPUs.
+    The tested carve-out uses `mem=112G`, `carve_base=0x1E00000000`, and `carve_mb=8156`.
+  - The recorded desktop run used CPU rendering (`GPU=off`). A separate DGX Spark configuration exposes the GB10 through
+    virglrenderer 1.2.0 and Venus with `GPU=auto`; see [the DGX Spark guide](tools/dgx-spark/README.md). That GPU path is
+    specific to this host/backend and was not exercised by the CPU-rendered desktop evidence above.
 
 ### Architecture support
 
@@ -140,7 +143,8 @@ for FKI carve-out setup; booting XNU also depends on the FKI backend and its mem
 
 - An arm64 Linux host with PAC (`FEAT_PAuth`), 4K pages, and at least 16 GB of RAM (8 GB reserved for the hosted
   kernel). Tested on:
-  - **NVIDIA DGX Spark** (bare-metal Ubuntu 24.04.5 LTS aarch64, Linux `7.0.0-1025-nvidia`; CPU rendering for now).
+  - **NVIDIA DGX Spark** (bare-metal Ubuntu 24.04.5 LTS aarch64, Linux `7.0.0-1025-nvidia`; the recorded desktop used
+    CPU rendering; an optional GB10/Venus backend is documented in [the DGX guide](tools/dgx-spark/README.md)).
   - **Apple Silicon Mac (M1 or later)** running an arm64 Linux VM (`krunkit` for GPU access via virtio-gpu Venus, or
     `tart`).
 - A Mac with Xcode to make the system disk and build the GPU parts.
@@ -176,7 +180,8 @@ physical host-memory minimum remain unvalidated. PIE-enabled `-cpu max` is a sep
    up the network (and the GPU bridge when there is a render node) and boots the hosted system. Its console is
    `scripts/xnu-console.sh`, its screen `tools/hosted/fb2png.py`, input `tools/hosted/xnu-input.py`. On a bare-metal
    host (such as a DGX Spark), set the carve-out (`mem=`, `carve_base=`, `carve_mb=`) to fit the machine's physical
-   memory layout, and set `GPU=off` (`xnudrmd` supports only virtio-gpu for now).
+   memory layout. For a CPU-rendered baseline, set `GPU=off`; the optional DGX GB10/Venus backend is documented in
+   [the DGX Spark guide](tools/dgx-spark/README.md). Other bare-metal GPU models remain unvalidated.
 5. `scripts/install-service.sh` (on the arm64 Linux host): runs it as `xnulinux.service`, configured in
    `/etc/xnulinux.conf` (CPUs, memory, disk, GPU). On the Mac, `scripts/install-krun-agent.sh` keeps the VM itself
    running.

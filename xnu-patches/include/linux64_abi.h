@@ -23,7 +23,7 @@
 #ifndef _LINUX64_ABI_H_
 #define _LINUX64_ABI_H_
 
-#define LINUX64_ABI_VERSION 4
+#define LINUX64_ABI_VERSION 5
 
 enum linux64_call {
 	LINUX64_CALL_KERNEL_TABLES  = 210,	/* boot: a1 = XNU's kernel L1 table; the host installs its kernel-range entries */

@@ -1451,6 +1451,8 @@ int fki_window_l1(unsigned long va, unsigned long long **l1_va, fki_u64 *l1_pa) 
 EXPORT_SYMBOL(fki_window_l1);
 void fki_window_set(unsigned long long *slot, fki_u64 desc) {}
 EXPORT_SYMBOL(fki_window_set);
+int fki_tcr2_read(fki_u64 *value) { return -EOPNOTSUPP; }
+EXPORT_SYMBOL(fki_tcr2_read);
 unsigned long fki_regs_pc(void *regs) { return 0; }
 EXPORT_SYMBOL(fki_regs_pc);
 unsigned long fki_regs_lr(void *regs) { return 0; }

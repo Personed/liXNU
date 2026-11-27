@@ -59,7 +59,7 @@ At the time of this update, the attached executor is a Debian 13 x86-64 VM under
 
 | Host profile | Current status |
 | --- | --- |
-| Ubuntu 24.04.5 x86-64 hosted CI VM, QEMU TCG | PR #115 run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996) is the latest full-route pass on the corrected #115 head `0daaa50`, tested as merge commit `1b3beb5` into #89 base `763aef9`. QEMU 8.2.2, `cortex-a710`, guest 6 GiB; host Intel Xeon 6975P-C, 4 logical CPUs; 16,464,306,176 bytes total / 15,138,226,176 available before QEMU; peak QEMU RSS 3,844,588 KiB (3.67 GiB). This hosted VM result does not establish a physical-PC RAM floor. |
+| Ubuntu 24.04.5 x86-64 hosted CI VM, QEMU TCG | PR #115 run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996) records the resource measurements for the 6 GiB route on #115 head `0daaa50` / tree `5f9b1e5` over #89 base `763aef9`: QEMU 8.2.2, `cortex-a710`; host Intel Xeon 6975P-C, 4 logical CPUs; 16,464,306,176 bytes total / 15,138,226,176 available before QEMU; peak RSS 3,844,588 KiB (3.67 GiB). This hosted VM result is not a physical-PC RAM floor. The later integrated run #184 also passed the Ubuntu boot; see below. |
 | Physical Intel x86-64 Linux PC, QEMU TCG | Not tested; no physical Intel PC is attached to the available executor. |
 | Physical AMD x86-64 Linux PC, QEMU TCG | Not tested; some CI runs used AMD EPYC virtual CPUs, which do not establish bare-metal AMD support. |
 | Windows Server 2025 x86-64 hosted VM, QEMU TCG | PR #115 run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996) passed on the same tested stack (`1b3beb5`); QEMU 11.1.0, `cortex-a710`, guest 6 GiB; AMD64 Family 25 Model 17 Stepping 1, 4 logical CPUs; 17,174,360,064 bytes total / 13,685,481,472 available before QEMU; RSS not measured. This is a hosted VM result, not a physical Windows PC result. |
@@ -100,20 +100,32 @@ The three boot logs report the same SHA-256 values for the inputs used by QEMU.
 Paired artifacts: [guest inputs ZIP](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196743551)
 (SHA-256 `4f799ad8146a6a90c94a5963eb20f9247e9929154c499149d7c7b8dd6f9788d7`) and
 [PureDarwin disk ZIP](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196177348)
-(SHA-256 `5f0fcda34d96a36702fea01a36c2649f09088a4892f09f7e68ceea2b45865f6`). The guest
+(SHA-256 `5f0fcda34d96a36702fea01a36c2649f09088a4892f09f7e68ceea2b45865f6e`). The guest
 artifact expires 2026-12-27 and the disk artifact expires 2026-12-27; treat them as
 short-lived run evidence, not permanent download mirrors. The per-host logs are
 [Ubuntu](https://github.com/Personed/xnulinux/actions/runs/45989875996/job/140506795752),
 [Windows](https://github.com/Personed/xnulinux/actions/runs/45989875996/job/140506795768),
 and [Intel macOS](https://github.com/Personed/xnulinux/actions/runs/45989875996/job/140506795714).
 
-The 6 GiB value is the repeated standard guest configuration, not a measured minimum;
-lower guest allocations remain experimental. These are three hosted VM profiles.
-Physical Intel and AMD PCs and their host-RAM floor remain untested, so they are not
-supported hardware claims. Direct XNU on a Linux ARM64 host remains untested for this
-revision. #172 tested the GitHub-generated merge of #115 into the older #89 base.
-Run [#184](https://github.com/Personed/xnulinux/actions/runs/46000976799) tracks
-validation after #115 was integrated into #89 at `cb4fed3`.
+The 6 GiB value is the standard guest configuration, not a measured minimum; lower guest
+allocations remain experimental. The measurements above and run #184 are from hosted VMs.
+Physical Intel/AMD PCs and their host-RAM floors remain untested, and direct XNU on a Linux
+ARM64 host has not been revalidated against this revision.
+
+PR #89 is integrated into current `main` at `09428b5`. Run [#184](https://github.com/Personed/xnulinux/actions/runs/46000976799)
+later passed all six jobs on synthetic merge `5159a3e` (base `ed620d2`, #89 head `cb4fed3`):
+image, HFS+ disk/source XNU collection, ARM64 guest preparation, and three TCG boots on
+hosted Ubuntu, Windows Server 2025, and Intel macOS. Each boot reached PureDarwin userland,
+guest halt, XNU/FKI unload, Linux power-off, and QEMU exit 0. The run validates that tested
+integration on hosted VMs; it is not an exact-head run of current `main` `09428b5`, and it
+does not validate bare-metal PCs or the direct ARM64-host path.
+
+Run #184 artifacts: [guest inputs](https://github.com/Personed/xnulinux/actions/runs/46000976799/artifacts/15204110848),
+[disk](https://github.com/Personed/xnulinux/actions/runs/46000976799/artifacts/15202357394),
+[Ubuntu log](https://github.com/Personed/xnulinux/actions/runs/46000976799/artifacts/15203931172),
+[Windows log](https://github.com/Personed/xnulinux/actions/runs/46000976799/artifacts/15202637581),
+and [Intel macOS log](https://github.com/Personed/xnulinux/actions/runs/46000976799/artifacts/15203784361).
+These artifacts expire 2026-12-27.
 
 PR #89 run [#151](https://github.com/Personed/xnulinux/actions/runs/45904189412) used the paired [guest/build manifest artifact](https://github.com/Personed/xnulinux/actions/runs/45904189412/artifacts/15158822689) and [disk artifact](https://github.com/Personed/xnulinux/actions/runs/45904189412/artifacts/15159442035). Both Windows and macOS boot logs recorded the same inputs: Image SHA-256 `02d3f3935c6f91d19e6175d2f5105bb3afd95aadc6e6fb920baeb2a89555e9f6`, initramfs SHA-256 `a548f8fc4075fd535fece9648c808d97a9460ad520f67a750f221b6ba18babe8`, and disk SHA-256 `269cc4ba7a8ec973cc672d50bffeebb84b9e3a5f9051f567b152d566d8b9acb5`.
 
@@ -133,11 +145,11 @@ PR #83 run [#149](https://github.com/Personed/xnulinux/actions/runs/45902502697)
 PR #52 run [#148](https://github.com/Personed/xnulinux/actions/runs/45902417451) passed all four image, disk/collection, guest-preparation, and TCG-boot jobs on current head `24e4a9c`. The boot ran on Ubuntu 24.04.5 in an Azure VM under Microsoft virtualization, with 4 vCPUs and a virtual AMD EPYC 7763. QEMU 8.2.2 used 6 GiB RAM, Linux `mem=2G`, a 3,072 MiB FKI carve-out at `0xc0000000`, and 2,816 MiB XNU RAM. Host `MemTotal` was 16,367,500 kB; `MemAvailable` was 15,418,148 kB before artifacts and 14,965,924 kB at boot. Peak QEMU RSS was 3,833,380 KiB (3.66 GiB). The log reached Darwin, `XNULINUX_USERLAND_OK`, guest halt, `XNULINUX_E2E_XNU_UNLOADED`, and Linux power-off. The successful boot job means the harness's zero-QEMU-exit requirement passed, although the retained log has no separate exit-status line. This confirms the 6 GiB profile on the current virtual runner, not a physical-PC or RAM floor.
 PR #46's older cross-host branch used the historical 16 GiB profile and its earlier run #79 failed in `kclink` before guest boot; it is not evidence for the current reduced profile. PR #89 run #151 used head `3fbfa6a` on the earlier #83/#52 stack, before PR #89 was retargeted to integrated base `cc4574a`. Ubuntu/QEMU 8.2.2 passed the 6 GiB route; Windows and Intel macOS/QEMU 11.1.0 `-cpu max` failed at the same XNU write-permission fault. PR #98 run #158 then passed all three hosted OS jobs once with `cortex-a710`; its base is still the older #89 head, and the changed CPU model does not isolate S1PIE. This is positive evidence for the tested hosted OS/CPU profiles, not physical-PC support; the A710 result is separate from the PIE profile.
 
-Current #52 run #148 and PR #83 run #149 independently passed the 6 GiB Linux profile. PR #96 run [#157](https://github.com/Personed/xnulinux/actions/runs/45907949989) passed the standard 6 GiB route and all five experimental profiles from 5 GiB to 2 GiB. A supplemental local QEMU 6.2.0/KVM run using the paired #157 artifacts passed all six profiles; see the [experimental guest-memory results](#experimental-guest-memory-profiles) below for RSS, hashes, and per-profile logs, also linked in PR #99 comment 7206879507. Both 2 GiB observations remain experimental, not a supported minimum. PR #99 run [#159](https://github.com/Personed/xnulinux/actions/runs/45911321313) remains queued after the initial disk/collection build hit the remote AppleClang SDK timeout and a retry was canceled; no current-head workflow memory results are available.
+Current #52 run #148 and PR #83 run #149 independently passed the 6 GiB Linux profile. PR #96 run [#157](https://github.com/Personed/xnulinux/actions/runs/45907949989) passed the standard 6 GiB route and all five experimental profiles from 5 GiB to 2 GiB. A supplemental local QEMU 6.2.0/KVM run using the paired #157 artifacts passed all six profiles; see the [experimental guest-memory results](#experimental-guest-memory-profiles) below for RSS, hashes, and per-profile logs, also linked in PR #99 comment 7206879507. Both 2 GiB observations remain experimental, not a supported minimum. PR #99 head `b186f13` passed run [#186](https://github.com/Personed/liXNU/actions/runs/46004186107) on synthetic merge `a7460df` over overlap-guard base `17d4852`; see the current-head profile table below. This result is hosted-VM evidence on a separate base, not validation of exact current `main`.
 
-PR #102 current head `7ee3e4f` includes a dedicated QEMU 11.1.0 `--require-pie` job that explicitly selects `-cpu max`. Local tests and cross-build checks passed, but no Actions run is associated with this head, a clean source XNU/DVM rebuild on the integrated head is unvalidated, and no real PIE boot has completed. Run [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121) tested old head `9e15d68`, passed image build, and was canceled during disk/collection build. The current head still needs the real strict QEMU run through PIE table updates, Darwin console, and guest shutdown.
+PR #102 was merged into the overlap-guard branch at `17d4852`. Its run [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121) tested superseded head `9e15d68`, passed image build, and was canceled during disk/collection build. A full strict PIE boot later passed in PR #99 run #186 on head `b186f13` over that overlap-guard base; this validates the tested #99 branch and hosted profile, not exact current `main`.
 
-PR #89 run #162 remains queued on obsolete SHA `3020e23`. The manual dispatch [#45979011347](https://github.com/Personed/xnulinux/actions/runs/45979011347) on the then-current #89 head `763aef9` built the pinned ARM64 image, then failed while applying the source XNU/free-collection patch series: `0012-linux64-denylists-without-corecrypto.patch` could not apply its KCOV and KASan denylist hunks, already removed by `0008`. Guest preparation and all boots were skipped. PR #115 restored the corrected 14-patch series and passed run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996) on tested merge commit `1b3beb5` (head `0daaa50` into the then-current #89 base `763aef9`); it passed image, disk/collection, guest, and all three hosted TCG boot jobs. PR #115 was later merged into the #89 branch at head `cb4fed3`. Its integrated full-route run [#184](https://github.com/Personed/xnulinux/actions/runs/46000976799) used synthetic merge `5159a3e` with base `ed620d2`, which predates `main` `0e483ad`; that historical run does not validate the newer main integration. Current #89 checks and the next full-route result are tracked in the PR conversation. PR #98 run #158 is historical evidence for its tested revision `589c40e`, not the current integrated head. Module jobs are stage smoke tests, not a full route. Do not claim physical-PC support until representative Intel and AMD hardware is tested; neither a physical host RAM floor nor a supported lower guest-memory minimum is established.
+PR #89 run #162 was queued on obsolete SHA `3020e23`. A manual dispatch on the then-current head `763aef9` built the pinned ARM64 image but failed while applying the source XNU/free-collection patch series; guest preparation and boots were skipped. PR #115 restored the corrected patch series, and run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996) passed the image, disk/collection, guest, and all three hosted TCG boot jobs on synthetic merge `1b3beb5` (head `0daaa50` into base `763aef9`). PR #115 was merged into #89 at `cb4fed3`. PR #89 was later merged into current `main` at `09428b5`. Run [#184](https://github.com/Personed/xnulinux/actions/runs/46000976799) then passed all six jobs on synthetic merge `5159a3e` with base `ed620d2`: image, disk and XNU/free collection, guest preparation, and three hosted TCG boots. That run predates current `main` and is not an exact-head validation of `09428b5`. PR #98 run #158 remains historical evidence for its tested A710 revision. Module jobs are stage smoke tests, not a full route. Physical Intel/AMD PC validation and host-RAM floors remain outstanding; lower guest profiles remain experimental.
 
 The historical full-route TCG reference assigns 16 GiB to the ARM64 guest, with Linux
 `mem=7G`, an 8,156 MiB FKI carve-out at `0x200000000`, and 7,900 MiB XNU RAM. The
@@ -221,6 +233,35 @@ host-RAM floor or physical-PC support.
 | 2.5 GiB | 2,242,084 KiB | Full route passed once |
 | 2 GiB | 1,976,184 KiB | Full route passed once |
 
+#### Follow-up sweep on PR #99 head `b186f13` (run #186)
+
+Run [#186](https://github.com/Personed/liXNU/actions/runs/46004186107) tested synthetic merge `a7460df` of PR #99 head
+`b186f13` over overlap-guard base `17d4852`. All ten jobs passed, including image/disk/guest
+preparation, the standard 6 GiB direct profile, strict PIE, and five experimental RAM profiles.
+The x86-64 runner was an Ubuntu 24.04.5 KVM VM with four vCPUs and an Intel Xeon 6975P-C.
+All seven boots reached PureDarwin userland, guest halt, XNU/FKI unload, Linux power-off, and
+QEMU exit 0. These are hosted-VM observations; they do not establish a physical host-RAM floor.
+Profiles below 6 GiB remain experimental, and this merge is not current `main` `09428b5`.
+
+| Profile | QEMU / Linux / FKI carve-out / XNU RAM | Peak QEMU RSS | Result |
+| --- | --- | --- | --- |
+| Standard 6 GiB direct | QEMU 8.2.2, `cortex-a710`; `mem=2G`, 3,072 MiB at `0xc0000000`, 2,816 MiB | 3,840,560 KiB (3.66 GiB) | Full route passed |
+| 5 GiB | QEMU 8.2.2, `cortex-a710`; `mem=2G`, 3,072 MiB at `0xc0000000`, 2,816 MiB | 3,840,716 KiB (3.66 GiB) | Experimental full route passed |
+| 4 GiB | QEMU 8.2.2, `cortex-a710`; `mem=2G`, 1,792 MiB at `0xc0000000`, 1,536 MiB | 2,537,076 KiB (2.42 GiB) | Experimental full route passed |
+| 3 GiB | QEMU 8.2.2, `cortex-a710`; `mem=1G`, 1,792 MiB at `0x80000000`, 1,536 MiB | 2,506,876 KiB (2.39 GiB) | Experimental full route passed |
+| 2.5 GiB | QEMU 8.2.2, `cortex-a710`; `mem=512M`, 1,536 MiB at `0x60000000`, 1,280 MiB | 2,235,268 KiB (2.13 GiB) | Experimental full route passed |
+| 2 GiB | QEMU 8.2.2, `cortex-a710`; `mem=512M`, 1,280 MiB at `0x60000000`, 1,024 MiB | 1,963,028 KiB (1.87 GiB) | Experimental full route passed |
+| Strict PIE, 6 GiB | QEMU 11.1.0, `-cpu max`; `TCR2_EL1.PIE=1`, XNU PIE mode 1 | 3,631,400 KiB (3.46 GiB) | Strict PIE boot passed |
+
+Per-profile artifacts from run #186: [standard](https://github.com/Personed/liXNU/actions/runs/46004186107/artifacts/15203454277),
+[PIE](https://github.com/Personed/liXNU/actions/runs/46004186107/artifacts/15203584963),
+[5 GiB](https://github.com/Personed/liXNU/actions/runs/46004186107/artifacts/15204297821),
+[4 GiB](https://github.com/Personed/liXNU/actions/runs/46004186107/artifacts/15202928989),
+[3 GiB](https://github.com/Personed/liXNU/actions/runs/46004186107/artifacts/15203339809),
+[2.5 GiB](https://github.com/Personed/liXNU/actions/runs/46004186107/artifacts/15203019421),
+and [2 GiB](https://github.com/Personed/liXNU/actions/runs/46004186107/artifacts/15203599168).
+These log artifacts expire 2026-12-27; the paired guest and disk inputs expire 2026-11-30.
+
 The local run used `tests/puredarwin/run-tcg-e2e.py` at PR #99's rebased head
 [`e1b70f8`](https://github.com/Personed/xnulinux/commit/e1b70f8e35a944eb374e2d37653d0b8cd6bc7420).
 The six-profile shutdown and QEMU-exit summary is recorded in [PR #99 comment
@@ -247,12 +288,30 @@ On an x86-64 Linux PC, install QEMU ARM system emulation and Python 3. On Ubuntu
 the QEMU package that provides `qemu-system-aarch64`, plus `python3`,
 `coreutils` (for `sha256sum`) and `util-linux` (for `lscpu`).
 The boot block checks all required executables before starting the VM, so it also works
-without APT or `sudo` when they are already installed. The pinned-kernel implementation starts in [PR #52](https://github.com/Personed/xnulinux/pull/52) and its follow-ups. For the validated cross-host fixture, check out the exact CI revision [`1b3beb5`](https://github.com/Personed/xnulinux/commit/1b3beb5088c5f29be0888b41a526ff1fadd83aef) tested by run #172. It is the GitHub-generated `refs/pull/115/merge` commit combining PR #115 head [`0daaa50`](https://github.com/Personed/xnulinux/commit/0daaa50e4d2d363bd8d775131b3a298663cf26a2) with PR #89 base [`763aef9`](https://github.com/Personed/xnulinux/commit/763aef99796fd49930745be8b15d3c8a07b5ee61). Use that revision and the paired `puredarwin-e2e-guest` and `puredarwin-e2e-disk` artifacts from run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996): [guest artifact](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196743551) and [disk artifact](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196177348). Both expire on 2026-12-27. Take both artifacts from that same run; do not mix artifacts across runs. The image workflow builds the pinned
+without APT or `sudo` when they are already installed. The pinned-kernel implementation starts in [PR #52](https://github.com/Personed/xnulinux/pull/52) and its follow-ups. For the validated cross-host fixture, run [#172](https://github.com/Personed/xnulinux/actions/runs/45989875996) used
+GitHub's synthetic merge [`1b3beb5`](https://github.com/Personed/xnulinux/commit/1b3beb5088c5f29be0888b41a526ff1fadd83aef), combining
+PR #115 head [`0daaa50`](https://github.com/Personed/xnulinux/commit/0daaa50e4d2d363bd8d775131b3a298663cf26a2) with #89 base
+`763aef9`. A fresh clone may not be able to fetch that synthetic merge object. The reachable
+PR head has Git tree `5f9b1e5`, which is the tree used by the tested merge. Fetch that PR ref
+and check out the fixed head SHA:
+
+```sh
+git fetch origin refs/pull/115/head:refs/remotes/origin/pr-115
+git checkout --detach 0daaa50e4d2d363bd8d775131b3a298663cf26a2
+```
+
+Use that revision and the paired `puredarwin-e2e-guest` and `puredarwin-e2e-disk` artifacts
+from run #172: [guest artifact](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196743551)
+and [disk artifact](https://github.com/Personed/xnulinux/actions/runs/45989875996/artifacts/15196177348).
+Both expire on 2026-12-27. Take both artifacts from that same run; do not mix artifacts across
+runs.
+
+The image workflow builds the pinned
 PureDarwin ARM64 input, exports the real userland into an HFS+ disk, builds a matching
 source XNU collection, pins the ARM64 Linux kernel packages, compiles FKI/XNU for that
 guest, and prepares a direct-boot `Image` and initramfs. Do not mix artifacts across runs.
 
-In a checkout at the tested CI merge commit above, use the guest `Image`,
+In a checkout at the reachable PR-head commit above, use the guest `Image`,
 `initramfs.cpio.gz`, `guest-manifest.txt`, and `build-manifest.txt`
 from `puredarwin-e2e-guest`, plus `pd.img` from
 `puredarwin-e2e-disk`; keep all files from the same workflow run. The build manifest
@@ -330,7 +389,7 @@ It records host and QEMU facts, captures the serial console, sends the required 
 command and guest halt, checks XNU/FKI unload and Linux power-off, and returns success
 only if QEMU exits 0 and RSS stays below the cap. The full 16 GiB profile is historical
 reference evidence, not the current standard-runner target; test it only on a sufficiently
-provisioned host. The workflow and harness are now in `main` through merged PR #89, including the corrected patch series from PR #115. Run #184 passed the full route on its tested synthetic merge, while the docs below identify the older base used by that run.
+provisioned host. The workflow and harness are in current `main` at `09428b5` through merged PR #89, including the corrected patch series from PR #115. Run #184 passed the full route on synthetic merge `5159a3e` over the older base `ed620d2`; that is evidence for the tested integration, not an exact-head run of current `main`.
 
 ### Run #172 artifact identity
 
@@ -410,7 +469,7 @@ Report the profile alongside the stage:
   PR #83 head `07d08c5` passed image run #149 through the complete 6 GiB TCG boot; its
   modules #922 and launcher #455 also passed. PR #83 was then merged into the #52/#50
   chain as `cc4574a`. This runner result is tied to head `07d08c5`, not bare-metal
-  hardware. PR #89 is now retargeted to `codex/kclink-overlap-guard` head `cc4574a`.
+  hardware. Before merge, PR #89 targeted `codex/kclink-overlap-guard` head `cc4574a`; it is now in `main` at `09428b5`.
   Its run #151 was executed before that retarget, on head `3fbfa6a` based on #83
   `07d08c5` / #52 `24e4a9c`: Ubuntu/QEMU 8.2.2 passed the 6 GiB console and shutdown
   route at 3,820,440 KiB peak RSS; Windows and Intel macOS/QEMU 11.1.0 both failed while
@@ -424,10 +483,9 @@ Report the profile alongside the stage:
   `-cpu max` exposes S1PIE, but PR [#98](https://github.com/Personed/xnulinux/pull/98) run
   [#158](https://github.com/Personed/xnulinux/actions/runs/45911026412) passed all three
   hosted OS jobs once with `cortex-a710`. This CPU model changes other features too, so the
-  pass validates that tested profile rather than proving S1PIE caused the fault. PR #102 current head `7ee3e4f` includes the dedicated QEMU 11.1.0 `--require-pie` job with `-cpu max`. Its real
-  `TCR2_EL1.PIE=1` result through XNU table update, console, and shutdown remains pending; no
-  Actions run is associated with this head. This is a separate PIE-compatibility result and
-  does not gate the already passing hosted `cortex-a710` profile.
+  pass validates that tested profile rather than proving S1PIE caused the fault. PR #102 was merged into the overlap-guard branch at `17d4852`. The strict PIE path later
+  passed in PR #99 run #186 on that branch; that hosted-VM result is recorded above and is
+  separate from the `cortex-a710` matrix pass and from exact-current-main validation.
 
   PR #96 head `e358351` adds an experimental 5, 4, 3, 2.5, and 2 GiB guest sweep on the
   #52 base. Run [#157](https://github.com/Personed/xnulinux/actions/runs/45907949989)
@@ -437,12 +495,7 @@ Report the profile alongside the stage:
   are recorded above. This is one hosted-VM sweep and does not establish a supported guest
   minimum. PR #98 run #158 passed the full 6 GiB matrix on Ubuntu, Windows Server 2025,
   and Intel macOS once with `cortex-a710`; the route and host measurements are recorded
-  above. The run is on the older #89 code stack and does not validate PIE; that status does not invalidate its A710 hosted-runner pass. PR #99 rebases the
-  memory sweep onto the integrated chain; run [#159](https://github.com/Personed/xnulinux/actions/runs/45911321313)
-  remains queued after the initial disk build hit a remote SDK-fetch timeout and a retry was canceled. The
-  supplemental local six-profile QEMU 6.2.0/KVM results using paired #157 artifacts are recorded above, with raw
-  per-profile logs linked in PR #99 comment 7206879507. No current-head workflow memory results are available.
-  PR #102 current head `7ee3e4f` includes the strict QEMU 11.1.0 `--require-pie` job with `-cpu max`, but no Actions run is associated with this head. Run [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121) tested old head `9e15d68`, passed image build, and was canceled during disk/collection build. Local tests, cross-build checks, patch validation, shell syntax checks, and `actionlint` passed; the clean integrated XNU/DVM build and real PIE boot remain unvalidated. PR #89 run #162 used old SHA `3020e23049f2752aafc970463850e38d76ce8fe0`; it does not validate the integrated branch. PR #115 was merged into #89, and #89 was then merged into `main`. Run [#184](https://github.com/Personed/xnulinux/actions/runs/46000976799) passed all six jobs on synthetic merge `5159a3e`: image, disk and XNU/free collection, ARM64 guest preparation, and full TCG boots on Ubuntu, Windows Server 2025, and Intel macOS. That merge used base `ed620d2`, before `main` `e69f0a0`, and therefore predates current `main` `0e483ad`. The source and full route passed on the tested integration; a run on the later `0e483ad` main revision remains unrecorded. Physical Intel/AMD validation and the direct ARM64-host boot remain separate outstanding checks. The #158 A710 pass remains historical evidence for its tested revision and hosted profiles. Earlier run #147 belongs to a
+  above. The run is on the older #89 code stack and does not validate PIE; that status does not invalidate its A710 hosted-runner pass. PR #99 head `b186f13` passed all ten jobs in run [#186](https://github.com/Personed/liXNU/actions/runs/46004186107) on synthetic merge `a7460df` over overlap-guard base `17d4852`: image/disk/guest preparation, the standard 6 GiB route, strict PIE, and five experimental memory profiles. The profile measurements and retained logs are recorded above. This is hosted-VM evidence for that branch, not current `main`. The supplemental local six-profile QEMU 6.2.0/KVM results using paired #157 artifacts are also recorded above, with raw per-profile logs linked in PR #99 comment 7206879507. PR #102 was merged into the overlap-guard branch at `17d4852`; its earlier run [#161](https://github.com/Personed/xnulinux/actions/runs/45912879121) used superseded head `9e15d68`, passed image build, and was canceled during disk/collection build. The #99 strict PIE pass is the completed full boot result for that branch; it does not validate exact current `main`. PR #89 run #162 used old SHA `3020e23049f2752aafc970463850e38d76ce8fe0`; it does not validate the integrated branch. PR #115 was merged into #89, and #89 was then merged into `main` at `09428b5`. Run [#184](https://github.com/Personed/xnulinux/actions/runs/46000976799) passed all six jobs on synthetic merge `5159a3e` with base `ed620d2`. This is full-route evidence for that tested integration on hosted Ubuntu, Windows Server 2025, and Intel macOS VMs; it is not an exact-head run of current `main` `09428b5`. Physical Intel/AMD and direct ARM64-host boot validation remain outstanding. The #158 A710 pass remains historical evidence for its tested revision and hosted profiles. Earlier run #147 belongs to a
   superseded #89 head. PR #36 run #118 passed on tested head `c55a700`, not current head
   `93e3cf4`; PR #46 run #79 failed in `kclink` before host preparation or boot.
   Earlier Windows matrix job [#71](https://github.com/Personed/xnulinux/actions/runs/45845436111)

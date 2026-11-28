@@ -53,6 +53,28 @@ def put_name(data, offset, value):
     data[offset : offset + 16] = encoded.ljust(16, b"\0")
 
 
+def protected_entry_sequence(entry_low=0x1100, boot_pml4=0x2000, boot_pdpt=0x3000,
+                             gdt_address=0x4000, initial_esp=0x5000):
+    sequence = bytearray()
+    sequence += b"\x89\xc7"
+    sequence += b"\xbc" + struct.pack("<I", initial_esp)
+    sequence += b"\xb8" + struct.pack("<I", gdt_address)
+    sequence += b"\x0f\x01\x10"
+    sequence += b"\xb8" + struct.pack("<I", boot_pml4)
+    sequence += b"\x01\x00\x01\x80\xf8\x0f\x00\x00"
+    sequence += b"\xba" + struct.pack("<I", boot_pdpt)
+    sequence += b"\x01\x02\x01\x42\x08\x01\x42\x10\x01\x42\x18"
+    sequence += b"\xb8\x20\x00\x00\x00\x0f\x22\xe0"
+    sequence += b"\xb9\x80\x00\x00\xc0\x0f\x32\x0d\x00\x09\x00\x00\x0f\x30"
+    sequence += b"\xb8" + struct.pack("<I", boot_pml4)
+    sequence += b"\x0f\x22\xd8"
+    sequence += b"\x0f\x20\xc0\x0d\x00\x00\x01\x80\x0f\x22\xc0"
+    sequence += b"\xea" + struct.pack("<I", entry_low + 0x5C) + b"\x08\x00"
+    sequence += b"\x31\xc0\x8e\xd0\x8e\xd8\x8e\xc0\x8e\xe0\x8e\xe8\x85\xff"
+    assert len(sequence) == 0x6A
+    return bytes(sequence)
+
+
 def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL, *, hib_protections=7):
     data = bytearray(FILE_SIZE)
     for index, value in enumerate(
@@ -108,7 +130,7 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL, *, hib_protections=7):
     put_name(data, HIB_OFF + 72, "__text")
     put_name(data, HIB_OFF + 88, "__HIB")
     put_u64(data, HIB_OFF + 104, 0x1100)
-    put_u64(data, HIB_OFF + 112, 0x20)
+    put_u64(data, HIB_OFF + 112, 0x80)
     put_u32(data, HIB_OFF + 120, 0x500)
     put_u32(data, HIB_OFF + 124, 4)
     put_u32(data, HIB_OFF + 136, S_ATTR_PURE_INSTRUCTIONS)
@@ -118,6 +140,7 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL, *, hib_protections=7):
     put_u32(data, THREAD_OFF + 8, X86_THREAD_STATE64)
     put_u32(data, THREAD_OFF + 12, X86_THREAD_STATE64_COUNT)
     put_u64(data, RIP_OFF, 0x1100)
+    data[0x500:0x500 + 0x6A] = protected_entry_sequence()
     return data
 
 
@@ -261,6 +284,10 @@ def run_case(verifier, name, image, expected_success, mutate_manifest=None,
         declared_executable = not expect_hib_metadata
         if report["validation_scope"]["entry_is_file_backed_executable"] is not declared_executable:
             raise AssertionError(f"{name}: report misstated declared entry permissions")
+        if report["validation_scope"].get("entry_sequence") != "protected-mode-xnu-source-pin-v1":
+            raise AssertionError(f"{name}: protected-mode sequence policy was not recorded")
+        if report["validation_scope"].get("entry_sequence_verified") is not True:
+            raise AssertionError(f"{name}: protected-mode sequence verification was not recorded")
         if expect_hib_metadata:
             hib_entry = report["inspection"].get("hib_entry")
             if hib_entry != {"section": "__HIB,__text", "file_offset": "0x0000000000000500"}:
@@ -284,6 +311,41 @@ def main():
              True, expect_hib_metadata=True)
     run_case(verifier, "pinned subtype mismatch", make_valid_image(CPU_SUBTYPE_X86_64_H),
              False, expected_subtype="X86_64_H", policy_subtype="X86_64_ALL")
+
+
+    opcode_mutated = make_valid_image()
+    opcode_mutated[0x500 + 0x0C] ^= 1
+    run_case(verifier, "mutated protected-mode entry opcode", opcode_mutated, False,
+             expected_diagnostic="protected-mode entry sequence mismatch")
+
+    order_mutated = make_valid_image()
+    order_mutated[0x500 + 0x3A], order_mutated[0x500 + 0x41] = order_mutated[0x500 + 0x41], order_mutated[0x500 + 0x3A]
+    run_case(verifier, "mutated protected-mode entry instruction order", order_mutated, False,
+             expected_diagnostic="EFER LME/NXE setup")
+
+    bad_pdpt = make_valid_image()
+    put_u32(bad_pdpt, 0x500 + 0x1D, 0x3100)
+    run_case(verifier, "semantically invalid BootPDPT immediate", bad_pdpt, False,
+             expected_diagnostic="BootPDPT immediate does not follow BootPML4")
+
+    bad_far_target = make_valid_image()
+    put_u32(bad_far_target, 0x500 + 0x56, 0x115D)
+    run_case(verifier, "semantically invalid long-mode far target", bad_far_target, False,
+             expected_diagnostic="long-mode far jump target")
+
+    unaligned_pml4 = make_valid_image()
+    put_u32(unaligned_pml4, 0x500 + 0x10, 0x2800)
+    put_u32(unaligned_pml4, 0x500 + 0x43, 0x2800)
+    run_case(verifier, "unaligned BootPML4 immediate", unaligned_pml4, False,
+             expected_diagnostic="not page aligned")
+
+    shifted_entry = make_valid_image()
+    put_u64(shifted_entry, RIP_OFF, 0x1101)
+    run_case(verifier, "entry offset shifted into sequence", shifted_entry, False,
+             expected_diagnostic="protected-mode entry")
+
+    truncated = make_valid_image()[:0x540]
+    run_case(verifier, "truncated protected-mode entry sequence", truncated, False)
 
     wrong_file_type = make_valid_image()
     put_u32(wrong_file_type, 12, 6)  # MH_DYLIB
@@ -315,7 +377,7 @@ def main():
              expected_diagnostic="HIB metadata mode (status 3)")
 
     rw_rip_outside_text = make_valid_image(hib_protections=3)
-    put_u64(rw_rip_outside_text, RIP_OFF, 0x1120)  # Exclusive end of __HIB,__text.
+    put_u64(rw_rip_outside_text, RIP_OFF, 0x1180)  # Exclusive end of __HIB,__text.
     run_case(verifier, "RIP outside the RW hibernation instruction section", rw_rip_outside_text, False)
 
     mismatched_hib_maxprot = make_valid_image(hib_protections=3)

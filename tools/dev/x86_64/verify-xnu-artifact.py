@@ -319,6 +319,91 @@ def verify_inspection(
     return report
 
 
+def read_u32le(data: bytes, offset: int) -> int:
+    return int.from_bytes(data[offset:offset + 4], "little")
+
+
+def verify_entry_sequence(artifact: pathlib.Path, report: dict[str, object]) -> None:
+    """Verify the pinned protected-mode XNU entry sequence without executing it."""
+    entry = report.get("entry")
+    segments = report.get("segments")
+    if not isinstance(entry, dict) or not isinstance(segments, list):
+        raise VerificationError("cannot validate entry sequence without entry and segment metadata")
+    entry_address = parse_hex(entry.get("unslid"), "entry.unslid")
+    entry_file_offset = None
+    hib_entry = report.get("hib_entry")
+    if isinstance(hib_entry, dict):
+        entry_file_offset = parse_hex(hib_entry.get("file_offset"), "hib_entry.file_offset")
+    else:
+        for segment in segments:
+            if isinstance(segment, dict) and segment.get("name") == ENTRY_SEGMENT:
+                segment_fileoff = parse_hex(segment.get("fileoff"), "__HIB.fileoff")
+                segment_vmaddr = parse_hex(segment.get("vmaddr"), "__HIB.vmaddr")
+                entry_file_offset = segment_fileoff + entry_address - segment_vmaddr
+                break
+    if entry_file_offset is None or entry_file_offset < 0:
+        raise VerificationError("cannot derive a file offset for the protected-mode entry")
+
+    try:
+        artifact_size = artifact.stat().st_size
+        with artifact.open("rb") as stream:
+            stream.seek(entry_file_offset)
+            sequence = stream.read(0x6a)
+    except OSError as error:
+        raise VerificationError(f"cannot read protected-mode entry bytes: {error}") from error
+    if len(sequence) != 0x6a or entry_file_offset + len(sequence) > artifact_size:
+        raise VerificationError("protected-mode entry sequence is truncated")
+
+    def expect(offset: int, expected: bytes, label: str) -> None:
+        if sequence[offset:offset + len(expected)] != expected:
+            raise VerificationError(f"protected-mode entry sequence mismatch at {label}")
+
+    expect(0x00, b"\x89\xc7", "boot-argument copy mov edi,eax")
+    if sequence[0x02] != 0xBC:
+        raise VerificationError("protected-mode entry does not initialize ESP")
+    initial_esp = read_u32le(sequence, 0x03)
+    if not initial_esp or initial_esp & 0xF:
+        raise VerificationError("protected-mode entry initial ESP is zero or misaligned")
+
+    if sequence[0x07] != 0xB8:
+        raise VerificationError("protected-mode entry does not load the GDT pointer address")
+    gdt_address = read_u32le(sequence, 0x08)
+    if not gdt_address or gdt_address & 0x7:
+        raise VerificationError("protected-mode entry GDT address is zero or misaligned")
+    expect(0x0C, b"\x0f\x01\x10", "lgdt [eax]")
+
+    if sequence[0x0F] != 0xB8:
+        raise VerificationError("protected-mode entry does not load BootPML4")
+    boot_pml4 = read_u32le(sequence, 0x10)
+    if not boot_pml4 or boot_pml4 & 0xFFF:
+        raise VerificationError("BootPML4 immediate is zero or not page aligned")
+    expect(0x14, b"\x01\x00\x01\x80\xf8\x0f\x00\x00", "BootPML4 physical-base rebasing")
+
+    if sequence[0x1C] != 0xBA:
+        raise VerificationError("protected-mode entry does not load BootPDPT")
+    boot_pdpt = read_u32le(sequence, 0x1D)
+    if boot_pdpt != boot_pml4 + 0x1000:
+        raise VerificationError("BootPDPT immediate does not follow BootPML4 in the pinned layout")
+    expect(0x21, b"\x01\x02\x01\x42\x08\x01\x42\x10\x01\x42\x18", "BootPDPT rebasing")
+
+    expect(0x2C, b"\xb8\x20\x00\x00\x00\x0f\x22\xe0", "CR4.PAE setup")
+    expect(0x34, b"\xb9\x80\x00\x00\xc0\x0f\x32\x0d\x00\x09\x00\x00\x0f\x30", "EFER LME/NXE setup")
+    if sequence[0x42] != 0xB8 or read_u32le(sequence, 0x43) != boot_pml4:
+        raise VerificationError("CR3 setup does not reload the same BootPML4 immediate")
+    expect(0x47, b"\x0f\x22\xd8", "CR3 load")
+    expect(0x4A, b"\x0f\x20\xc0\x0d\x00\x00\x01\x80\x0f\x22\xc0", "CR0 paging/write-protect setup")
+
+    if sequence[0x55] != 0xEA:
+        raise VerificationError("protected-mode entry lacks the long-mode far jump")
+    far_target = read_u32le(sequence, 0x56)
+    far_selector = int.from_bytes(sequence[0x5A:0x5C], "little")
+    expected_target = (entry_address & 0xFFFFFFFF) + 0x5C
+    if far_target != expected_target or far_selector != 0x08:
+        raise VerificationError("long-mode far jump target or KERNEL64_CS selector is invalid")
+
+    expect(0x5C, b"\x31\xc0\x8e\xd0\x8e\xd8\x8e\xc0\x8e\xe0\x8e\xe8\x85\xff", "long-mode segment clearing")
+
+
 def run_inspector(
     inspector: pathlib.Path, artifact: pathlib.Path, *options: str,
 ) -> subprocess.CompletedProcess[str]:
@@ -362,7 +447,9 @@ def inspect_artifact(
         report = json.loads(result.stdout)
     except json.JSONDecodeError as error:
         raise VerificationError(f"xnu-macho-inspect returned invalid JSON: {error}") from error
-    return verify_inspection(report, artifact.name, size, expected_subtype, hib_metadata=hib_metadata)
+    verified = verify_inspection(report, artifact.name, size, expected_subtype, hib_metadata=hib_metadata)
+    verify_entry_sequence(artifact, verified)
+    return verified
 
 
 def snapshot_artifact(source: pathlib.Path, destination: pathlib.Path) -> tuple[int, str]:
@@ -516,6 +603,8 @@ def main(argv: list[str]) -> int:
                 "unclassified_optional_commands": 0,
                 "entry_is_file_backed": True,
                 "entry_is_file_backed_executable": "hib_entry" not in inspection,
+                "entry_sequence": "protected-mode-xnu-source-pin-v1",
+                "entry_sequence_verified": True,
                 "entry_segment": ENTRY_SEGMENT,
                 "load_attempted": False,
                 "fixups_applied": False,

@@ -116,7 +116,7 @@ setting `X86_BOUNDARY_ALLOW_KVM_ONLY=1` skips the unsupported TCG profile and in
 the KVM/host run. That explicit fallback is complementary local validation only; it is not a
 substitute for the CI TCG profile.
 
-The disposable TCG profile disables the LA57 CPU feature because version 1 of the control contract is explicitly four-level; physical or KVM hosts using five-level paging remain outside this fixture. The boundary probe also exercises the validation-only FKI control-block and transaction-state models around the
+The disposable TCG profile uses the Linux `no5lvl` boot parameter because version 1 of the control contract is explicitly four-level; physical or KVM hosts using five-level paging remain outside this fixture. The boundary probe also exercises the validation-only FKI control-block and transaction-state models around the
 same normal-return and software-abort calls. The test builds a synthetic `HOST_BOUND_SHIM`/`ENTER` object from live
 host control state plus probe-owned XSAVE and alternate-stack memory, validates it, and requires the synthetic state
 machine to reach `COMPLETE` for normal return or `ABORTED` for controlled software abort. This coupling is a fixture

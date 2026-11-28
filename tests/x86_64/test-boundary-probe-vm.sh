@@ -189,7 +189,7 @@ run_probe_vm() {
   set +e
   timeout 300 qemu-system-x86_64 -machine q35 -accel "$accel" -cpu "$cpu" -smp 2 -m 1024 \
     -kernel "$KERNEL" -initrd "$INITRD" \
-    -append 'console=ttyS0,115200 rdinit=/init panic=1 loglevel=7' \
+    -append 'console=ttyS0,115200 rdinit=/init panic=1 loglevel=7 no5lvl' \
     -display none -serial stdio -monitor none -no-reboot > "$log" 2>&1
   qemu_status=$?
   set -e
@@ -213,7 +213,7 @@ run_probe_vm() {
 }
 
 if [ "$QEMU_TCG_XSAVE_OK" -eq 1 ]; then
-  run_probe_vm tcg max,-la57 "$STAGE/tcg.log"
+  run_probe_vm tcg max "$STAGE/tcg.log"
 fi
 if [ "$KVM_USABLE" -eq 1 ]; then
   run_probe_vm kvm host "$STAGE/kvm.log"

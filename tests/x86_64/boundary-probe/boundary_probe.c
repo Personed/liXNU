@@ -29,6 +29,8 @@
 
 #include "fki.h"
 #include "fki_x86_64_cr3.h"
+#include "fki_x86_64_context.h"
+#include "fki_x86_64_transaction.h"
 #include "boundary_probe_asm.h"
 #include "boundary_probe_uapi.h"
 #include "task_continuation_probe.h"
@@ -142,6 +144,7 @@ static_assert(X86_BOUNDARY_PROBE_TASK_CONTINUATION ==
 
 void x86_boundary_probe_switch_stack(void *stack_top, struct bp_asm_result *result,
 				     unsigned int mode);
+long x86_boundary_probe_inner(struct bp_asm_result *result, unsigned int mode);
 void x86_boundary_probe_clobber_xstate(void);
 
 static int bp_read_xcr0(u64 *xcr0)
@@ -254,6 +257,90 @@ static bool bp_task_identity_match(const struct bp_host_snapshot *before,
 	       !before->irq_disabled && !after->irq_disabled;
 }
 
+static int bp_xsave_constraints(u64 *bytes, u64 *avx_end, u64 *supported_xcr0)
+{
+	u32 eax, ebx, ecx, edx;
+	u64 enabled_bytes, end;
+
+	cpuid_count(0xd, 0, &eax, &ebx, &ecx, &edx);
+	*supported_xcr0 = eax | ((u64)edx << 32);
+	enabled_bytes = ebx;
+	if (!enabled_bytes || enabled_bytes < FKI_X86_XSAVE_MIN_BYTES)
+		return -EOPNOTSUPP;
+	cpuid_count(0xd, 2, &eax, &ebx, &ecx, &edx);
+	if (!eax || !ebx)
+		return -EOPNOTSUPP;
+	end = (u64)ebx + eax;
+	if (end < FKI_X86_XSAVE_AVX_MIN_BYTES || end > enabled_bytes)
+		return -EOPNOTSUPP;
+	*bytes = enabled_bytes;
+	*avx_end = end;
+	return 0;
+}
+
+static int bp_validate_control_model(const struct bp_host_snapshot *snapshot,
+				     unsigned long xsave_address,
+				     u64 xsave_bytes, u64 xsave_avx_end,
+				     u64 supported_xcr0, unsigned long entry_rsp)
+{
+	struct fki_x86_host_constraints host = {
+		.cr4_allowed = snapshot->cr4,
+		.efer_allowed = snapshot->efer,
+		.xcr0_supported = supported_xcr0,
+		.xsave_max_bytes = xsave_bytes,
+		.xsave_avx_end = xsave_avx_end,
+		.physical_bits = boot_cpu_data.x86_phys_bits,
+		.flags = boot_cpu_has(X86_FEATURE_PCID) ? FKI_X86_HOST_CPU_HAS_PCID : 0,
+	};
+	struct fki_x86_context_control_v1 control = {
+		.abi_version = FKI_X86_CONTEXT_ABI_VERSION,
+		.control_version = FKI_X86_CONTEXT_CONTROL_VERSION,
+		.state_size = FKI_X86_CONTEXT_V1_BYTES,
+		.profile = FKI_X86_CONTEXT_PROFILE_HOST_BOUND_SHIM,
+		.operation = FKI_X86_CONTEXT_OP_ENTER,
+		.rsp = entry_rsp,
+		.rip = (unsigned long)x86_boundary_probe_inner,
+		.rflags = snapshot->rflags,
+		.cs = __KERNEL_CS,
+		.ss = __KERNEL_DS,
+		.ds = __KERNEL_DS,
+		.es = __KERNEL_DS,
+		.tr = snapshot->tr,
+		.fs_base = snapshot->fs_base,
+		.gs_base = snapshot->gs_base,
+		.kernel_gs_base = snapshot->kernel_gs_base,
+		.cr0 = snapshot->cr0,
+		.cr3 = snapshot->cr3.root_pa | snapshot->cr3.pcid |
+		       snapshot->cr3.cache_flags,
+		.cr4 = snapshot->cr4,
+		.efer = snapshot->efer,
+		.xcr0 = snapshot->xcr0,
+		.gdt_base = snapshot->gdt_base,
+		.idt_base = snapshot->idt_base,
+		.gdt_limit = snapshot->gdt_limit,
+		.idt_limit = snapshot->idt_limit,
+		.xsave_address = xsave_address,
+		.xsave_bytes = xsave_bytes,
+		.xsave_xstate_bv = snapshot->xcr0,
+		.xsave_format = FKI_X86_XSAVE_FORMAT_STANDARD,
+	};
+
+	if (snapshot->xcr0 & ~(u64)FKI_X86_XCR0_V1_MASK)
+		return -EOPNOTSUPP;
+	return fki_x86_context_validate_host_bound_shim(&control, &host);
+}
+
+static int bp_tx_step(enum fki_x86_transaction_state *state,
+		      enum fki_x86_transaction_event event)
+{
+	int err = fki_x86_transaction_transition(state, event);
+
+	if (err)
+		pr_err("x86-boundary-probe: transaction model rejected event %u in state %u: %d\n",
+		       event, *state, err);
+	return err;
+}
+
 static bool bp_gprs_match(const unsigned long *left, const unsigned long *right)
 {
 	int i;
@@ -283,17 +370,31 @@ static long bp_run_on_cpu(void *arg)
 	struct bp_asm_result result = {};
 	unsigned long irq_flags;
 	unsigned long stack_base, stack_limit;
-	struct page *stack_page;
-	unsigned long stack_top;
+	struct page *stack_page, *xsave_page;
+	unsigned long stack_top, xsave_area, entry_rsp;
+	unsigned int xsave_order;
+	u64 xsave_bytes, xsave_avx_end, supported_xcr0;
+	enum fki_x86_transaction_state tx = FKI_X86_TX_INIT;
 	u64 *low_canary, *high_canary;
 	long ret = 0;
 
 	if (fki_caps() != 0)
 		return -EOPNOTSUPP;
 
-	stack_page = alloc_pages(GFP_KERNEL | __GFP_ZERO, BP_STACK_ORDER);
-	if (!stack_page)
+	ret = bp_xsave_constraints(&xsave_bytes, &xsave_avx_end, &supported_xcr0);
+	if (ret)
+		return ret;
+	xsave_order = get_order(xsave_bytes);
+	xsave_page = alloc_pages(GFP_KERNEL | __GFP_ZERO, xsave_order);
+	if (!xsave_page)
 		return -ENOMEM;
+	xsave_area = (unsigned long)page_address(xsave_page);
+
+	stack_page = alloc_pages(GFP_KERNEL | __GFP_ZERO, BP_STACK_ORDER);
+	if (!stack_page) {
+		__free_pages(xsave_page, xsave_order);
+		return -ENOMEM;
+	}
 	stack_base = (unsigned long)page_address(stack_page);
 	stack_limit = stack_base + BP_STACK_SIZE;
 	low_canary = (u64 *)stack_base;
@@ -301,6 +402,7 @@ static long bp_run_on_cpu(void *arg)
 	WRITE_ONCE(*low_canary, BP_STACK_LOW_CANARY);
 	WRITE_ONCE(*high_canary, BP_STACK_HIGH_CANARY);
 	stack_top = (unsigned long)high_canary;
+	entry_rsp = (stack_top & ~0xfUL) - 32;
 
 	preempt_disable();
 	local_irq_save(irq_flags);
@@ -322,13 +424,34 @@ static long bp_run_on_cpu(void *arg)
 		goto out_restore;
 	}
 #endif
+	ret = bp_validate_control_model(&before, xsave_area, xsave_bytes,
+					xsave_avx_end, supported_xcr0, entry_rsp);
+	if (ret) {
+		pr_err("x86-boundary-probe: control model validation failed on cpu %u mode %u: %ld\n",
+		       work->request.cpu, work->request.mode, ret);
+		goto out_restore;
+	}
+	ret = bp_tx_step(&tx, FKI_X86_TX_VALIDATE_OK);
+	if (ret)
+		goto out_restore;
+	ret = bp_tx_step(&tx, FKI_X86_TX_SNAPSHOT_OK);
+	if (ret)
+		goto out_restore;
+	ret = bp_tx_step(&tx, FKI_X86_TX_ENTER);
+	if (ret)
+		goto out_restore;
 	x86_boundary_probe_switch_stack((void *)stack_top, &result,
 					work->request.mode);
+	ret = bp_tx_step(&tx, FKI_X86_TX_COOPERATIVE_STOP);
+	if (ret)
+		goto out_restore;
 	ret = bp_snapshot(&after);
 	if (ret)
 		goto out_restore;
 
 	if (!bp_snapshots_match(&before, &after) ||
+	    result.alt_switch_rsp != entry_rsp ||
+	    result.alt_entry_rsp != entry_rsp - 8 ||
 	    result.host_entry_rsp != result.host_return_rsp ||
 	    result.host_entry_rsp < before.stack_page ||
 	    result.host_entry_rsp >= before.stack_end ||
@@ -360,18 +483,29 @@ static long bp_run_on_cpu(void *arg)
 		ret = -EUCLEAN;
 	}
 
+	if (!ret) {
+		ret = bp_tx_step(&tx, FKI_X86_TX_RESTORE_OK);
+		if (!ret)
+			ret = bp_tx_step(&tx, work->request.mode == X86_BOUNDARY_PROBE_MODE_RETURN ?
+					 FKI_X86_TX_FINISH : FKI_X86_TX_ABORT);
+		if (!ret && tx != (work->request.mode == X86_BOUNDARY_PROBE_MODE_RETURN ?
+				   FKI_X86_TX_COMPLETE : FKI_X86_TX_ABORTED))
+			ret = -EUCLEAN;
+	}
+
 out_restore:
 	local_irq_restore(irq_flags);
 	preempt_enable();
+	__free_pages(xsave_page, xsave_order);
 	__free_pages(stack_page, BP_STACK_ORDER);
 	if (ret)
 		return ret;
 	pr_info("x86-boundary-probe: cpu %u mode %u restored host state "
 		"shim_entry_rsp_mod16=%lu preempt_count=%u "
-		"irqs_disabled=%u xcr0=%#llx stack_canaries=ok\n",
+		"irqs_disabled=%u xcr0=%#llx transaction_state=%u stack_canaries=ok\n",
 		work->request.cpu, work->request.mode, result.alt_entry_rsp & 0xf,
 		before.preempt_count, before.irq_disabled,
-		(unsigned long long)before.xcr0);
+		(unsigned long long)before.xcr0, tx);
 	return result.status;
 }
 

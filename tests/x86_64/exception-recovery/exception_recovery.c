@@ -28,6 +28,8 @@
 #include <asm/pgtable_64_types.h>
 
 #include "fki.h"
+#include "fki_x86_64_context.h"
+#include "fki_x86_64_transaction.h"
 #include "exception_recovery_asm.h"
 #include "exception_recovery_uapi.h"
 
@@ -168,8 +170,15 @@ struct er_cpu_state {
 	void *idt_copy;
 	struct page *fault_stack_pages;
 	struct page *recovery_stack_pages;
+	struct page *xsave_pages;
 	struct er_host_snapshot before;
 	struct er_host_snapshot after;
+	struct fki_x86_context_control_v1 control_model;
+	struct fki_x86_host_constraints host_model;
+	u64 xsave_bytes;
+	u64 xsave_avx_end;
+	u64 xsave_supported_xcr0;
+	unsigned int xsave_order;
 	unsigned int cpu;
 };
 
@@ -451,6 +460,106 @@ static int er_check_fault_address(unsigned long address)
 	return 0;
 }
 
+static int er_xsave_constraints(u64 *bytes, u64 *avx_end, u64 *supported_xcr0)
+{
+	u32 eax, ebx, ecx, edx;
+	u64 enabled_bytes, end;
+
+	cpuid_count(0xd, 0, &eax, &ebx, &ecx, &edx);
+	*supported_xcr0 = eax | ((u64)edx << 32);
+	enabled_bytes = ebx;
+	if (!enabled_bytes || enabled_bytes < FKI_X86_XSAVE_MIN_BYTES)
+		return -EOPNOTSUPP;
+	cpuid_count(0xd, 2, &eax, &ebx, &ecx, &edx);
+	if (!eax || !ebx)
+		return -EOPNOTSUPP;
+	end = (u64)ebx + eax;
+	if (end < FKI_X86_XSAVE_AVX_MIN_BYTES || end > enabled_bytes)
+		return -EOPNOTSUPP;
+	*bytes = enabled_bytes;
+	*avx_end = end;
+	return 0;
+}
+
+static int er_tx_step(enum fki_x86_transaction_state *state,
+		      enum fki_x86_transaction_event event)
+{
+	int err = fki_x86_transaction_transition(state, event);
+
+	if (err)
+		pr_err("x86-exception-recovery: transaction model rejected event %u in state %u: %d\n",
+		       event, *state, err);
+	return err;
+}
+
+static int er_prepare_control_model(struct er_cpu_state *state,
+				    unsigned long entry_rsp,
+				    unsigned long entry_rip)
+{
+	const struct er_host_snapshot *snapshot = &state->before;
+	u64 control_xcr0 = snapshot->xcr0 & FKI_X86_XCR0_V1_MASK;
+
+	state->host_model = (struct fki_x86_host_constraints) {
+		.cr4_allowed = snapshot->cr4,
+		.efer_allowed = snapshot->efer,
+		.xcr0_supported = state->xsave_supported_xcr0,
+		.xsave_max_bytes = state->xsave_bytes,
+		.xsave_avx_end = state->xsave_avx_end,
+		.physical_bits = boot_cpu_data.x86_phys_bits,
+		.flags = boot_cpu_has(X86_FEATURE_PCID) ? FKI_X86_HOST_CPU_HAS_PCID : 0,
+	};
+	state->control_model = (struct fki_x86_context_control_v1) {
+		.abi_version = FKI_X86_CONTEXT_ABI_VERSION,
+		.control_version = FKI_X86_CONTEXT_CONTROL_VERSION,
+		.state_size = FKI_X86_CONTEXT_V1_BYTES,
+		.profile = FKI_X86_CONTEXT_PROFILE_HOST_BOUND_SHIM,
+		.operation = FKI_X86_CONTEXT_OP_ENTER,
+		.rsp = entry_rsp,
+		.rip = entry_rip,
+		.rflags = snapshot->rflags,
+		.cs = __KERNEL_CS,
+		.ss = __KERNEL_DS,
+		.ds = __KERNEL_DS,
+		.es = __KERNEL_DS,
+		.tr = snapshot->tr,
+		.fs_base = snapshot->fs_base,
+		.gs_base = snapshot->gs_base,
+		.kernel_gs_base = snapshot->kernel_gs_base,
+		.cr0 = snapshot->cr0,
+		.cr3 = snapshot->cr3,
+		.cr4 = snapshot->cr4,
+		.efer = snapshot->efer,
+		.xcr0 = control_xcr0,
+		.gdt_base = snapshot->gdt_base,
+		.idt_base = snapshot->idt_base,
+		.gdt_limit = snapshot->gdt_limit,
+		.idt_limit = snapshot->idt_limit,
+		.xsave_address = (unsigned long)page_address(state->xsave_pages),
+		.xsave_bytes = state->xsave_bytes,
+		.xsave_xstate_bv = control_xcr0,
+		.xsave_format = FKI_X86_XSAVE_FORMAT_STANDARD,
+	};
+	if (!control_xcr0)
+		return -EOPNOTSUPP;
+	return 0;
+}
+
+static int er_validate_fault_stop_report(struct er_cpu_state *state,
+					 unsigned int vector)
+{
+	struct er_asm_control *captured = &state->control;
+	struct fki_x86_context_control_v1 *report = &state->control_model;
+
+	report->stop_reason = vector == X86_EXCEPTION_RECOVERY_PF ?
+		FKI_X86_STOP_PAGE_FAULT : FKI_X86_STOP_GENERAL_PROTECTION;
+	report->stop_vector = vector;
+	report->stop_error_code = captured->error_code;
+	report->stop_cr2 = captured->cr2;
+	report->stop_rip = captured->fault_rip;
+	report->stop_rsp = captured->fault_rsp;
+	return fki_x86_validate_stop_report_v1(report);
+}
+
 static long er_run_on_cpu(void *argument)
 {
 	struct er_work *work = argument;
@@ -464,6 +573,7 @@ static long er_run_on_cpu(void *argument)
 	struct desc_ptr current_gdt;
 	unsigned long required_error_code;
 	unsigned long required_asm_flags;
+	enum fki_x86_transaction_state tx = FKI_X86_TX_INIT;
 	bool after_valid = false;
 
 	preempt_disable();
@@ -543,6 +653,23 @@ static long er_run_on_cpu(void *argument)
 		ret = -EUCLEAN;
 		goto out_snapshot;
 	}
+	ret = er_prepare_control_model(state, control->recovery_stack_top,
+				       (unsigned long)x86_er_inject);
+	if (ret)
+		goto out_restore;
+	ret = fki_x86_context_validate_host_bound_shim(&state->control_model,
+							 &state->host_model);
+	if (ret)
+		goto out_restore;
+	ret = er_tx_step(&tx, FKI_X86_TX_VALIDATE_OK);
+	if (ret)
+		goto out_restore;
+	ret = er_tx_step(&tx, FKI_X86_TX_SNAPSHOT_OK);
+	if (ret)
+		goto out_restore;
+	ret = er_tx_step(&tx, FKI_X86_TX_ENTER);
+	if (ret)
+		goto out_restore;
 	er_active_state = control;
 	smp_wmb();
 	ret = x86_er_inject(control, work->request.vector);
@@ -597,6 +724,12 @@ static long er_run_on_cpu(void *argument)
 		ret = -EUCLEAN;
 		goto out_snapshot;
 	}
+	ret = er_validate_fault_stop_report(state, work->request.vector);
+	if (ret)
+		goto out_snapshot;
+	ret = er_tx_step(&tx, FKI_X86_TX_FAULT_STOP);
+	if (ret)
+		goto out_snapshot;
 	ret = 0;
 
 out_snapshot:
@@ -611,6 +744,14 @@ out_snapshot:
 	    state->after.idt_base != state->before.idt_base ||
 	    state->after.idt_limit != state->before.idt_limit))
 		ret = -EUCLEAN;
+
+	if (!ret) {
+		ret = er_tx_step(&tx, FKI_X86_TX_RESTORE_OK);
+		if (!ret)
+			ret = er_tx_step(&tx, FKI_X86_TX_ABORT);
+		if (!ret && tx != FKI_X86_TX_ABORTED)
+			ret = -EUCLEAN;
+	}
 
 	if (!ret) {
 		work->request.result.cpu = work->request.cpu;
@@ -652,13 +793,13 @@ out_restore:
 		if ((work->request.result.flags & required_flags) != required_flags)
 			return -EUCLEAN;
 		pr_info("x86-exception-recovery: cpu=%u vector=%u rip=%#lx error=%#llx "
-			"cr2=%#lx recovery_count=%u idtr_restored=1 gprs=ok ds=%#x stacks=ok\n",
+			"cr2=%#lx recovery_count=%u idtr_restored=1 gprs=ok ds=%#x stacks=ok transaction_state=%u\n",
 			work->request.result.cpu, work->request.result.vector,
 			(unsigned long)work->request.result.fault_rip,
 			(unsigned long long)work->request.result.error_code,
 			(unsigned long)work->request.result.cr2,
 			work->request.result.recovery_count,
-			(unsigned int)state->after.ds);
+			(unsigned int)state->after.ds, tx);
 	}
 	return ret;
 }
@@ -729,6 +870,8 @@ static void er_free_states(void)
 			__free_pages(state->fault_stack_pages, ER_STACK_ORDER);
 		if (state->recovery_stack_pages)
 			__free_pages(state->recovery_stack_pages, ER_STACK_ORDER);
+		if (state->xsave_pages)
+			__free_pages(state->xsave_pages, state->xsave_order);
 		kfree(state);
 	}
 	kfree(er_cpu_states);
@@ -737,7 +880,8 @@ static void er_free_states(void)
 
 static int __init er_init(void)
 {
-	u64 xcr0;
+	u64 xcr0, xsave_bytes, xsave_avx_end, supported_xcr0;
+	unsigned int xsave_order;
 	int cpu, ret;
 
 	if (!boot_cpu_has(X86_FEATURE_HYPERVISOR)) {
@@ -749,6 +893,10 @@ static int __init er_init(void)
 	ret = er_read_xcr0(&xcr0);
 	if (ret)
 		return ret;
+	ret = er_xsave_constraints(&xsave_bytes, &xsave_avx_end, &supported_xcr0);
+	if (ret)
+		return ret;
+	xsave_order = get_order(xsave_bytes);
 	er_cpu_states = kcalloc(nr_cpu_ids, sizeof(*er_cpu_states), GFP_KERNEL);
 	if (!er_cpu_states)
 		return -ENOMEM;
@@ -767,8 +915,14 @@ static int __init er_init(void)
 							      ER_STACK_ORDER);
 		state->recovery_stack_pages = alloc_pages(GFP_KERNEL | __GFP_ZERO,
 								  ER_STACK_ORDER);
+		state->xsave_pages = alloc_pages(GFP_KERNEL | __GFP_ZERO,
+						       xsave_order);
+		state->xsave_bytes = xsave_bytes;
+		state->xsave_avx_end = xsave_avx_end;
+		state->xsave_supported_xcr0 = supported_xcr0;
+		state->xsave_order = xsave_order;
 		if (!state->idt_copy || !state->fault_stack_pages ||
-		    !state->recovery_stack_pages) {
+		    !state->recovery_stack_pages || !state->xsave_pages) {
 			ret = -ENOMEM;
 			goto fail;
 		}

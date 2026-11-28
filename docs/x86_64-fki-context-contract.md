@@ -92,6 +92,10 @@ The host must snapshot and restore enough floating-point/vector state even in `H
 
 `fki-ko/fki_x86_64_transaction.h` defines a validation-only model of the lifecycle below. Its userspace fixtures use synthetic events for setup failure, normal return, resume, timeout/cancellation, and abort. The model does not execute an entry, arm CPU state, or implement the runtime transaction.
 
+The disposable-VM boundary probe now carries a narrowly scoped integration fixture for the one-shot entry shape. For each existing synthetic normal-return or software-abort ioctl, the test module snapshots live host control state, constructs a `HOST_BOUND_SHIM`/`ENTER` control object backed by probe-owned XSAVE and alternate-stack memory, validates that object with the fixed-layout helper, and drives the synthetic transaction events around the already existing assembly call. A successful normal return must reach `COMPLETE`; a successful controlled software abort must reach `ABORTED`. The existing Linux host-state comparison and stack/XSAVE canaries remain the preservation oracle. Because control-block version 1 supports only x87/SSE/AVX, the fixture validates that XCR0 projection while the oracle still compares the complete live XCR0.
+
+This fixture is still not a transaction implementation. Its RIP/RSP/XSAVE references describe probe-owned synthetic state, not proof of equality with every transient live register or a pinned production entry frame. It does not populate or restore a production XSAVE image, establish memory ownership, use `fki_caps`, enter XNU, own production exceptions, or cover resume, fault, or shutdown paths.
+
 The transaction states are:
 
 `INIT -> VALIDATED -> ARMED -> FOREIGN -> STOPPED -> RESTORED`

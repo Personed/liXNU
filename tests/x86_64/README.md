@@ -116,9 +116,16 @@ setting `X86_BOUNDARY_ALLOW_KVM_ONLY=1` skips the unsupported TCG profile and in
 the KVM/host run. That explicit fallback is complementary local validation only; it is not a
 substitute for the CI TCG profile.
 
+The boundary-probe and exception-recovery disposable VMs use the Linux `no5lvl` boot parameter because version 1 of the control contract is explicitly four-level; this fixture constraint is not evidence that the contract supports five-level paging hosts. The boundary probe also exercises the validation-only FKI control-block and transaction-state models around the
+same normal-return and software-abort calls. The test builds a synthetic `HOST_BOUND_SHIM`/`ENTER` object from live
+host control state plus probe-owned XSAVE and alternate-stack memory, validates it, and requires the synthetic state
+machine to reach `COMPLETE` for normal return or `ABORTED` for controlled software abort. This coupling is a fixture
+shape check around the existing probe, not a production entry transaction. On hosts enabling later XCR0 features, only the x87/SSE/AVX projection is represented in version-1 control state; the oracle still compares the complete live XCR0.
+
 The boundary probe described above is a host-only call/return test. It does not enter XNU, change `fki.h`, enable FKI
 capabilities, change CR3 or GS, inspect supervisor XSS state, install or replace an IDT or exception handler, or run C
-under foreign host state. Passing it does not establish native XNU runtime support or prove the proposed early
+under foreign host state. It does not populate or restore a production XSAVE image, implement resume/fault/shutdown,
+or own production exceptions. Passing it does not establish native XNU runtime support or prove the proposed early
 exception/syscall bridge.
 
 The same disposable VM also runs a synthetic task-stack continuation model. It covers a reply

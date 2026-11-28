@@ -323,6 +323,18 @@ def read_u32le(data: bytes, offset: int) -> int:
     return int.from_bytes(data[offset:offset + 4], "little")
 
 
+def read_i8(data: bytes, offset: int) -> int:
+    return int.from_bytes(data[offset:offset + 1], "little", signed=True)
+
+
+def read_i32le(data: bytes, offset: int) -> int:
+    return int.from_bytes(data[offset:offset + 4], "little", signed=True)
+
+
+def read_u64le(data: bytes, offset: int) -> int:
+    return int.from_bytes(data[offset:offset + 8], "little")
+
+
 def verify_entry_sequence(artifact: pathlib.Path, report: dict[str, object]) -> None:
     """Verify the pinned protected-mode XNU entry sequence without executing it."""
     entry = report.get("entry")
@@ -348,10 +360,10 @@ def verify_entry_sequence(artifact: pathlib.Path, report: dict[str, object]) -> 
         artifact_size = artifact.stat().st_size
         with artifact.open("rb") as stream:
             stream.seek(entry_file_offset)
-            sequence = stream.read(0x6a)
+            sequence = stream.read(0xDB)
     except OSError as error:
         raise VerificationError(f"cannot read protected-mode entry bytes: {error}") from error
-    if len(sequence) != 0x6a or entry_file_offset + len(sequence) > artifact_size:
+    if len(sequence) != 0xDB or entry_file_offset + len(sequence) > artifact_size:
         raise VerificationError("protected-mode entry sequence is truncated")
 
     def expect(offset: int, expected: bytes, label: str) -> None:
@@ -401,7 +413,74 @@ def verify_entry_sequence(artifact: pathlib.Path, report: dict[str, object]) -> 
     if far_target != expected_target or far_selector != 0x08:
         raise VerificationError("long-mode far jump target or KERNEL64_CS selector is invalid")
 
-    expect(0x5C, b"\x31\xc0\x8e\xd0\x8e\xd8\x8e\xc0\x8e\xe0\x8e\xe8\x85\xff", "long-mode segment clearing")
+    expect(0x5C, b"\x31\xc0\x8e\xd0\x8e\xd8\x8e\xc0\x8e\xe0\x8e\xe8", "long-mode segment clearing")
+    expect(0x68, b"\x85\xff", "BSP boot-argument test")
+
+    def expect_rel8_branch(offset: int, opcode: int, target_offset: int, label: str) -> None:
+        if sequence[offset] != opcode:
+            raise VerificationError(f"post-entry sequence lacks the {label} branch")
+        if offset + 2 + read_i8(sequence, offset + 1) != target_offset:
+            raise VerificationError(f"post-entry {label} branch target is invalid")
+
+    expect_rel8_branch(0x6A, 0x74, 0x8A, "non-BSP canary bypass")
+    expect(0x6C, b"\xb8\x01\x00\x00\x00\x0f\xa2", "CPUID leaf-1 setup")
+    expect(0x73, b"\xf7\xc1\x00\x00\x00\x40", "RDRAND feature-bit test")
+    expect_rel8_branch(0x79, 0x74, 0xAA, "missing-RDRAND fallback")
+    expect(0x7B, b"\x48\x0f\xc7\xf0", "RDRAND canary read")
+    expect_rel8_branch(0x7F, 0x73, 0xAA, "failed-RDRAND fallback")
+    expect(0x81, b"\x30\xe4", "stack-canary second-byte clearing")
+
+    entry_low = entry_address & 0xFFFFFFFF
+    entry_high_base = entry_address & ~0xFFFFFFFF
+
+    def segment_low_range(name: str) -> tuple[int, int]:
+        for segment in segments:
+            if not isinstance(segment, dict) or segment.get("name") != name:
+                continue
+            vmaddr = parse_hex(segment.get("vmaddr"), f"{name}.vmaddr")
+            vmsize = parse_hex(segment.get("vmsize"), f"{name}.vmsize")
+            if vmaddr < entry_high_base or not vmsize:
+                raise VerificationError(f"{name} segment cannot be translated to the pinned low bootstrap window")
+            low_start = vmaddr - entry_high_base
+            if low_start >= 1 << 32 or vmsize > (1 << 32) - low_start:
+                raise VerificationError(f"{name} segment escapes the pinned low bootstrap window")
+            return low_start, low_start + vmsize
+        raise VerificationError(f"cannot validate post-entry immediates without the {name} segment")
+
+    def rip_relative_target(insn_end: int, displacement: int) -> int:
+        target = entry_low + insn_end + displacement
+        if target <= 0 or target >= 1 << 32:
+            raise VerificationError("post-entry RIP-relative immediate escapes the low bootstrap window")
+        return target
+
+    expect(0x83, b"\x48\x89\x05", "stack-canary RIP-relative store")
+    canary_target = rip_relative_target(0x8A, read_i32le(sequence, 0x86))
+    data_start, data_end = segment_low_range("__DATA")
+    if canary_target & 7 or not data_start <= canary_target < data_end:
+        raise VerificationError("stack-canary store target is not an aligned qword in __DATA")
+
+    expect(0x8A, b"\x48\x8d\x0d", "_vstart RIP-relative address load")
+    vstart_target = rip_relative_target(0x91, read_i32le(sequence, 0x8D))
+    text_start, text_end = segment_low_range("__TEXT")
+    if not text_start <= vstart_target < text_end:
+        raise VerificationError("_vstart target is not inside executable __TEXT")
+
+    if sequence[0x91:0x93] != b"\x48\xb8":
+        raise VerificationError("post-entry sequence does not load KERNEL_BASE")
+    if read_u64le(sequence, 0x93) != entry_high_base:
+        raise VerificationError("KERNEL_BASE immediate does not match the entry high-half base")
+    expect(0x9B, b"\x48\x09\xc4\x48\x09\xc8", "high-half stack and _vstart adjustment")
+    expect(0xA1, b"\x48\x83\xe4\xf0\x48\x31\xed\xff\xd0", "aligned call to high-half _vstart")
+
+    expect(
+        0xAA,
+        b"\x0f\x31\x89\xc1\x30\xc4\x48\xc1\xe1\x10\x48\x31\xc8\x31\xc2"
+        b"\x48\x8d\x0d\x00\x00\x00\x00\x48\xc1\xe9\x15\x0f\xb6\xc9"
+        b"\xc1\xe1\x10\x31\xca\x88\xe1\xd3\xca\x48\xc1\xe2\x20"
+        b"\x48\x31\xd0\x88\xc8",
+        "RDRAND fallback entropy mixing",
+    )
+    expect_rel8_branch(0xD9, 0xEB, 0x81, "fallback-to-canary-store jump")
 
 
 def run_inspector(
@@ -605,6 +684,8 @@ def main(argv: list[str]) -> int:
                 "entry_is_file_backed_executable": "hib_entry" not in inspection,
                 "entry_sequence": "protected-mode-xnu-source-pin-v1",
                 "entry_sequence_verified": True,
+                "post_entry_sequence": "xnu-source-pin-vstart-v1",
+                "post_entry_sequence_verified": True,
                 "entry_segment": ENTRY_SEGMENT,
                 "load_attempted": False,
                 "fixups_applied": False,

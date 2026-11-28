@@ -32,6 +32,8 @@ jobs:
         run: bash tests/x86_64/test-fki-x86-transaction.sh
       - name: Check x86 memory ownership validation fixtures
         run: bash tests/x86_64/test-fki-x86-memory.sh
+      - name: Check x86 stop-report validation fixtures
+        run: bash tests/x86_64/test-fki-x86-stop-report.sh
       - name: Run boundary probe and check kernel release rejection in QEMU TCG
         run: |
           release=$(cat "$KDIR/include/config/kernel.release")

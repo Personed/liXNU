@@ -68,10 +68,14 @@ struct bp_asm_result {
 	unsigned long coop_resume_count;
 	unsigned long coop_state;
 	unsigned long coop_resume_rsp;
+	unsigned long stop_rip;
+	unsigned long stop_rsp;
 };
 
 struct bp_work {
 	struct x86_boundary_probe_request request;
+	struct fki_x86_context_control_v1 control_model;
+	struct fki_x86_host_constraints host_model;
 };
 
 struct bp_coop_context {
@@ -101,7 +105,7 @@ struct bp_coop_context {
 
 static atomic64_t bp_coop_generation = ATOMIC64_INIT(0);
 
-static_assert(sizeof(struct bp_asm_result) == 272);
+static_assert(sizeof(struct bp_asm_result) == 288);
 static_assert(offsetof(struct bp_asm_result, gprs_entry) == BP_OFF_GPRS_ENTRY);
 static_assert(offsetof(struct bp_asm_result, gprs_during) == BP_OFF_GPRS_DURING);
 static_assert(offsetof(struct bp_asm_result, gprs_return) == BP_OFF_GPRS_RETURN);
@@ -111,6 +115,8 @@ static_assert(offsetof(struct bp_asm_result, coop_reply) == BP_OFF_COOP_REPLY);
 static_assert(offsetof(struct bp_asm_result, coop_resume_count) == BP_OFF_COOP_RESUME_COUNT);
 static_assert(offsetof(struct bp_asm_result, coop_state) == BP_OFF_COOP_STATE);
 static_assert(offsetof(struct bp_asm_result, coop_resume_rsp) == BP_OFF_COOP_RESUME_RSP);
+static_assert(offsetof(struct bp_asm_result, stop_rip) == BP_OFF_STOP_RIP);
+static_assert(offsetof(struct bp_asm_result, stop_rsp) == BP_OFF_STOP_RSP);
 static_assert(-ECANCELED == -125);
 static_assert(X86_BOUNDARY_PROBE_RUN == _IOW(0xb7, 1, struct x86_boundary_probe_request));
 static_assert(X86_BOUNDARY_PROBE_COOPERATIVE ==
@@ -121,6 +127,8 @@ static_assert(X86_BOUNDARY_PROBE_TASK_CONTINUATION ==
 void x86_boundary_probe_switch_stack(void *stack_top, struct bp_asm_result *result,
 				     unsigned int mode);
 long x86_boundary_probe_inner(struct bp_asm_result *result, unsigned int mode);
+extern const char x86_boundary_probe_normal_stop[];
+extern const char x86_boundary_probe_abort_stop[];
 void x86_boundary_probe_clobber_xstate(void);
 
 static int bp_read_xcr0(u64 *xcr0)
@@ -334,19 +342,19 @@ int bp_probe_prepare_control_model(const struct bp_host_snapshot *snapshot,
 static int bp_validate_control_model(const struct bp_host_snapshot *snapshot,
 				     unsigned long xsave_address,
 				     u64 xsave_bytes, u64 xsave_avx_end,
-				     u64 supported_xcr0, unsigned long entry_rsp)
+				     u64 supported_xcr0, unsigned long entry_rsp,
+				     struct fki_x86_context_control_v1 *control,
+				     struct fki_x86_host_constraints *host)
 {
-	struct fki_x86_context_control_v1 control;
-	struct fki_x86_host_constraints host;
 	int err;
 
 	err = bp_probe_prepare_control_model(snapshot, xsave_address, xsave_bytes,
 					     xsave_avx_end, supported_xcr0, entry_rsp,
 					     (unsigned long)x86_boundary_probe_inner,
-					     &control, &host);
+					     control, host);
 	if (err)
 		return err;
-	return fki_x86_context_validate_host_bound_shim(&control, &host);
+	return fki_x86_context_validate_host_bound_shim(control, host);
 }
 
 static int bp_tx_step(enum fki_x86_transaction_state *state,
@@ -395,6 +403,7 @@ static long bp_run_on_cpu(void *arg)
 	u64 xsave_bytes, xsave_avx_end, supported_xcr0;
 	enum fki_x86_transaction_state tx = FKI_X86_TX_INIT;
 	u64 *low_canary, *high_canary;
+	unsigned long expected_stop_rip;
 	long ret = 0;
 
 	if (fki_caps() != 0)
@@ -444,7 +453,8 @@ static long bp_run_on_cpu(void *arg)
 	}
 #endif
 	ret = bp_validate_control_model(&before, xsave_area, xsave_bytes,
-					xsave_avx_end, supported_xcr0, entry_rsp);
+					xsave_avx_end, supported_xcr0, entry_rsp,
+					&work->control_model, &work->host_model);
 	if (ret) {
 		pr_err("x86-boundary-probe: control model validation failed on cpu %u mode %u: %ld cr4=%#lx pcid_cpu=%u xcr0=%#llx\n",
 		       work->request.cpu, work->request.mode, ret, before.cr4,
@@ -503,6 +513,20 @@ static long bp_run_on_cpu(void *arg)
 		ret = -EUCLEAN;
 	}
 
+	expected_stop_rip = work->request.mode == X86_BOUNDARY_PROBE_MODE_RETURN ?
+		(unsigned long)x86_boundary_probe_normal_stop :
+		(unsigned long)x86_boundary_probe_abort_stop;
+	if (!ret && (result.stop_rip != expected_stop_rip ||
+		     result.stop_rsp != result.alt_entry_rsp))
+		ret = -EUCLEAN;
+	if (!ret) {
+		work->control_model.stop_reason =
+			work->request.mode == X86_BOUNDARY_PROBE_MODE_RETURN ?
+			FKI_X86_STOP_NORMAL_RETURN : FKI_X86_STOP_SOFTWARE_ABORT;
+		work->control_model.stop_rip = result.stop_rip;
+		work->control_model.stop_rsp = result.stop_rsp;
+		ret = fki_x86_validate_stop_report_v1(&work->control_model);
+	}
 	if (!ret) {
 		ret = bp_tx_step(&tx, FKI_X86_TX_RESTORE_OK);
 		if (!ret)

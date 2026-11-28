@@ -6,6 +6,10 @@ on:
       - ".github/workflows/x86_64-tahoe-ota-audit.yml"
       - "scripts/x86_64/audit-tahoe-ota.py"
       - "tests/x86_64/test-audit-tahoe-ota.py"
+      - "tests/x86_64/test-fileset-metadata.py"
+      - "tools/dev/x86_64/xnu-fileset-metadata.c"
+      - "xnu-ko/macho_parse_x86_64.c"
+      - "xnu-ko/macho_parse_x86_64.h"
   workflow_dispatch:
 
 permissions:
@@ -23,11 +27,17 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Verify pinned bytes and inventory the ZIP directory
+      - name: Build the read-only fileset inspector
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror \
+            tools/dev/x86_64/xnu-fileset-metadata.c xnu-ko/macho_parse_x86_64.c \
+            -o "$RUNNER_TEMP/xnu-fileset-metadata"
+      - name: Verify pinned bytes and inspect the OTA boot collection
         shell: bash
         run: |
           set -o pipefail
           python3 scripts/x86_64/audit-tahoe-ota.py --download \
+            --fileset-inspector "$RUNNER_TEMP/xnu-fileset-metadata" \
             | tee "$RUNNER_TEMP/tahoe-intel-ota.json"
       - uses: actions/upload-artifact@v4
         if: ${{ always() }}

@@ -5,6 +5,7 @@
 import argparse
 import hashlib
 import json
+import mmap
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -21,6 +22,9 @@ OTA_URL = (
 )
 OTA_BYTES = 1461006831
 OTA_SHA256 = "b7b97ed3337af7408879da969964328f6d78282ab837333d1cc2f0507f4019a4"
+BOOT_MEMBER = "AssetData/boot/System/Library/KernelCollections/BootKernelExtensions.kc"
+BOOT_MEMBER_BYTES = 67_600_384
+XNU_RELEASE_PATTERN = re.compile(rb"xnu-([0-9]+(?:\.[0-9]+){2,}(?:~[0-9]+)?)/RELEASE_X86_64\b")
 COLLECTION_NAMES = {"BootKernelExtensions.kc", "SystemKernelExtensions.kc"}
 COLLECTION_DELTAS = {f"{name}.bxdiff" for name in COLLECTION_NAMES}
 PAYLOAD_ROOT = PurePosixPath("AssetData/payloadv2")
@@ -71,7 +75,43 @@ def inventory(archive):
     return {"zip_entries": len(entries), "matches": groups}
 
 
-def inspect(path, report, expected_size=OTA_BYTES, expected_sha256=OTA_SHA256):
+def inspect_boot_collection(archive, inspector, report, expected_size=BOOT_MEMBER_BYTES):
+    """Copy and inspect the exact OTA boot member, never a patch for the installed System."""
+    matches = [entry for entry in archive.infolist() if entry.filename == BOOT_MEMBER]
+    if len(matches) != 1:
+        raise AuditError("expected exactly one OTA boot collection member")
+    entry = matches[0]
+    mode = stat.S_IFMT(entry.external_attr >> 16) if entry.create_system == 3 else 0
+    if entry.is_dir() or mode not in (0, stat.S_IFREG) or entry.file_size != expected_size:
+        raise AuditError("unexpected OTA boot collection member type or length")
+
+    with tempfile.TemporaryDirectory(prefix="lixnu-ota-bootkc-") as directory:
+        collection = Path(directory) / "BootKernelExtensions.kc"
+        digest = hashlib.sha256()
+        remaining = expected_size
+        with archive.open(entry) as source, collection.open("xb") as destination:
+            while remaining:
+                chunk = source.read(min(remaining, 1 << 20))
+                if not chunk:
+                    raise AuditError("truncated OTA boot collection member")
+                destination.write(chunk)
+                digest.update(chunk)
+                remaining -= len(chunk)
+        report.update(path=BOOT_MEMBER, bytes=expected_size, sha256=digest.hexdigest())
+        with collection.open("rb") as file, mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ) as data:
+            report["xnu_release_candidates"] = sorted({
+                match.decode("ascii") for match in XNU_RELEASE_PATTERN.findall(data)
+            })
+        result = subprocess.run([str(inspector), str(collection)], capture_output=True,
+                                text=True, timeout=120, check=True)
+        report["fileset"] = json.loads(result.stdout)
+        fileset = report["fileset"]
+        if (fileset.get("status") != "accepted" or fileset.get("parser_result") != 0
+            or not fileset.get("kernel", {}).get("segments")):
+            raise AuditError("fileset inspector did not accept an Intel kernel with segments")
+
+
+def inspect(path, report, expected_size=OTA_BYTES, expected_sha256=OTA_SHA256, inspector=None):
     fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as source:
         # Verify the pinned object before asking zipfile to read its directory.
@@ -97,6 +137,13 @@ def inspect(path, report, expected_size=OTA_BYTES, expected_sha256=OTA_SHA256):
         source.seek(0)
         with zipfile.ZipFile(source) as archive:
             result = inventory(archive)
+            if inspector is not None:
+                result["ota_boot_collection"] = {}
+                try:
+                    inspect_boot_collection(archive, inspector, result["ota_boot_collection"])
+                except (AuditError, OSError, subprocess.SubprocessError, ValueError, zipfile.BadZipFile) as error:
+                    message = str(error) if isinstance(error, AuditError) else "unable to inspect the OTA boot member"
+                    result["ota_boot_collection"]["error"] = message
         after = os.fstat(fd)
         if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
             after.st_size, after.st_mtime_ns, after.st_ctime_ns
@@ -104,6 +151,8 @@ def inspect(path, report, expected_size=OTA_BYTES, expected_sha256=OTA_SHA256):
             raise AuditError("OTA changed during inspection")
         report["source_digest_verified"] = True
         report.update(result)
+        if inspector is not None and "error" in result["ota_boot_collection"]:
+            raise AuditError(result["ota_boot_collection"]["error"])
 
 
 def download(path):
@@ -122,7 +171,10 @@ def main():
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--archive", type=Path, help="inspect a local copy of the pinned ZIP")
     source.add_argument("--download", action="store_true", help="download the pinned ZIP to a temporary directory")
+    parser.add_argument("--fileset-inspector", type=Path,
+                        help="also inspect the OTA boot member with the compiled xnu-fileset-metadata helper")
     args = parser.parse_args()
+    inspector = args.fileset_inspector.resolve() if args.fileset_inspector is not None else None
 
     report = {
         "schema_version": 1,
@@ -134,20 +186,20 @@ def main():
     }
     try:
         if args.archive is not None:
-            inspect(args.archive, report)
+            inspect(args.archive, report, inspector=inspector)
         else:
             with tempfile.TemporaryDirectory(prefix="lixnu-tahoe-ota-") as directory:
                 archive = Path(directory) / "intel-ota.zip"
                 download(archive)
-                inspect(archive, report)
+                inspect(archive, report, inspector=inspector)
     except AuditError as error:
         report.update(status="failed", error=str(error))
     except (OSError, subprocess.SubprocessError, zipfile.BadZipFile):
         report.update(status="failed", error="unable to obtain or read the OTA ZIP")
     else:
-        report["status"] = "zip_directory_inventoried"
+        report["status"] = "ota_boot_collection_inspected" if inspector is not None else "zip_directory_inventoried"
     print(json.dumps(report, indent=2, sort_keys=True))
-    return 0 if report["status"] == "zip_directory_inventoried" else 1
+    return 1 if report["status"] == "failed" else 0
 
 
 if __name__ == "__main__":

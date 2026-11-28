@@ -46,6 +46,11 @@ and payload containers visible in the ZIP directory. A delta requires the
 matching base. Files inside payload containers and the collection selected by
 an installed System volume require separate inspection.
 
+The Intel CI job also inspects the exact BootKC in the OTA's `AssetData/boot`
+area with `xnu-fileset-metadata`. Its report records the member's SHA-256,
+Mach-O structure and any XNU release strings. The OTA boot member and the
+collection created for the installed System have separate provenance.
+
 The [full installer catalog recorded by #187](https://github.com/Personed/liXNU/actions/runs/46073430260/job/140755502992)
 lists `25G342` at 17,957,880 KiB (about 17.1 GiB). That exceeds the 14 GB of
 SSD documented for the [standard Intel runner](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).

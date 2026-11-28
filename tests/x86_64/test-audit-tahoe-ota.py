@@ -5,6 +5,7 @@ import hashlib
 from pathlib import Path
 import runpy
 import stat
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -15,6 +16,35 @@ AUDIT = runpy.run_path(str(ROOT / "scripts/x86_64/audit-tahoe-ota.py"))
 
 
 class OtaInventoryTests(unittest.TestCase):
+    def test_inspect_only_the_direct_boot_collection(self):
+        fixtures = runpy.run_path(str(ROOT / "tests/x86_64/test-fileset-metadata.py"))
+        image = bytes(fixtures["make_segmented_fileset"]()) + b"xnu-12377.161.15.701.48~2/RELEASE_X86_64\0"
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            helper = directory / "xnu-fileset-metadata"
+            subprocess.run([
+                "cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+                str(ROOT / "tools/dev/x86_64/xnu-fileset-metadata.c"),
+                str(ROOT / "xnu-ko/macho_parse_x86_64.c"), "-o", str(helper),
+            ], check=True)
+            path = directory / "fixture.zip"
+            with zipfile.ZipFile(path, "x") as archive:
+                archive.writestr(
+                    "AssetData/payloadv2/patches/System/Library/KernelCollections/BootKernelExtensions.kc", image,
+                )
+            with zipfile.ZipFile(path) as archive:
+                with self.assertRaisesRegex(AUDIT["AuditError"], "exactly one"):
+                    AUDIT["inspect_boot_collection"](archive, helper, {}, len(image))
+            with zipfile.ZipFile(path, "a") as archive:
+                archive.writestr(AUDIT["BOOT_MEMBER"], image)
+            report = {}
+            with zipfile.ZipFile(path) as archive:
+                AUDIT["inspect_boot_collection"](archive, helper, report, len(image))
+            self.assertEqual(report["path"], AUDIT["BOOT_MEMBER"])
+            self.assertEqual(report["fileset"]["status"], "accepted")
+            self.assertEqual(report["sha256"], hashlib.sha256(image).hexdigest())
+            self.assertEqual(report["xnu_release_candidates"], ["12377.161.15.701.48~2"])
+
     def test_verified_directory_distinguishes_collection_from_delta(self):
         payload_count = AUDIT["MAX_REPORT_ENTRIES"] + 3
         paths = {

@@ -147,7 +147,7 @@ def probe_delta_base(archive, root):
         product = plistlib.loads(data)
         build = product.get("ProductBuildVersion") if isinstance(product, dict) else None
         result["local_build"] = build if isinstance(build, str) else None
-    except (OSError, ValueError, ExpatError, RecursionError):
+    except (OSError, ValueError, ExpatError, AttributeError, IndexError, TypeError, OverflowError, RecursionError):
         result["base_status"] = "build_unavailable"
         return result
     if result["local_build"] != PREREQUISITE_BUILD:

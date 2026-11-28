@@ -35,6 +35,12 @@ class OtaInventoryTests(unittest.TestCase):
             with zipfile.ZipFile(path) as archive:
                 result = AUDIT["probe_delta_base"](archive, root)
                 self.assertEqual(result["base_status"], "build_mismatch")
+                for malformed in (
+                    b"<plist><key>ProductBuildVersion</key></plist>",
+                    b"<plist><dict><key>date</key><date>invalid</date></dict></plist>",
+                ):
+                    plist.write_bytes(malformed)
+                    self.assertEqual(AUDIT["probe_delta_base"](archive, root)["base_status"], "build_unavailable")
                 plist.write_bytes(plistlib.dumps({"ProductBuildVersion": "25G76"}))
                 self.assertEqual(AUDIT["probe_delta_base"](archive, root)["base_status"], "collection_unavailable")
                 collection.write_bytes(base + b"x")

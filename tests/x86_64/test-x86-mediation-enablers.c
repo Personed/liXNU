@@ -6,6 +6,7 @@
 #include <linux/prctl.h>
 #include <linux/seccomp.h>
 #include <setjmp.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -203,9 +204,23 @@ static int test_seccomp_user_notification(void)
 		_exit(ret == SECCOMP_MAGIC_RESULT ? 0 : 40);
 	}
 
+	{
+		struct pollfd pfd = { .fd = listener, .events = POLLIN };
+		int ready = poll(&pfd, 1, 2000);
+
+		if (ready <= 0) {
+			kill(child, SIGKILL);
+			waitpid(child, &status, 0);
+			close(listener);
+			return 32;
+		}
+	}
 	memset(&request, 0, sizeof(request));
 	if (ioctl(listener, SECCOMP_IOCTL_NOTIF_RECV, &request) != 0) {
 		perror("SECCOMP_IOCTL_NOTIF_RECV");
+		kill(child, SIGKILL);
+		waitpid(child, &status, 0);
+		close(listener);
 		return 32;
 	}
 	if (request.data.nr != FOREIGN_BSD_WRITE_NR || (pid_t)request.pid != child)

@@ -226,7 +226,7 @@ LOG="$STAGE/qemu.log"
 set +e
 timeout --kill-after=30 360 qemu-system-x86_64 -machine q35 -accel tcg -cpu max,+hypervisor \
   -smp 2 -m 1024 -kernel "$KERNEL" -initrd "$INITRD" \
-  -append 'console=ttyS0,115200 rdinit=/init panic=1 loglevel=7' \
+  -append 'console=ttyS0,115200 rdinit=/init panic=1 loglevel=7 no5lvl' \
   -display none -serial stdio -monitor none -no-reboot \
   -device isa-debug-exit,iobase=0xf4,iosize=0x04 > "$LOG" 2>&1
 QEMU_STATUS=$?

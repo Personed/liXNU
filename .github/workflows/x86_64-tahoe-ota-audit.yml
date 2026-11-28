@@ -1,0 +1,38 @@
+name: Tahoe Intel OTA inventory
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/x86_64-tahoe-ota-audit.yml"
+      - "scripts/x86_64/audit-tahoe-ota.py"
+      - "tests/x86_64/test-audit-tahoe-ota.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-zip-inventory:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tests/x86_64/test-audit-tahoe-ota.py
+
+  inventory-pinned-intel-ota:
+    runs-on: macos-26-intel
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify pinned bytes and inventory the ZIP directory
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 scripts/x86_64/audit-tahoe-ota.py --download \
+            | tee "$RUNNER_TEMP/tahoe-intel-ota.json"
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: tahoe-intel-ota-inventory-${{ github.sha }}
+          path: ${{ runner.temp }}/tahoe-intel-ota.json
+          if-no-files-found: error
+          retention-days: 5

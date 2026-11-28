@@ -33,6 +33,19 @@ catalog's `latest` selector returned 26.6.2 (`25G83`). The standalone kernel
 audit in #185 identified the 26.7.3 (`25G342`) kernel in the KDK. The installed
 boot collection for `25G342` still needs inspection.
 
+The Recovery audit uses the pinned OpenCore
+[Tahoe recipe](https://github.com/acidanthera/OpenCorePkg/blob/ebea824880706ac9faa8ee45604245de62be658b/Utilities/macrecovery/recovery_urls.txt#L50-L51).
+`macrecovery.py` accepts `default` and `latest` as catalog selectors. Neither
+pins a build. The separate Intel OTA inventory checks the size and SHA-256
+of the Apple CDN ZIP indexed for `25G76 → 25G342` by
+[AppleDB](https://github.com/littlebyteorg/appledb/blob/2d59226769714041389efda35daf4b9a938ba8a9/osFiles/macOS/25x%20-%2026.x/25G342.json).
+On a machine with a verified local copy, run
+`python3 scripts/x86_64/audit-tahoe-ota.py --archive /path/to/intel-ota.zip`.
+The JSON lists collection files, binary deltas, BOMs, and payload containers
+visible in the ZIP directory. A delta requires the matching base. Files
+inside payload containers and the collection selected by an installed System
+volume require separate inspection.
+
 The [full installer catalog recorded by #187](https://github.com/Personed/liXNU/actions/runs/46073430260/job/140755502992)
 lists `25G342` at 17,957,880 KiB (about 17.1 GiB). That exceeds the 14 GB of
 SSD documented for the [standard Intel runner](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).

@@ -39,8 +39,6 @@ The Recovery audit uses the pinned OpenCore
 pins a build. The separate Intel OTA inventory checks the size and SHA-256
 of the Apple CDN ZIP indexed for `25G76 → 25G342` by
 [AppleDB](https://github.com/littlebyteorg/appledb/blob/2d59226769714041389efda35daf4b9a938ba8a9/osFiles/macOS/25x%20-%2026.x/25G342.json).
-On a machine with a verified local copy, run
-`python3 scripts/x86_64/audit-tahoe-ota.py --archive /path/to/intel-ota.zip`.
 The JSON lists collection files, binary deltas, error correction data, BOMs,
 and payload containers visible in the ZIP directory. A delta requires the
 matching base. Files inside payload containers and the collection selected by
@@ -50,6 +48,21 @@ The Intel CI job also inspects the exact BootKC in the OTA's `AssetData/boot`
 area with `xnu-fileset-metadata`. Its report records the member's SHA-256,
 Mach-O structure and any XNU release strings. The OTA boot member and the
 collection created for the installed System have separate provenance.
+
+Reproduce both steps from the checkout with a local copy of the OTA:
+
+```sh
+(
+  set -eu
+  scratch=$(mktemp -d)
+  trap 'rm -rf -- "$scratch"' EXIT
+  cc -std=c11 -Wall -Wextra -Werror \
+    tools/dev/x86_64/xnu-fileset-metadata.c xnu-ko/macho_parse_x86_64.c \
+    -o "$scratch/xnu-fileset-metadata"
+  python3 scripts/x86_64/audit-tahoe-ota.py --archive /path/to/intel-ota.zip \
+    --fileset-inspector "$scratch/xnu-fileset-metadata"
+)
+```
 
 The [full installer catalog recorded by #187](https://github.com/Personed/liXNU/actions/runs/46073430260/job/140755502992)
 lists `25G342` at 17,957,880 KiB (about 17.1 GiB). That exceeds the 14 GB of

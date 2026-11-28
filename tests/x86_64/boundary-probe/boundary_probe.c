@@ -431,8 +431,9 @@ static long bp_run_on_cpu(void *arg)
 	ret = bp_validate_control_model(&before, xsave_area, xsave_bytes,
 					xsave_avx_end, supported_xcr0, entry_rsp);
 	if (ret) {
-		pr_err("x86-boundary-probe: control model validation failed on cpu %u mode %u: %ld\n",
-		       work->request.cpu, work->request.mode, ret);
+		pr_err("x86-boundary-probe: control model validation failed on cpu %u mode %u: %ld cr4=%#lx pcid_cpu=%u xcr0=%#llx\n",
+		       work->request.cpu, work->request.mode, ret, before.cr4,
+		       boot_cpu_has(X86_FEATURE_PCID), (unsigned long long)before.xcr0);
 		goto out_restore;
 	}
 	ret = bp_tx_step(&tx, FKI_X86_TX_VALIDATE_OK);

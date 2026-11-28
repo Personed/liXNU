@@ -188,6 +188,9 @@ static void test_shape_rejections(void)
 	extents[EXTENT_PAGE_TABLES].linear_start = HIGH_CANONICAL + 0x200000;
 	assert(VALIDATE_MEMORY(&state, &host, extents, EXTENT_COUNT) == -EINVAL);
 	copy_valid(&state, &host, extents);
+	extents[EXTENT_XSAVE].physical_start++;
+	assert(VALIDATE_MEMORY(&state, &host, extents, EXTENT_COUNT) == -EINVAL);
+	copy_valid(&state, &host, extents);
 	extents[EXTENT_XSAVE].access = 0;
 	assert(VALIDATE_MEMORY(&state, &host, extents, EXTENT_COUNT) == -EINVAL);
 }
@@ -238,6 +241,7 @@ static void test_range_rejections(void)
 	extents[EXTENT_TEXT].physical_start = 1ULL << 48;
 	assert(VALIDATE_MEMORY(&state, &host, extents, EXTENT_COUNT) == -ERANGE);
 	copy_valid(&state, &host, extents);
+	extents[EXTENT_TEXT].linear_start += 0x800;
 	extents[EXTENT_TEXT].physical_start = (1ULL << 48) - 0x800;
 	assert(VALIDATE_MEMORY(&state, &host, extents, EXTENT_COUNT) == -ERANGE);
 }
@@ -250,10 +254,11 @@ static void test_overlap_and_alias_rejections(void)
 
 	copy_valid(&state, &host, extents);
 	extents[EXTENT_XSAVE].linear_start = HIGH_CANONICAL + 0x7100;
+	extents[EXTENT_XSAVE].physical_start = 0x600100;
 	assert(VALIDATE_MEMORY(&state, &host, extents, EXTENT_COUNT) == -EEXIST);
 
 	copy_valid(&state, &host, extents);
-	extents[EXTENT_XSAVE].physical_start = 0x700100;
+	extents[EXTENT_XSAVE].physical_start = 0x701000;
 	assert(VALIDATE_MEMORY(&state, &host, extents, EXTENT_COUNT) == -EEXIST);
 
 	copy_valid(&state, &host, extents);
@@ -266,9 +271,11 @@ static void test_overlap_and_alias_rejections(void)
 
 	copy_valid(&state, &host, extents);
 	extents[EXTENT_IDT].linear_start = extents[EXTENT_GDT].linear_start + 0x100;
+	extents[EXTENT_IDT].physical_start += 0x100;
 	assert(VALIDATE_MEMORY(&state, &host, extents, EXTENT_COUNT) == -EEXIST);
 
 	copy_valid(&state, &host, extents);
+	extents[EXTENT_IDT].linear_start += 0x100;
 	extents[EXTENT_IDT].physical_start = extents[EXTENT_GDT].physical_start + 0x100;
 	assert(VALIDATE_MEMORY(&state, &host, extents, EXTENT_COUNT) == -EEXIST);
 }
@@ -286,7 +293,7 @@ static void test_reference_rejections(void)
 	extents[EXTENT_XSAVE].bytes = 512;
 	assert(VALIDATE_MEMORY(&state, &host, extents, EXTENT_COUNT) == -ENOENT);
 	copy_valid(&state, &host, extents);
-	extents[EXTENT_GDT].linear_start += 0x200;
+	extents[EXTENT_GDT].linear_start += 0x2000;
 	assert(VALIDATE_MEMORY(&state, &host, extents, EXTENT_COUNT) == -ENOENT);
 	copy_valid(&state, &host, extents);
 	extents[EXTENT_IDT].linear_start += 0x2000;
@@ -307,10 +314,12 @@ static void test_stack_precall_slot(void)
 
 	copy_valid(&state, &host, extents);
 	extents[EXTENT_STACK].linear_start = state.rsp - 8;
+	extents[EXTENT_STACK].physical_start += 0xff8;
 	assert(VALIDATE_MEMORY(&state, &host, extents, EXTENT_COUNT) == 0);
 
 	copy_valid(&state, &host, extents);
 	extents[EXTENT_STACK].linear_start = state.rsp - 7;
+	extents[EXTENT_STACK].physical_start += 0xff9;
 	assert(VALIDATE_MEMORY(&state, &host, extents, EXTENT_COUNT) == -ERANGE);
 }
 

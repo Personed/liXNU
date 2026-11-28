@@ -12,8 +12,9 @@
  * memory reference in a HOST_BOUND_SHIM control block has a coherent class,
  * does not overlap another reference, and has no undisclosed physical alias.
  * Version 1 is conservative: all linear extents must carry contiguous
- * physical backing information, and linear or physical backing overlap is
- * rejected at page granularity even when the two byte ranges are distinct.
+ * physical backing information with matching page offsets, and linear or
+ * physical backing overlap is rejected at page granularity even when the two
+ * byte ranges are distinct.
  */
 #define FKI_X86_MEMORY_MAX_EXTENTS 32U
 
@@ -151,6 +152,9 @@ static inline int fki_x86_memory_validate_extent(
 
 	if (extent->access != expected_access ||
 	    (needs_linear && !(extent->flags & FKI_X86_MEMORY_EXTENT_LINEAR)))
+		return -EINVAL;
+	if ((extent->flags & FKI_X86_MEMORY_EXTENT_LINEAR) &&
+	    ((extent->linear_start ^ extent->physical_start) & 0xfff))
 		return -EINVAL;
 	if ((extent->flags & FKI_X86_MEMORY_EXTENT_LINEAR) &&
 	    !fki_x86_canonical_range48(extent->linear_start, extent->bytes))

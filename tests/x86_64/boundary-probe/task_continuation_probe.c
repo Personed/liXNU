@@ -20,7 +20,12 @@
 #include <linux/spinlock.h>
 #include <linux/string.h>
 #include <linux/wait.h>
+#include <asm/pgtable.h>
+#include <asm/pgtable_types.h>
 
+#include "fki_x86_64_memory.h"
+#include "fki_x86_64_transaction.h"
+#include "boundary_probe_model.h"
 #include "task_continuation_probe.h"
 
 #define BP_CONT_STACK_ORDER 2
@@ -107,6 +112,22 @@ struct bp_continuation_test {
 	int accepted_reply_status;
 	int duplicate_reply_status;
 	int late_reply_status;
+	struct page *xsave_page;
+	unsigned int xsave_order;
+	unsigned long xsave_area;
+	u64 xsave_bytes;
+	u64 xsave_avx_end;
+	u64 supported_xcr0;
+	unsigned long entry_rsp;
+	spinlock_t tx_lock;
+	enum fki_x86_transaction_state tx;
+	struct fki_x86_context_control_v1 control;
+	struct fki_x86_host_constraints host;
+	struct fki_x86_memory_extent extents[6];
+	unsigned int tx_entries;
+	unsigned int tx_waiting_events;
+	unsigned int tx_resume_ready_events;
+	int tx_error;
 	bool owner_wait_started;
 	bool owner_first_wait_attempted;
 	bool reply_before_first_wait;
@@ -222,6 +243,189 @@ static bool bp_task_continuation_canaries_ok(struct bp_continuation_slot *slot)
 	       READ_ONCE(*high_canary) == BP_CONT_HIGH_CANARY;
 }
 
+static int bp_task_continuation_tx_step(struct bp_continuation_test *test,
+					enum fki_x86_transaction_event event)
+{
+	unsigned long flags;
+	int err;
+
+	spin_lock_irqsave(&test->tx_lock, flags);
+	err = fki_x86_transaction_transition(&test->tx, event);
+	if (!err) {
+		if (event == FKI_X86_TX_ENTER)
+			test->tx_entries++;
+		else if (test->tx == FKI_X86_TX_WAITING)
+			test->tx_waiting_events++;
+		else if (test->tx == FKI_X86_TX_RESUME_READY)
+			test->tx_resume_ready_events++;
+	} else if (!test->tx_error) {
+		test->tx_error = err;
+	}
+	spin_unlock_irqrestore(&test->tx_lock, flags);
+	if (err)
+		pr_err("x86-boundary-probe: continuation transaction rejected event %u in state %u: %d\n",
+		       event, test->tx, err);
+	return err;
+}
+
+static int bp_task_continuation_lookup_phys(unsigned long address,
+					    u64 *physical)
+{
+	unsigned int level;
+	unsigned long page_bytes;
+	pte_t *pte;
+	u64 base;
+
+	pte = lookup_address(address, &level);
+	if (!pte || !pte_present(*pte))
+		return -ENOENT;
+	switch (level) {
+	case PG_LEVEL_4K:
+		page_bytes = PAGE_SIZE;
+		break;
+	case PG_LEVEL_2M:
+		page_bytes = 2UL * 1024 * 1024;
+		break;
+	case PG_LEVEL_1G:
+		page_bytes = 1024UL * 1024 * 1024;
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
+	base = (u64)(pte_val(*pte) & PTE_PFN_MASK);
+	*physical = base + (address & (page_bytes - 1));
+	return 0;
+}
+
+/* Test-only translation introspection; this neither pins nor owns the pages. */
+static int bp_task_continuation_phys_range(unsigned long linear,
+					   u64 bytes, u64 *physical)
+{
+	u64 end = linear + bytes;
+	u64 start_phys, cursor_phys, expected;
+	unsigned long cursor;
+	int ret;
+
+	if (!bytes || end <= linear)
+		return -EINVAL;
+	ret = bp_task_continuation_lookup_phys(linear, &start_phys);
+	if (ret)
+		return ret;
+	for (cursor = (linear & PAGE_MASK) + PAGE_SIZE; cursor < end;
+	     cursor += PAGE_SIZE) {
+		ret = bp_task_continuation_lookup_phys(cursor, &cursor_phys);
+		if (ret)
+			return ret;
+		expected = start_phys + (cursor - linear);
+		if (cursor_phys != expected)
+			return -EOPNOTSUPP;
+	}
+	*physical = start_phys;
+	return 0;
+}
+
+static void bp_task_continuation_linear_extent(struct fki_x86_memory_extent *extent,
+					       unsigned long linear, u64 physical,
+					       u64 bytes, u32 owner, u32 use,
+					       u32 access)
+{
+	*extent = (struct fki_x86_memory_extent) {
+		.linear_start = linear,
+		.physical_start = physical,
+		.bytes = bytes,
+		.flags = FKI_X86_MEMORY_EXTENT_LINEAR |
+			 FKI_X86_MEMORY_EXTENT_PHYSICAL,
+		.owner_class = owner,
+		.use_class = use,
+		.access = access,
+	};
+}
+
+/* Validate the synthetic entry against live references in the disposable VM. */
+static int bp_task_continuation_validate_model(struct bp_continuation_test *test,
+					       const struct bp_host_snapshot *snapshot)
+{
+	struct fki_x86_context_control_v1 *control = &test->control;
+	struct fki_x86_host_constraints *host = &test->host;
+	struct fki_x86_memory_extent *extents = test->extents;
+	unsigned long rip = (unsigned long)bp_task_continuation_body;
+	u64 gdt_bytes = (u64)snapshot->gdt_limit + 1;
+	u64 idt_bytes = (u64)snapshot->idt_limit + 1;
+	u64 text_phys, gdt_phys, idt_phys;
+	int ret;
+
+	ret = bp_probe_prepare_control_model(snapshot, test->xsave_area,
+					     test->xsave_bytes,
+					     test->xsave_avx_end,
+					     test->supported_xcr0,
+					     test->entry_rsp, rip,
+					     control, host);
+	if (ret)
+		return ret;
+	ret = bp_task_continuation_phys_range(rip, 1, &text_phys);
+	if (ret)
+		return ret;
+	ret = bp_task_continuation_phys_range(snapshot->gdt_base, gdt_bytes,
+					       &gdt_phys);
+	if (ret)
+		return ret;
+	ret = bp_task_continuation_phys_range(snapshot->idt_base, idt_bytes,
+					       &idt_phys);
+	if (ret)
+		return ret;
+
+	bp_task_continuation_linear_extent(&extents[0], rip, text_phys, 1,
+					   FKI_X86_MEMORY_OWNER_HOST,
+					   FKI_X86_MEMORY_USE_EXECUTABLE_TEXT,
+					   FKI_X86_MEMORY_ACCESS_READ |
+					   FKI_X86_MEMORY_ACCESS_EXECUTE);
+	bp_task_continuation_linear_extent(&extents[1], snapshot->gdt_base,
+					   gdt_phys, gdt_bytes,
+					   FKI_X86_MEMORY_OWNER_HOST,
+					   FKI_X86_MEMORY_USE_DESCRIPTOR_TABLE,
+					   FKI_X86_MEMORY_ACCESS_READ);
+	bp_task_continuation_linear_extent(&extents[2], snapshot->idt_base,
+					   idt_phys, idt_bytes,
+					   FKI_X86_MEMORY_OWNER_HOST,
+					   FKI_X86_MEMORY_USE_DESCRIPTOR_TABLE,
+					   FKI_X86_MEMORY_ACCESS_READ);
+	bp_task_continuation_linear_extent(&extents[3], test->xsave_area,
+					   ((u64)page_to_pfn(test->xsave_page) << PAGE_SHIFT),
+					   test->xsave_bytes,
+					   FKI_X86_MEMORY_OWNER_TRANSACTION_PRIVATE,
+					   FKI_X86_MEMORY_USE_XSAVE,
+					   FKI_X86_MEMORY_ACCESS_READ |
+					   FKI_X86_MEMORY_ACCESS_WRITE);
+	bp_task_continuation_linear_extent(&extents[4], test->slot->stack_base,
+					   ((u64)page_to_pfn(test->slot->stack_pages) << PAGE_SHIFT),
+					   BP_CONT_STACK_SIZE,
+					   FKI_X86_MEMORY_OWNER_TRANSACTION_PRIVATE,
+					   FKI_X86_MEMORY_USE_STACK,
+					   FKI_X86_MEMORY_ACCESS_READ |
+					   FKI_X86_MEMORY_ACCESS_WRITE);
+	extents[5] = (struct fki_x86_memory_extent) {
+		.physical_start = snapshot->cr3.root_pa,
+		.bytes = PAGE_SIZE,
+		.flags = FKI_X86_MEMORY_EXTENT_PHYSICAL,
+		.owner_class = FKI_X86_MEMORY_OWNER_HOST,
+		.use_class = FKI_X86_MEMORY_USE_PAGE_TABLES,
+		.access = FKI_X86_MEMORY_ACCESS_READ |
+			  FKI_X86_MEMORY_ACCESS_WRITE,
+	};
+
+	ret = fki_x86_memory_validate_host_bound_shim(control, host, extents,
+						      ARRAY_SIZE(test->extents));
+	if (ret)
+		pr_err("x86-boundary-probe: continuation control/memory model failed on cpu %u: %d rip=%#lx gdt=%#lx/%#x idt=%#lx/%#x xsave=%#lx/%llu stack=%#lx cr3=%#llx\n",
+		       snapshot->cpu, ret, rip, snapshot->gdt_base,
+		       snapshot->gdt_limit, snapshot->idt_base,
+		       snapshot->idt_limit, test->xsave_area,
+		       (unsigned long long)test->xsave_bytes,
+		       test->slot->stack_base,
+		       (unsigned long long)snapshot->cr3.root_pa);
+	return ret;
+}
+
 static int bp_task_continuation_claim_initial(struct bp_continuation_test *test)
 {
 	struct bp_continuation_slot *slot = test->slot;
@@ -269,6 +473,7 @@ static int bp_task_continuation_claim_resume(struct bp_continuation_test *test)
 static int bp_task_continuation_enter(struct bp_continuation_test *test,
 				      enum bp_cont_phase phase)
 {
+	struct bp_host_snapshot before, after;
 	unsigned int preempt_before = preempt_count();
 	unsigned long irq_flags;
 	bool irqs_disabled_before = irqs_disabled();
@@ -287,9 +492,42 @@ static int bp_task_continuation_enter(struct bp_continuation_test *test,
 	/* Keep maskable interrupts and preemption off on the alternate stack. */
 	preempt_disable();
 	local_irq_save(irq_flags);
+	ret = bp_probe_snapshot(&before);
+	if (ret)
+		goto out_restore;
+	ret = bp_task_continuation_validate_model(test, &before);
+	if (ret)
+		goto out_restore;
+	if (phase == BP_CONT_FIRST_ENTRY) {
+		ret = bp_task_continuation_tx_step(test, FKI_X86_TX_VALIDATE_OK);
+		if (!ret)
+			ret = bp_task_continuation_tx_step(test, FKI_X86_TX_SNAPSHOT_OK);
+	} else {
+		/* Revalidation of the live control/memory references precedes rearm. */
+		ret = bp_task_continuation_tx_step(test, FKI_X86_TX_SNAPSHOT_OK);
+	}
+	if (ret)
+		goto out_restore;
+	ret = bp_task_continuation_tx_step(test, FKI_X86_TX_ENTER);
+	if (ret)
+		goto out_restore;
 	bp_task_continuation_switch_stack(test->slot->stack_top, test);
+	ret = bp_probe_snapshot(&after);
+	if (ret)
+		goto out_restore;
+	if (!bp_probe_snapshots_match(&before, &after)) {
+		ret = -EUCLEAN;
+		goto out_restore;
+	}
+	ret = bp_task_continuation_tx_step(test, FKI_X86_TX_COOPERATIVE_STOP);
+	if (!ret)
+		ret = bp_task_continuation_tx_step(test, FKI_X86_TX_RESTORE_OK);
+
+out_restore:
 	local_irq_restore(irq_flags);
 	preempt_enable();
+	if (ret)
+		return ret;
 	if (preempt_count() != preempt_before ||
 	    irqs_disabled() != irqs_disabled_before)
 		return -EUCLEAN;
@@ -322,6 +560,8 @@ static int bp_task_continuation_publish_wait(struct bp_continuation_test *test)
 	}
 	spin_unlock_irqrestore(&slot->lock, flags);
 	if (!ret)
+		ret = bp_task_continuation_tx_step(test, FKI_X86_TX_PUBLISH_WAIT);
+	if (!ret)
 		complete(&test->request_published);
 	return ret;
 }
@@ -350,6 +590,8 @@ static int bp_task_continuation_reply(struct bp_continuation_test *test,
 	}
 	spin_unlock_irqrestore(&slot->lock, flags);
 	if (!ret)
+		ret = bp_task_continuation_tx_step(test, FKI_X86_TX_ACCEPT_REPLY);
+	if (!ret)
 		complete(&test->reply_ready);
 	return ret;
 }
@@ -370,6 +612,8 @@ static int bp_task_continuation_cancel_pending(struct bp_continuation_test *test
 		slot->state = BP_CONT_CANCELLED;
 	}
 	spin_unlock_irqrestore(&slot->lock, flags);
+	if (!ret)
+		ret = bp_task_continuation_tx_step(test, FKI_X86_TX_CANCEL);
 	if (!ret)
 		complete(&test->cancel_ready);
 	return ret;
@@ -493,6 +737,9 @@ static int bp_task_continuation_owner_thread(void *data)
 				ret = -EUCLEAN;
 				goto out;
 			}
+			ret = bp_task_continuation_tx_step(test, FKI_X86_TX_TIMEOUT);
+			if (ret)
+				goto out;
 			ret = bp_task_continuation_set_terminal(test, BP_CONT_CANCELLED);
 			if (ret)
 				goto out;
@@ -560,6 +807,9 @@ static int bp_task_continuation_owner_thread(void *data)
 		ret = -EUCLEAN;
 		goto out;
 	}
+	ret = bp_task_continuation_tx_step(test, FKI_X86_TX_FINISH);
+	if (ret)
+		goto out;
 	ret = bp_task_continuation_set_terminal(test, BP_CONT_COMPLETE);
 
 out:
@@ -739,6 +989,22 @@ out:
 	return ret;
 }
 
+static bool bp_task_continuation_tx_oracle(struct bp_continuation_test *test)
+{
+	bool success_case = test->test_case == BP_CONT_IMMEDIATE_REPLY ||
+			    test->test_case == BP_CONT_DELAYED_REPLY;
+
+	if (test->tx_error || test->tx_waiting_events != 1)
+		return false;
+	if (success_case)
+		return test->tx == FKI_X86_TX_COMPLETE &&
+		       test->tx_entries == 2 &&
+		       test->tx_resume_ready_events == 1;
+	return test->tx == FKI_X86_TX_ABORTED &&
+	       test->tx_entries == 1 &&
+	       test->tx_resume_ready_events == 0;
+}
+
 static int bp_task_continuation_run_case(unsigned int owner_cpu,
 					 unsigned int responder_cpu,
 					 enum bp_cont_case test_case)
@@ -781,6 +1047,21 @@ static int bp_task_continuation_run_case(unsigned int owner_cpu,
 	test->late_reply_status = -EINPROGRESS;
 	test->owner_status = -EINPROGRESS;
 	test->responder_status = -EINPROGRESS;
+	spin_lock_init(&test->tx_lock);
+	test->tx = FKI_X86_TX_INIT;
+	ret = bp_probe_xsave_constraints(&test->xsave_bytes,
+					 &test->xsave_avx_end,
+					 &test->supported_xcr0);
+	if (ret)
+		goto out_free_test;
+	test->xsave_order = get_order(test->xsave_bytes);
+	test->xsave_page = alloc_pages(GFP_KERNEL | __GFP_ZERO,
+					test->xsave_order);
+	if (!test->xsave_page) {
+		ret = -ENOMEM;
+		goto out_free_test;
+	}
+	test->xsave_area = (unsigned long)page_address(test->xsave_page);
 
 	spin_lock_irqsave(&slot->lock, flags);
 	if (slot->state != BP_CONT_FREE || slot->stack_pages) {
@@ -792,6 +1073,7 @@ static int bp_task_continuation_run_case(unsigned int owner_cpu,
 	ret = bp_task_continuation_stack_allocate(slot);
 	if (ret)
 		goto out_free_test;
+	test->entry_rsp = slot->stack_top & ~0xfUL;
 
 	responder = kthread_create(bp_task_continuation_responder_thread, test,
 				   "x86-cont-responder/%u", responder_cpu);
@@ -847,6 +1129,7 @@ static int bp_task_continuation_run_case(unsigned int owner_cpu,
 	    !bp_task_continuation_rsp_in_task(test->responder_task,
 					      test->responder_rsp) ||
 	    !bp_task_continuation_rsp_in_slot(slot, test->callback_rsp[0]) ||
+	    !bp_task_continuation_tx_oracle(test) ||
 	    test->callback_task[0] != test->owner_task ||
 	    test->responder_task == test->owner_task ||
 	    test->request_payload != (0x7b8d5ea1c342906fULL ^ test->request_id) ||
@@ -887,7 +1170,8 @@ static int bp_task_continuation_run_case(unsigned int owner_cpu,
 		    test->owner_nvcsw_after <= test->owner_nvcsw_before ||
 		    !bp_task_continuation_rsp_in_task(test->owner_task,
 						      test->owner_rsp_resume) ||
-		    !bp_task_continuation_rsp_in_slot(slot, test->callback_rsp[1])) {
+		    !bp_task_continuation_rsp_in_slot(slot, test->callback_rsp[1]) ||
+		    test->callback_task[1] != test->owner_task) {
 			ret = -EUCLEAN;
 			goto out_stop_threads;
 		}
@@ -910,6 +1194,11 @@ static int bp_task_continuation_run_case(unsigned int owner_cpu,
 	}
 
 out_stop_threads:
+	if (!ret)
+		pr_info("x86-boundary-probe: task-continuation case %u passed transaction_state=%u entries=%u waiting_events=%u resume_ready_events=%u resumes=%u canaries=ok\n",
+			test_case, test->tx, test->tx_entries,
+			test->tx_waiting_events, test->tx_resume_ready_events,
+			test->continuation_resumes);
 	if (ret)
 		pr_err("x86-boundary-probe: task-continuation case %u failed ret=%d owner=%d responder=%d entries=%u resumes=%u\n",
 		       test_case, ret, test->owner_status, test->responder_status,
@@ -934,6 +1223,8 @@ out_free_stack:
 		slot->stack_top = 0;
 	}
 out_free_test:
+	if (test->xsave_page)
+		__free_pages(test->xsave_page, test->xsave_order);
 	kfree(test);
 	return ret;
 }

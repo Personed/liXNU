@@ -48,6 +48,8 @@ jobs:
         run: bash tests/x86_64/test-fki-x86-entry-architecture-decision.sh
       - name: Validate x86 cooperative handoff proof-obligation fixtures
         run: bash tests/x86_64/test-fki-x86-cooperative-handoff-obligations.sh
+      - name: Validate x86 address-space coexistence fixtures
+        run: bash tests/x86_64/test-fki-x86-address-space-coexistence.sh
       - name: Run boundary probe and check kernel release rejection in QEMU TCG
         run: |
           release=$(cat "$KDIR/include/config/kernel.release")

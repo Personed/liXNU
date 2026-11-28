@@ -1,0 +1,357 @@
+// SPDX-License-Identifier: APSL-2.0
+#include "../../xnu-ko/x86_64_boot_args.h"
+
+#include <assert.h>
+#include <errno.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+_Static_assert(sizeof(struct xnu_x86_efi_memory_range) == 40,
+	       "XNU EFI memory descriptor layout");
+_Static_assert(offsetof(struct xnu_x86_boot_args, CommandLine) == 8,
+	       "boot_args CommandLine offset");
+_Static_assert(offsetof(struct xnu_x86_boot_args, MemoryMap) == 1032,
+	       "boot_args MemoryMap offset");
+_Static_assert(offsetof(struct xnu_x86_boot_args, VideoV1) == 1048,
+	       "boot_args VideoV1 offset");
+_Static_assert(offsetof(struct xnu_x86_boot_args, deviceTreeP) == 1072,
+	       "boot_args deviceTreeP offset");
+_Static_assert(offsetof(struct xnu_x86_boot_args, kaddr) == 1080,
+	       "boot_args kaddr offset");
+_Static_assert(offsetof(struct xnu_x86_boot_args, PhysicalMemorySize) == 1144,
+	       "boot_args PhysicalMemorySize offset");
+_Static_assert(offsetof(struct xnu_x86_boot_args, Video) == 1192,
+	       "boot_args Video offset");
+_Static_assert(offsetof(struct xnu_x86_boot_args, KC_hdrs_vaddr) == 1256,
+	       "boot_args KC header offset");
+_Static_assert(offsetof(struct xnu_x86_boot_args, __reserved4) == 1328,
+	       "boot_args reserved offset");
+_Static_assert(sizeof(struct xnu_x86_boot_args) == 4096,
+	       "XNU x86 boot_args size");
+
+static struct xnu_x86_boot_args_core valid_input(void)
+{
+	struct xnu_x86_boot_args_core in = {
+		.command_line = "debug=0x144 keepsyms=1",
+		.command_line_length = sizeof("debug=0x144 keepsyms=1") - 1,
+		.memory_map_pa = 0x00100000,
+		.memory_map_size = 2 * sizeof(struct xnu_x86_efi_memory_range),
+		.memory_map_descriptor_size = sizeof(struct xnu_x86_efi_memory_range),
+		.memory_map_descriptor_version = 0,
+		.device_tree_pa = 0x00200000,
+		.device_tree_size = 0x1000,
+		.kernel_pa = 0x00400000,
+		.kernel_size = 0x00200000,
+		.boot_mem_start = 0x00600000,
+		.boot_mem_size = 0x00100000,
+		.physical_memory_size = 0x100000000ULL,
+		.fsb_frequency = 100000000ULL,
+	};
+
+	return in;
+}
+
+static void test_valid_core_fields(void)
+{
+	struct xnu_x86_boot_args args;
+	struct xnu_x86_boot_args_core in = valid_input();
+
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+	assert(args.Revision == XNU_X86_BOOT_ARGS_REVISION);
+	assert(args.Version == XNU_X86_BOOT_ARGS_VERSION);
+	assert(args.efiMode == XNU_X86_BOOT_ARGS_EFI_MODE_64);
+	assert(strcmp(args.CommandLine, in.command_line) == 0);
+	assert(args.MemoryMap == in.memory_map_pa);
+	assert(args.MemoryMapSize == in.memory_map_size);
+	assert(args.MemoryMapDescriptorSize == in.memory_map_descriptor_size);
+	assert(args.deviceTreeP == in.device_tree_pa);
+	assert(args.deviceTreeLength == in.device_tree_size);
+	assert(args.kaddr == in.kernel_pa);
+	assert(args.ksize == in.kernel_size);
+	assert(args.bootMemStart == in.boot_mem_start);
+	assert(args.bootMemSize == in.boot_mem_size);
+	assert(args.PhysicalMemorySize == in.physical_memory_size);
+	assert(args.FSBFrequency == in.fsb_frequency);
+	assert(args.Video.v_baseAddr == 0);
+	assert(args.efiSystemTable == 0);
+	assert(xnu_x86_boot_args_validate(&args) == 0);
+
+	args.Revision = XNU_X86_BOOT_ARGS_MAX_REVISION;
+	assert(xnu_x86_boot_args_validate(&args) == 0);
+}
+
+static void test_malformed_lengths(void)
+{
+	struct xnu_x86_boot_args args;
+	struct xnu_x86_boot_args_core in = valid_input();
+
+	in.memory_map_size--;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == -EINVAL);
+
+	in = valid_input();
+	in.memory_map_descriptor_size = sizeof(struct xnu_x86_efi_memory_range) - 1;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == -EINVAL);
+
+	in = valid_input();
+	in.memory_map_descriptor_size = 0;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == -EINVAL);
+
+	in = valid_input();
+	in.command_line_length = XNU_X86_BOOT_ARGS_COMMAND_LINE_SIZE;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == -EINVAL);
+}
+
+static void test_unrepresentable_ranges(void)
+{
+	struct xnu_x86_boot_args args;
+	struct xnu_x86_boot_args_core in = valid_input();
+
+	in.memory_map_pa = 0x100000000ULL;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == -ERANGE);
+
+	in = valid_input();
+	in.memory_map_pa = 0xfffffff0ULL;
+	in.memory_map_size = 80;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == -ERANGE);
+
+	in = valid_input();
+	in.device_tree_pa = 0xfffffff0ULL;
+	in.device_tree_size = 0x1000;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == -ERANGE);
+
+	in = valid_input();
+	in.kernel_pa = 0xfff00000ULL;
+	in.kernel_size = 0x00200000;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == -ERANGE);
+
+	in = valid_input();
+	in.boot_mem_start = UINT64_MAX - 7;
+	in.boot_mem_size = 8;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == -ERANGE);
+}
+
+static void test_last_u32_page_ranges(void)
+{
+	struct xnu_x86_boot_args args;
+	struct xnu_x86_boot_args_core in = valid_input();
+
+	/* The u32 base plus length describes every byte through UINT32_MAX. */
+	in.memory_map_pa = 0xfffff000ULL;
+	in.memory_map_size = 0x1000;
+	in.memory_map_descriptor_size = 0x1000;
+	in.device_tree_pa = 0xfffff000ULL;
+	in.device_tree_size = 0x1000;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+	assert(args.MemoryMap == 0xfffff000U);
+	assert(args.MemoryMapSize == 0x1000U);
+	assert(args.deviceTreeP == 0xfffff000U);
+	assert(args.deviceTreeLength == 0x1000U);
+	assert(xnu_x86_boot_args_validate(&args) == 0);
+
+	/* XNU computes this sum in uint32_t, so the same kernel interval wraps. */
+	in = valid_input();
+	in.kernel_pa = 0xfffff000ULL;
+	in.kernel_size = 0x1000;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == -ERANGE);
+}
+
+static void test_initial_physfree_page_rounding(void)
+{
+	struct xnu_x86_boot_args args;
+	struct xnu_x86_boot_args_core in = valid_input();
+
+	/* The initial page-aligned physfree still fits in the low 4 GiB. */
+	in.kernel_pa = 0xffffe000ULL;
+	in.kernel_size = 0x1000U;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+	assert(xnu_x86_boot_args_validate(&args) == 0);
+
+	/* The byte end fits in uint32_t, but page rounding reaches 4 GiB. */
+	in.kernel_size++;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == -ERANGE);
+	args.ksize++;
+	assert(xnu_x86_boot_args_validate(&args) == -ERANGE);
+}
+
+static void test_validator_rejects_u32_overflow(void)
+{
+	struct xnu_x86_boot_args args;
+	struct xnu_x86_boot_args_core in = valid_input();
+
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+	args.MemoryMap = 0xfffff000U;
+	args.MemoryMapSize = 0x2000U;
+	args.MemoryMapDescriptorSize = 0x1000U;
+	assert(xnu_x86_boot_args_validate(&args) == -ERANGE);
+
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+	args.kaddr = 0xfffff000U;
+	args.ksize = 0x1000U;
+	assert(xnu_x86_boot_args_validate(&args) == -ERANGE);
+}
+
+static void test_reject_unsupported_or_malformed_output(void)
+{
+	struct xnu_x86_boot_args args;
+	struct xnu_x86_boot_args_core in = valid_input();
+
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+	args.Version++;
+	assert(xnu_x86_boot_args_validate(&args) == -EOPNOTSUPP);
+
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+	args.efiMode = 32;
+	assert(xnu_x86_boot_args_validate(&args) == -EOPNOTSUPP);
+
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+	memset(args.CommandLine, 'x', sizeof(args.CommandLine));
+	assert(xnu_x86_boot_args_validate(&args) == -ENOEXEC);
+
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+	args.MemoryMapDescriptorSize = 0;
+	assert(xnu_x86_boot_args_validate(&args) == -ENOEXEC);
+	assert(xnu_x86_boot_args_validate(NULL) == -EINVAL);
+}
+
+static void test_efi_memory_map_page_indices(void)
+{
+	enum { STRIDE = sizeof(struct xnu_x86_efi_memory_range) + 8 };
+	struct xnu_x86_boot_args args;
+	struct xnu_x86_boot_args_core in = valid_input();
+	struct xnu_x86_efi_memory_range first = {
+		.PhysicalStart = 0x100000000ULL,
+		.NumberOfPages = 2,
+	};
+	/* XNU ignores this page; the preflight only checks representability. */
+	struct xnu_x86_efi_memory_range second = {
+		.PhysicalStart = (uint64_t)UINT32_MAX << 12,
+		.NumberOfPages = 1,
+	};
+	unsigned char storage[1 + 2 * STRIDE] = { 0 };
+	unsigned char *map = storage + 1;
+
+	in.memory_map_size = 2 * STRIDE;
+	in.memory_map_descriptor_size = STRIDE;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+	memcpy(map, &first, sizeof(first));
+	memcpy(map + STRIDE, &second, sizeof(second));
+
+	assert(xnu_x86_boot_memory_map_validate(&args, map, 2 * STRIDE) == 0);
+	assert(xnu_x86_boot_memory_map_validate(&args, map, 2 * STRIDE - 1) == -ENOEXEC);
+	assert(xnu_x86_boot_memory_map_validate(&args, NULL, 2 * STRIDE) == -EINVAL);
+
+	second.NumberOfPages = 2;
+	memcpy(map + STRIDE, &second, sizeof(second));
+	assert(xnu_x86_boot_memory_map_validate(&args, map, 2 * STRIDE) == -ERANGE);
+
+	second.PhysicalStart += 0x1000;
+	second.NumberOfPages = 1;
+	memcpy(map + STRIDE, &second, sizeof(second));
+	assert(xnu_x86_boot_memory_map_validate(&args, map, 2 * STRIDE) == -ERANGE);
+
+	second.PhysicalStart = first.PhysicalStart + 1;
+	memcpy(map + STRIDE, &second, sizeof(second));
+	assert(xnu_x86_boot_memory_map_validate(&args, map, 2 * STRIDE) == -ENOEXEC);
+
+	second.PhysicalStart = 0;
+	second.NumberOfPages = 0;
+	memcpy(map + STRIDE, &second, sizeof(second));
+	assert(xnu_x86_boot_memory_map_validate(&args, map, 2 * STRIDE) == -ENOEXEC);
+}
+
+enum { ADT_TEST_NODE_SIZE = 48 };
+
+static void make_named_adt_node(unsigned char *dest, uint32_t children)
+{
+	uint32_t props = 1, length = 2;
+
+	memset(dest, 0, ADT_TEST_NODE_SIZE);
+	memcpy(dest, &props, sizeof(props));
+	memcpy(dest + 4, &children, sizeof(children));
+	memcpy(dest + 8, "name", sizeof("name"));
+	memcpy(dest + 40, &length, sizeof(length));
+	memcpy(dest + 44, "n", sizeof("n"));
+}
+
+static void test_device_tree_wire_format(void)
+{
+	struct xnu_x86_boot_args args;
+	struct xnu_x86_boot_args_core in = valid_input();
+	unsigned char storage[1 + 33 * ADT_TEST_NODE_SIZE];
+	unsigned char *tree = storage + 1;
+	uint32_t children, huge_length = UINT32_MAX;
+	unsigned int i;
+
+	in.device_tree_size = 2 * ADT_TEST_NODE_SIZE;
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+	make_named_adt_node(tree, 1);
+	make_named_adt_node(tree + ADT_TEST_NODE_SIZE, 0);
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, in.device_tree_size) == 0);
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, in.device_tree_size - 1) == -ENOEXEC);
+	assert(xnu_x86_boot_device_tree_validate(&args, NULL, in.device_tree_size) == -EINVAL);
+
+	tree[45] = 'x';
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, in.device_tree_size) == -ENOEXEC);
+	make_named_adt_node(tree, 1);
+	memset(tree + 8, 'x', 32);
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, in.device_tree_size) == -ENOEXEC);
+	make_named_adt_node(tree, 1);
+	memcpy(tree + 40, &huge_length, sizeof(huge_length));
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, in.device_tree_size) == -ENOEXEC);
+	make_named_adt_node(tree, 0);
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, in.device_tree_size) == -ENOEXEC);
+
+	make_named_adt_node(tree, 1);
+	args.deviceTreeLength = ADT_TEST_NODE_SIZE - 1;
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, args.deviceTreeLength) == -ENOEXEC);
+
+	for (i = 0; i < 33; i++)
+		make_named_adt_node(tree + i * ADT_TEST_NODE_SIZE, i != 32);
+	args.deviceTreeLength = 33 * ADT_TEST_NODE_SIZE;
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, args.deviceTreeLength) == -EOPNOTSUPP);
+
+	children = 0;
+	memcpy(tree + 31 * ADT_TEST_NODE_SIZE + 4, &children, sizeof(children));
+	args.deviceTreeLength = 32 * ADT_TEST_NODE_SIZE;
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, args.deviceTreeLength) == 0);
+}
+
+static void test_device_tree_sibling_traversal(void)
+{
+	struct xnu_x86_boot_args args;
+	struct xnu_x86_boot_args_core in = valid_input();
+	unsigned char tree[4 * ADT_TEST_NODE_SIZE];
+	unsigned char *sibling = tree + 3 * ADT_TEST_NODE_SIZE;
+
+	in.device_tree_size = sizeof(tree);
+	assert(xnu_x86_boot_args_build_core(&args, &in) == 0);
+
+	/* Root, first child, grandchild, then the second child of the root. */
+	make_named_adt_node(tree, 2);
+	make_named_adt_node(tree + ADT_TEST_NODE_SIZE, 1);
+	make_named_adt_node(tree + 2 * ADT_TEST_NODE_SIZE, 0);
+	make_named_adt_node(sibling, 0);
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, sizeof(tree)) == 0);
+
+	/* A malformed sibling must still be visited after the subtree is consumed. */
+	memset(sibling + 8, 'x', 32);
+	assert(xnu_x86_boot_device_tree_validate(&args, tree, sizeof(tree)) == -ENOEXEC);
+}
+
+int main(void)
+{
+	test_valid_core_fields();
+	test_malformed_lengths();
+	test_unrepresentable_ranges();
+	test_last_u32_page_ranges();
+	test_initial_physfree_page_rounding();
+	test_validator_rejects_u32_overflow();
+	test_reject_unsupported_or_malformed_output();
+	test_efi_memory_map_page_indices();
+	test_device_tree_wire_format();
+	test_device_tree_sibling_traversal();
+	puts("xnu x86 boot_args layout/validation fixtures passed");
+	return 0;
+}

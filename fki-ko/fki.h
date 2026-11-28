@@ -99,6 +99,8 @@ void fki_contig_free(struct fki_region *r);
  */
 int fki_window_l1(unsigned long va, unsigned long long **l1_va, fki_u64 *l1_pa);
 void fki_window_set(unsigned long long *slot, fki_u64 desc);
+/* Read the current ARM64 host's TCR2_EL1; -EOPNOTSUPP when the CPU/kernel lacks TCR2. */
+int fki_tcr2_read(fki_u64 *value);
 /*
  * Host-managed foreign kernel memory and high-window mappings (FKI_CAP_HIGH_WINDOW):
  * fki_kmem_alloc allocates backing memory (no multi-GB physical contiguity required), maps it at high_va

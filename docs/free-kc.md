@@ -20,13 +20,14 @@ their install names change (otherwise their first page fails validation in every
 | `com.apple.kec.pthread` | PureDarwin (Apple's libpthread kext) | |
 | `com.apple.iokit.IOStorageFamily`, `HFSEncodings`, `hfs` | PureDarwin (Apple's open-source projects) | |
 
-`scripts/vm-xnu-rebuild.sh` builds XnuCPU, XnuDisk and XnuDrm even when Apple’s kernelcache is absent.
+`scripts/vm-xnu-rebuild.sh` builds XnuCPU, XnuDisk and XnuDrm even when Apple's kernelcache is absent.
 Every kext is compiled from source as arm64e with this kernel's own compile flags (`scripts/free-kc/kcc.py`), and
 linked into the collection by `scripts/kclink` the way xnulinux's own kexts are.
 
 Nothing of Apple's is read to make it. `kclink` links kexts into an existing collection, so `scripts/free-kc/mk-template.py`
 first makes an empty one: an `MH_FILESET` with the kernel's segments at the addresses in `scripts/free-kc/layout.json`
-(region sizes, nothing else), the kernel's pseudo-extensions (`com.apple.kpi.*`, from XNU's own
+(region sizes, nothing else), moving `__PRELINK_INFO` after the source-built kernel's executable span if it grew past
+the reference layout; the kernel's pseudo-extensions (`com.apple.kpi.*`, from XNU's own
 `config/System.kext/PlugIns/*/Info.plist`) as the prelink info, and empty chained fixups. Built with every
 kernelcache and kernel collection of Apple's hidden from the build (a mount namespace with them replaced by empty files),
 the result is the same byte for byte. It also boots with no static trust cache (`TRUSTCACHE=`).
@@ -52,7 +53,9 @@ kernel has; and a kext's load tag.
    back to `/tmp`, allowing the output directory itself to be on root-squashed NFS. Set `TMPDIR` to a local filesystem
    if neither path is accessible to the mount helper. The output path must be new, its parent directory must exist,
    and that filesystem
-   must support hard links. The archive
+   must support hard links. CI includes a loopback NFS v3 `root_squash` test that checks the local `/tmp` mount fallback,
+   hard-link publication, and archive UID and mode. It does not certify other NFS servers or client configurations; before
+   relying on another NFS destination, verify that it allows hard links and preserves the expected UID ownership. The archive
    is published without replacing an existing file or symlink and has mode `0644`. The exporter refuses output paths
    with an ancestor controlled by another account or writable by a group or other user outside a sticky directory;
    use a private directory or a root-owned sticky shared directory such as `/tmp`.
@@ -63,8 +66,8 @@ kernel has; and a kext's load tag.
    The [ARM64 image workflow](../.github/workflows/puredarwin-arm64-image.yml) builds this pinned AFK revision
    on an x86-64 runner, verifies the release SHA-256 and retains the compressed image artifact for three days. This
    records a pinned build input and checks artifact integrity; it does not establish byte-for-byte reproducibility
-   between independent builds because image UUID/GUID values can vary. It also does not pair the image with `kc-free.bin`
-   or validate an xnulinux boot.
+   between independent builds because image UUID/GUID values can vary. The full-run job below pairs it with the source-
+   built collection and records the boot result.
 2. Run the following on Linux or macOS to make the HFS+ disk and save its UUIDs after a successful build.
 
    ```sh
@@ -101,10 +104,21 @@ kernel has; and a kext's load tag.
    `fsck.hfsplus` on the first partition exposed by `losetup --partscan`, not on `pd.img`. If the check fails, repair the
    volume before booting it again.
 3. In the VM, after `scripts/vm-xnu-rebuild.sh`: `scripts/free-kc/build.sh`, which writes `/lib/firmware/xnu/kc-free.bin`.
+   `scripts/vm-xnu-build.sh` checks out DroidVM at pinned revision
+   `524d27bf57ae92375aa39e3a81e11727c08973ff`; set `DVM_REV` explicitly only when intentionally building against a
+   different DroidVM commit, and record that commit with the output. The build script uses the existing
+   `/lib/modules/$(uname -r)/build` tree when present, or installs `linux-headers-$(uname -r)` when it is missing. Set
+   `INSTALL_HOST_HEADERS=0` only on a build machine whose running kernel will not host the modules, such as the x86-64
+   image-build runner; install matching headers for the ARM64 host before following the boot steps.
 4. Boot it: `MAC_CONF=pd.conf DISK=pd.img IMAGE=xnu/kc-free.bin TRUSTCACHE= GPU=off scripts/xnulinux-boot.sh`. The console
    (`CONSOLE_IN`) is PureDarwin's zsh. Its `halt` and `reboot` end the run. For a service-managed boot, use
    `sudo systemctl start xnulinux.service` instead of the manual command, after configuring the service for this disk;
    this restores its supervision and automatic restart after a disk check.
+
+The [PureDarwin ARM64 image workflow](../.github/workflows/puredarwin-arm64-image.yml) also builds the HFS+ disk on Linux,
+builds XNU and `kc-free.bin`, then boots the real PureDarwin console in an ARM64 Linux guest under x86-64 QEMU TCG. The
+CI summary records the exact guest profile and artifact digests; the serial log is retained for 30 days. This check
+covers the console and a guest-requested clean halt, not a desktop, graphics, networking, or performance claim.
 
 ## Apple's kexts, linked on the user's machine
 

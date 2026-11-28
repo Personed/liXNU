@@ -50,6 +50,8 @@ source "$SCRIPT_DIR/xnu-trustcache-scan-workspace.sh"
 readonly XNU_URL='https://github.com/apple-oss-distributions/xnu.git'
 readonly XNU_COMMIT='ac9718fb1af618d5ce8678d0dc6e8a58f252216f'
 readonly XNU_TAG='xnu-12377.121.6'
+readonly XNU_SOURCE_PATCH_NAME='scripts/x86_64/tahoe-xnu-cpuid-vendor-guard.patch'
+readonly XNU_SOURCE_PATCH_PATH="$SCRIPT_DIR/../../$XNU_SOURCE_PATCH_NAME"
 readonly LIBDISPATCH_URL='https://github.com/apple-oss-distributions/libdispatch.git'
 readonly LIBDISPATCH_COMMIT='701f4d1a24ae9c6863901bbbb22624b7d1b87321'
 readonly LIBDISPATCH_TAG='libdispatch-1542.100.32'
@@ -92,6 +94,9 @@ esac
 for tool in git make xcrun xcodebuild sysctl python3 shasum ditto rsync; do
   command -v "$tool" >/dev/null 2>&1 || fail "required host tool not found: $tool"
 done
+[[ -s "$XNU_SOURCE_PATCH_PATH" ]] || fail "missing pinned XNU source patch at $XNU_SOURCE_PATCH_PATH"
+XNU_SOURCE_PATCH_SHA256="$(shasum -a 256 "$XNU_SOURCE_PATCH_PATH" | awk '{print $1}')"
+[[ "$XNU_SOURCE_PATCH_SHA256" =~ ^[[:xdigit:]]{64}$ ]] || fail 'XNU source patch SHA-256 is malformed'
 
 DEFAULT_TMPDIR="${TMPDIR:-/tmp}"
 BUILD_ROOT_INPUT="${XNU_X86_BUILD_DIR:-${DEFAULT_TMPDIR%/}/xnulinux-x86_64-xnu-build}"
@@ -199,7 +204,6 @@ verify_source() {
   local actual
   actual="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
   [[ "$actual" == "$XNU_COMMIT" ]] || fail "XNU source is $actual; expected $XNU_COMMIT ($XNU_TAG)"
-  [[ -z "$(git -C "$SOURCE_DIR" status --porcelain)" ]] || fail 'refusing to build from a modified XNU source tree'
   grep -q '^SUPPORTED_ARCH_CONFIGS.*X86_64' "$SOURCE_DIR/makedefs/MakeInc.def" \
     || fail 'pinned XNU source does not declare X86_64'
   grep -q '^SUPPORTED_X86_64_MACHINE_CONFIGS[[:space:]]*=[[:space:]]*NONE$' "$SOURCE_DIR/makedefs/MakeInc.def" \
@@ -557,6 +561,10 @@ ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 required_sources = ("kextsymboltool.c", "mkheaders.c")
 commands = {source: [] for source in required_sources}
 for raw_line in log_path.read_text(errors="replace").splitlines():
+    # The verbose XNU log can contain millions of lines. Only the pinned
+    # host-tool command lines need shell parsing; avoid shlex on every line.
+    if not any(source in raw_line for source in required_sources):
+        continue
     line = ansi.sub("", raw_line)
     try:
         tokens = shlex.split(line)
@@ -873,6 +881,8 @@ verify_xcode_and_sdk() {
 
 if (( CHECK_ONLY )); then
   verify_source
+  python3 "$SCRIPT_DIR/verify-xnu-cpuid-vendor-guard.py" \
+    --source-root "$SOURCE_DIR" --patch "$XNU_SOURCE_PATCH_PATH"
   verify_libdispatch_source
   verify_availability_source
   verify_xcode_and_sdk
@@ -917,6 +927,8 @@ if [[ ! -d "$SOURCE_DIR/.git" && ! -f "$SOURCE_DIR/.git" ]]; then
   git -C "$SOURCE_DIR" checkout -q --detach FETCH_HEAD
 fi
 verify_source
+python3 "$SCRIPT_DIR/verify-xnu-cpuid-vendor-guard.py" \
+  --source-root "$SOURCE_DIR" --patch "$XNU_SOURCE_PATCH_PATH" --apply
 
 if [[ ! -d "$LIBDISPATCH_SOURCE_DIR/.git" && ! -f "$LIBDISPATCH_SOURCE_DIR/.git" ]]; then
   [[ ! -d "$LIBDISPATCH_SOURCE_DIR" || -z "$(find "$LIBDISPATCH_SOURCE_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]] \
@@ -1070,9 +1082,16 @@ AVAILABILITY_TOOL_SHA256="$(shasum -a 256 "$SDK_DIR/usr/local/libexec/availabili
 MACHINE_CPU_NUMBER_SHA256="$(shasum -a 256 "$SDK_DIR/usr/local/include/machine/cpu_number.h" | awk '{print $1}')"
 I386_CPU_NUMBER_SHA256="$(shasum -a 256 "$SDK_DIR/usr/local/include/i386/cpu_number.h" | awk '{print $1}')"
 
-cat >"$OUT_DIR/x86_64-build.env" <<EOF
+XNU_COMPAT_PATCH="$SCRIPT_DIR/tahoe-xnu-pointer-casts.patch"
+XNU_COMPAT_PATCH_SHA256="$(shasum -a 256 "$XNU_COMPAT_PATCH" | awk '{print $1}')"
+
+write_build_environment() {
+  cat >"$OUT_DIR/x86_64-build.env" <<EOF
 source=$XNU_URL@$XNU_COMMIT
 source_tag=$XNU_TAG
+xnu_source_modified=true
+xnu_source_patch=$XNU_SOURCE_PATCH_NAME
+xnu_source_patch_sha256=$XNU_SOURCE_PATCH_SHA256
 availability_source=$AVAILABILITY_URL@$AVAILABILITY_COMMIT
 availability_tag=$AVAILABILITY_TAG
 libdispatch_source=$LIBDISPATCH_URL@$LIBDISPATCH_COMMIT
@@ -1145,7 +1164,12 @@ build_host_mode=$BUILD_HOST_MODE
 build_process_arch=$HOST_PROCESS_ARCH
 build_process_translated=$HOST_PROCESS_TRANSLATED
 target_arch=x86_64
+xnu_compat_patch_sha256=$XNU_COMPAT_PATCH_SHA256
 EOF
+}
+
+# Retain the inputs and preflight state if compilation or verification fails.
+write_build_environment
 
 printf 'Building XNU %s for X86_64/NONE with %s\n' "$XNU_TAG" "$ACTUAL_XCODE_VERSION"
 rm -rf -- "$OBJROOT" "$SYMROOT" "$DSTROOT"
@@ -1154,9 +1178,6 @@ rm -rf -- "$OBJROOT" "$SYMROOT" "$DSTROOT"
 # stores (including ARM-only trace arguments), and the intentional enum-as-
 # opaque-sysctl-argument round trip. Keep the warnings visible and all other
 # warnings fatal; apply these exceptions only to X86_64/NONE.
-XNU_COMPAT_PATCH="$SCRIPT_DIR/tahoe-xnu-pointer-casts.patch"
-XNU_COMPAT_PATCH_SHA256="$(shasum -a 256 "$XNU_COMPAT_PATCH" | awk '{print $1}')"
-printf 'xnu_compat_patch_sha256=%s\n' "$XNU_COMPAT_PATCH_SHA256" >> "$OUT_DIR/x86_64-build.env"
 if (
   # Keep the pinned checkout pristine, including on compile failure.
   git -C "$SOURCE_DIR" apply --whitespace=error "$XNU_COMPAT_PATCH" || exit 1
@@ -1191,6 +1212,9 @@ ARCHS="$(xcrun lipo -archs "$KERNEL")"
 PACKAGE_KERNEL="$OUT_DIR/kernel.development"
 cp -L "$KERNEL" "$PACKAGE_KERNEL"
 
+# The success artifact must report the same verification state as the manifest.
+write_build_environment
+
 python3 - "$PACKAGE_KERNEL" "$RESULT" "$XNU_COMMIT" "$XNU_TAG" "$SOURCE_VERSION" \
   "$KERNEL_VERSION" "$SDK_VERSION" "$XCODE_VERSION" "$ARCHS" \
   "$LIBDISPATCH_COMMIT" "$LIBDISPATCH_TAG" "$FIREHOSE_ARCHIVE_SHA256" \
@@ -1208,17 +1232,20 @@ python3 - "$PACKAGE_KERNEL" "$RESULT" "$XNU_COMMIT" "$XNU_TAG" "$SOURCE_VERSION"
   "$KDK_PRIVATE_HEADER_SHA256" "$HOST_OS_VERSION" "$XNU_SOURCE_RELEASE" "$RUNTIME_TARGET_VERSION" \
   "$KDK_PRESENT" "$KDK_REQUIRED" "$KDK_PRODUCT_VERSION" "$KDK_PRODUCT_BUILD" "$KDK_XNU_VERSION" \
   "$TRUSTCACHE_HEADER_SOURCE" "$TRUSTCACHE_HEADER_SHA256" "$TRUSTCACHE_HEADER" \
-  "$RUNTIME_TARGET_BUILD" "$XNU_COMPAT_PATCH_SHA256" <<'PY'
+  "$RUNTIME_TARGET_BUILD" "$XNU_COMPAT_PATCH_SHA256" "$XNU_SOURCE_PATCH_SHA256" <<'PY'
 import hashlib
 import json
 import pathlib
 import sys
 
 kernel = pathlib.Path(sys.argv[1])
-digest = hashlib.sha256(kernel.read_bytes()).hexdigest()
+artifact_bytes = kernel.read_bytes()
+digest = hashlib.sha256(artifact_bytes).hexdigest()
 result = {
+    "build_result_schema_version": 1,
     "artifact": str(kernel),
     "artifact_sha256": digest,
+    "artifact_size_bytes": len(artifact_bytes),
     "artifact_type": "XNU development kernel",
     "architecture": sys.argv[9],
     "target_architecture": sys.argv[9],
@@ -1278,6 +1305,10 @@ result = {
     "runtime_target_os_version": sys.argv[45],
     "runtime_target_os_build": sys.argv[54],
     "xnu_source_compat_patch_sha256": sys.argv[55],
+    "xnu_source_modified": True,
+    "xnu_source_patch": "scripts/x86_64/tahoe-xnu-cpuid-vendor-guard.patch",
+    "xnu_source_patch_sha256": sys.argv[56],
+    "xnu_non_intel_vendor_policy": "refuse-before-cpuid_do_precpuid_was-and-cpuid_set_generic_info",
     "runtime_compatibility_verified": False,
     "kernel_source_runtime_match": False,
     "darwin_kernel_version": sys.argv[6],

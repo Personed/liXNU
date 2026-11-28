@@ -7,6 +7,7 @@
 #include <linux/ioctl.h>
 #include <linux/types.h>
 #include <sched.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +18,12 @@
 #include <unistd.h>
 
 #include "boundary_probe_uapi.h"
+
+#define LEGACY_XSTATE_SIZE 512U
+
+/* Round down with exceptions masked, distinct from the kernel's sentinels. */
+static const uint16_t x87_control = 0x077f;
+static const uint32_t mxcsr_control = 0x3f80;
 
 static const uint32_t vectors[8][8] __attribute__((aligned(32))) = {
 	{0x00000001, 0x11111111, 0x22222222, 0x33333333, 0x44444444, 0x55555555, 0x66666666, 0x77777777},
@@ -36,22 +43,35 @@ struct xsave_config {
 
 _Static_assert(X86_BOUNDARY_PROBE_RUN == _IOW(0xb7, 1, struct x86_boundary_probe_request),
 	       "userspace ioctl number disagrees with kernel UAPI");
+_Static_assert(X86_BOUNDARY_PROBE_COOPERATIVE ==
+	       _IOW(0xb7, 2, struct x86_boundary_probe_request),
+	       "userspace cooperative ioctl number disagrees with kernel UAPI");
+_Static_assert(X86_BOUNDARY_PROBE_TASK_CONTINUATION ==
+	       _IOW(0xb7, 3, struct x86_boundary_continuation_request),
+	       "userspace continuation ioctl disagrees with kernel UAPI");
 
-static long invoke_with_xstate(int fd, const struct x86_boundary_probe_request *request,
+static long invoke_with_xstate(int fd, unsigned long ioctl_command,
+			       const struct x86_boundary_probe_request *request,
 			       uint32_t after[8][8], void *xstate_before,
 			       void *xstate_after, const struct xsave_config *config)
 {
 	register long rax __asm__("rax") = SYS_ioctl;
 	register long rdi __asm__("rdi") = fd;
-	register long rsi __asm__("rsi") = X86_BOUNDARY_PROBE_RUN;
+	register long rsi __asm__("rsi") = ioctl_command;
 	register const struct x86_boundary_probe_request *rdx __asm__("rdx") = request;
 	const uint32_t mask_low = (uint32_t)config->mask;
 	const uint32_t mask_high = (uint32_t)(config->mask >> 32);
+	unsigned char original_legacy[LEGACY_XSTATE_SIZE] __attribute__((aligned(16)));
 	long syscall_result;
 
-	/* The raw syscall preserves RCX/R11 as required by the syscall ABI and lets us
-	 * inspect live SIMD and XSAVE state before userspace C code can use it. */
+	/* Capture the seeded state around the raw syscall before C can use it.
+	 * Restore the original legacy FPU state before returning to C. */
 	__asm__ volatile(
+			"fxsave64 %[original_legacy]\n\t"
+			"fninit\n\t"
+			"fldcw %[x87_control]\n\t"
+			"fld1\n\t"
+			"ldmxcsr %[mxcsr_control]\n\t"
 		"vmovdqu 0(%[vectors]), %%ymm0\n\t"
 		"vmovdqu 32(%[vectors]), %%ymm1\n\t"
 		"vmovdqu 64(%[vectors]), %%ymm2\n\t"
@@ -78,16 +98,43 @@ static long invoke_with_xstate(int fd, const struct x86_boundary_probe_request *
 		"movl %[mask_low], %%eax\n\t"
 		"movl %[mask_high], %%edx\n\t"
 		"xsave64 (%[xstate_after])\n\t"
+			"fxrstor64 %[original_legacy]\n\t"
 		: "+&a"(rax), "+&D"(rdi), "+&S"(rsi), "+&d"(rdx),
-		  [syscall_result] "=m"(syscall_result)
+			  [syscall_result] "=m"(syscall_result),
+			  [original_legacy] "=&m"(original_legacy)
 		: [request_ptr] "r"(request), [syscall_nr] "i"(SYS_ioctl),
 		  [xstate_before] "r"(xstate_before), [xstate_after] "r"(xstate_after),
 		  [after] "r"(after),
 		  [mask_low] "m"(mask_low), [mask_high] "m"(mask_high),
+			  [x87_control] "m"(x87_control), [mxcsr_control] "m"(mxcsr_control),
 		  [vectors] "r"(vectors)
 		: "cc", "rcx", "r10", "r11", "memory", "ymm0", "ymm1", "ymm2", "ymm3",
 		  "ymm4", "ymm5", "ymm6", "ymm7");
 	return syscall_result;
+}
+
+static bool legacy_sentinels_present(const void *image)
+{
+	const unsigned char *bytes = image;
+	uint64_t st0_significand, xstate_bv;
+	uint32_t mxcsr;
+	uint16_t fcw, fsw, st0_exponent;
+
+	/* In the standard XSAVE format, the legacy area holds FCW, FTW,
+	 * MXCSR, and 80-bit ST(0). After FNINIT, FLD1 pushes onto physical
+	 * register 7 (FSW.TOP=7), sets its abridged tag, and stores the encoding
+	 * of 1.0. */
+	memcpy(&fcw, bytes, sizeof(fcw));
+	memcpy(&fsw, bytes + 2, sizeof(fsw));
+	memcpy(&mxcsr, bytes + 24, sizeof(mxcsr));
+	memcpy(&st0_significand, bytes + 32, sizeof(st0_significand));
+	memcpy(&st0_exponent, bytes + 40, sizeof(st0_exponent));
+	memcpy(&xstate_bv, bytes + LEGACY_XSTATE_SIZE, sizeof(xstate_bv));
+	return (xstate_bv & 3) == 3 && fcw == x87_control &&
+	       ((fsw >> 11) & 7) == 7 && bytes[4] == 0x80 &&
+	       mxcsr == mxcsr_control &&
+	       st0_significand == UINT64_C(0x8000000000000000) &&
+	       st0_exponent == 0x3fff;
 }
 
 static int get_xsave_config(struct xsave_config *config)
@@ -103,8 +150,8 @@ static int get_xsave_config(struct xsave_config *config)
 		return -1;
 	}
 	__asm__ volatile("xgetbv" : "=a"(xcr0_low), "=d"(xcr0_high) : "c"(0));
-	if ((xcr0_low & 0x6) != 0x6) {
-		fprintf(stderr, "OS has not enabled XMM+YMM state in XCR0 (0x%x:%x)\n",
+	if ((xcr0_low & 0x7) != 0x7) {
+		fprintf(stderr, "OS has not enabled x87+XMM+YMM state in XCR0 (0x%x:%x)\n",
 			xcr0_high, xcr0_low);
 		return -1;
 	}
@@ -137,14 +184,15 @@ static int check_linux_syscalls(pid_t expected_pid)
 	return 0;
 }
 
-static int run_probe_ioctl(int fd, pid_t pid, unsigned int cpu, unsigned int mode,
-			   const struct xsave_config *config)
+static int run_xstate_ioctl(int fd, pid_t pid, unsigned int cpu,
+			    unsigned long ioctl_command, unsigned int mode,
+			    long expected_result, const char *operation,
+			    const struct xsave_config *config)
 {
 	struct x86_boundary_probe_request request = {.cpu = cpu, .mode = mode};
 	uint32_t after[8][8] __attribute__((aligned(32)));
 	void *xstate_before = NULL, *xstate_after = NULL;
 	long result;
-	long expected = mode == X86_BOUNDARY_PROBE_MODE_RETURN ? 0 : -ECANCELED;
 	int alloc_error;
 	size_t mismatch;
 
@@ -162,15 +210,21 @@ static int run_probe_ioctl(int fd, pid_t pid, unsigned int cpu, unsigned int mod
 	memset(xstate_after, 0, config->size);
 	if (check_linux_syscalls(pid))
 		goto fail;
-	result = invoke_with_xstate(fd, &request, after, xstate_before,
+	result = invoke_with_xstate(fd, ioctl_command, &request, after, xstate_before,
 				    xstate_after, config);
-	if (result != expected) {
-		fprintf(stderr, "cpu %u mode %u returned %ld, expected %ld\n",
-			cpu, mode, result, expected);
+	if (result != expected_result) {
+		fprintf(stderr, "cpu %u %s mode %u returned %ld, expected %ld\n",
+			cpu, operation, mode, result, expected_result);
+		goto fail;
+	}
+	if (!legacy_sentinels_present(xstate_before)) {
+		fprintf(stderr, "cpu %u %s mode %u did not capture seeded x87/MXCSR state\n",
+			cpu, operation, mode);
 		goto fail;
 	}
 	if (memcmp(vectors, after, sizeof(vectors))) {
-		fprintf(stderr, "cpu %u mode %u changed userspace XSAVE/YMM state\n", cpu, mode);
+		fprintf(stderr, "cpu %u %s mode %u changed userspace XSAVE/YMM state\n",
+			cpu, operation, mode);
 		goto fail;
 	}
 	if (memcmp(xstate_before, xstate_after, config->size)) {
@@ -180,13 +234,17 @@ static int run_probe_ioctl(int fd, pid_t pid, unsigned int cpu, unsigned int mod
 				break;
 		}
 		fprintf(stderr,
-			"cpu %u mode %u changed enabled XSAVE state at byte %zu (size=%zu xcr0=%#llx)\n",
-			cpu, mode, mismatch, config->size,
+			"cpu %u %s mode %u changed enabled XSAVE state at byte %zu (size=%zu xcr0=%#llx)\n",
+			cpu, operation, mode, mismatch, config->size,
 			(unsigned long long)config->mask);
 		goto fail;
 	}
 	if (check_linux_syscalls(pid))
 		goto fail;
+	if (ioctl_command == X86_BOUNDARY_PROBE_COOPERATIVE)
+		printf("x86 boundary probe passed: cpu %u cooperative %s ioctl preserved enabled user XSAVE/YMM (xcr0=%#llx size=%zu)\n",
+		       cpu, mode == X86_BOUNDARY_PROBE_COOP_REPLY ? "reply" : "timeout",
+		       (unsigned long long)config->mask, config->size);
 	free(xstate_before);
 	free(xstate_after);
 	return 0;
@@ -197,9 +255,30 @@ fail:
 	return -1;
 }
 
+static int run_probe_ioctl(int fd, pid_t pid, unsigned int cpu, unsigned int mode,
+			   const struct xsave_config *config)
+{
+	long expected = mode == X86_BOUNDARY_PROBE_MODE_RETURN ? 0 : -ECANCELED;
+
+	return run_xstate_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_RUN, mode,
+				expected, "boundary", config);
+}
+
+static int run_cooperative_ioctl(int fd, pid_t pid, unsigned int cpu,
+				 unsigned int mode, const struct xsave_config *config)
+{
+	/* This ioctl skips the RUN path's intentional kernel FPU-clobber shim. */
+	return run_xstate_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_COOPERATIVE,
+				mode, 0, "cooperative", config);
+}
+
 int main(void)
 {
 	const pid_t pid = getpid();
+	const struct x86_boundary_continuation_request continuation = {
+		.owner_cpu = 0,
+		.responder_cpu = 1,
+	};
 	struct xsave_config xsave;
 	long cpu_count;
 	int fd, cpu;
@@ -225,14 +304,23 @@ int main(void)
 		return 1;
 	for (cpu = 0; cpu < cpu_count; cpu++) {
 		if (run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_RETURN, &xsave) ||
-		    run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_ABORT, &xsave))
+		    run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_ABORT, &xsave) ||
+		    run_cooperative_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_COOP_REPLY, &xsave) ||
+		    run_cooperative_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_COOP_TIMEOUT, &xsave))
 			return 1;
 	}
+	if (ioctl(fd, X86_BOUNDARY_PROBE_TASK_CONTINUATION, &continuation)) {
+		perror("x86 task-continuation probe ioctl failed");
+		return 1;
+	}
+	if (check_linux_syscalls(pid))
+		return 1;
+	puts("X86_FKI_TASK_CONTINUATION_PASS");
 	if (close(fd)) {
 		perror("close probe device");
 		return 1;
 	}
-	printf("x86 boundary probe passed: %ld CPUs, return/abort, host state, enabled XSAVE/YMM, Linux syscalls (xcr0=%#llx size=%zu)\n",
+	printf("x86 boundary probe passed: %ld CPUs, return/abort, cooperative callback reply/timeout, host state, enabled user XSAVE compared per ioctl, x87/MXCSR/YMM, Linux syscalls; task-stack continuation probe passed (xcr0=%#llx size=%zu)\n",
 	       cpu_count, (unsigned long long)xsave.mask, xsave.size);
 	return 0;
 }

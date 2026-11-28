@@ -1,5 +1,5 @@
 {
- "comment": "Where kclink places things in a kernel collection, as offsets from its first byte: the top-level segments, the slot of the kernel's __LINKINFO and where the shared __LINKEDIT starts. The numbers are those of the layout k27/segaddrs.sh links the kernel for (macOS 27.2's kernelcache); mk-template.py builds a collection skeleton from them alone.",
+ "comment": "Where kclink places things in a kernel collection, as offsets from its first byte: the top-level segments, the slot of the kernel's __LINKINFO and where the shared __LINKEDIT starts. The numbers are those of the layout k27/segaddrs.sh links the kernel for (macOS 27.2's kernelcache); mk-template.py builds a collection skeleton from them, moving __PRELINK_INFO after the source kernel's executable span when needed.",
  "segments": [
   ["__TEXT", "0x0", "0x4000", 1, null],
   ["__PRELINK_TEXT", "0x4000", "0x814000", 1, "__text"],

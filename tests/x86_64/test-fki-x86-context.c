@@ -261,6 +261,9 @@ static void test_canonical_and_table_rejections(void)
 	state.ss = 0;
 	assert(VALIDATE(&state, &host) == -EINVAL);
 	state = valid_state();
+	state.tr = 0;
+	assert(VALIDATE(&state, &host) == -EINVAL);
+	state = valid_state();
 	state.ldtr = 0x20;
 	assert(VALIDATE(&state, &host) == -EINVAL);
 	state = valid_state();

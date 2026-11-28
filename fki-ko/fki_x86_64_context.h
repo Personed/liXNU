@@ -294,7 +294,8 @@ static inline int fki_x86_validate_tables_v1(
 	};
 	unsigned int i;
 
-	if (!state->cs || !state->ss || state->ldtr || state->descriptor_reserved)
+	if (!state->cs || !state->ss || !state->tr || state->ldtr ||
+	    state->descriptor_reserved)
 		return -EINVAL;
 	for (i = 0; i < sizeof(selectors) / sizeof(selectors[0]); i++) {
 		/* TR is seventh here; its long-mode system descriptor is 16 bytes. */

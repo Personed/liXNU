@@ -32,6 +32,7 @@
 #include "fki_x86_64_context.h"
 #include "fki_x86_64_transaction.h"
 #include "boundary_probe_asm.h"
+#include "boundary_probe_model.h"
 #include "boundary_probe_uapi.h"
 #include "task_continuation_probe.h"
 
@@ -67,31 +68,6 @@ struct bp_asm_result {
 	unsigned long coop_resume_count;
 	unsigned long coop_state;
 	unsigned long coop_resume_rsp;
-};
-
-struct bp_host_snapshot {
-	int cpu;
-	struct task_struct *task;
-	unsigned long stack_page;
-	unsigned long stack_end;
-	unsigned long rsp;
-	unsigned long rflags;
-	unsigned long cr0;
-	unsigned long cr4;
-	struct fki_x86_cr3 cr3;
-	u64 efer;
-	u64 fs_base;
-	u64 gs_base;
-	u64 kernel_gs_base;
-	u64 xcr0;
-	unsigned long gdt_base;
-	unsigned long idt_base;
-	unsigned int gdt_limit;
-	unsigned int idt_limit;
-	unsigned int ldt;
-	unsigned int tr;
-	unsigned int preempt_count;
-	bool irq_disabled;
 };
 
 struct bp_work {
@@ -215,6 +191,11 @@ static noinline int bp_snapshot(struct bp_host_snapshot *snapshot)
 	return 0;
 }
 
+int bp_probe_snapshot(struct bp_host_snapshot *snapshot)
+{
+	return bp_snapshot(snapshot);
+}
+
 static bool bp_snapshots_match_internal(const struct bp_host_snapshot *before,
 					const struct bp_host_snapshot *after,
 					bool compare_rsp)
@@ -245,6 +226,12 @@ static bool bp_snapshots_match(const struct bp_host_snapshot *before,
 			      const struct bp_host_snapshot *after)
 {
 	return bp_snapshots_match_internal(before, after, true);
+}
+
+bool bp_probe_snapshots_match(const struct bp_host_snapshot *before,
+			      const struct bp_host_snapshot *after)
+{
+	return bp_snapshots_match(before, after);
 }
 
 static bool bp_task_identity_match(const struct bp_host_snapshot *before,
@@ -278,12 +265,23 @@ static int bp_xsave_constraints(u64 *bytes, u64 *avx_end, u64 *supported_xcr0)
 	return 0;
 }
 
-static int bp_validate_control_model(const struct bp_host_snapshot *snapshot,
-				     unsigned long xsave_address,
-				     u64 xsave_bytes, u64 xsave_avx_end,
-				     u64 supported_xcr0, unsigned long entry_rsp)
+int bp_probe_xsave_constraints(u64 *bytes, u64 *avx_end,
+			       u64 *supported_xcr0)
 {
-	struct fki_x86_host_constraints host = {
+	return bp_xsave_constraints(bytes, avx_end, supported_xcr0);
+}
+
+int bp_probe_prepare_control_model(const struct bp_host_snapshot *snapshot,
+				   unsigned long xsave_address,
+				   u64 xsave_bytes, u64 xsave_avx_end,
+				   u64 supported_xcr0, unsigned long entry_rsp,
+				   unsigned long entry_rip,
+				   struct fki_x86_context_control_v1 *control,
+				   struct fki_x86_host_constraints *host)
+{
+	u64 control_xcr0 = snapshot->xcr0 & FKI_X86_XCR0_V1_MASK;
+
+	*host = (struct fki_x86_host_constraints) {
 		.cr4_allowed = snapshot->cr4,
 		.efer_allowed = snapshot->efer,
 		.xcr0_supported = supported_xcr0,
@@ -292,15 +290,14 @@ static int bp_validate_control_model(const struct bp_host_snapshot *snapshot,
 		.physical_bits = boot_cpu_data.x86_phys_bits,
 		.flags = boot_cpu_has(X86_FEATURE_PCID) ? FKI_X86_HOST_CPU_HAS_PCID : 0,
 	};
-	u64 control_xcr0 = snapshot->xcr0 & FKI_X86_XCR0_V1_MASK;
-	struct fki_x86_context_control_v1 control = {
+	*control = (struct fki_x86_context_control_v1) {
 		.abi_version = FKI_X86_CONTEXT_ABI_VERSION,
 		.control_version = FKI_X86_CONTEXT_CONTROL_VERSION,
 		.state_size = FKI_X86_CONTEXT_V1_BYTES,
 		.profile = FKI_X86_CONTEXT_PROFILE_HOST_BOUND_SHIM,
 		.operation = FKI_X86_CONTEXT_OP_ENTER,
 		.rsp = entry_rsp,
-		.rip = (unsigned long)x86_boundary_probe_inner,
+		.rip = entry_rip,
 		.rflags = snapshot->rflags,
 		.cs = __KERNEL_CS,
 		.ss = __KERNEL_DS,
@@ -331,6 +328,24 @@ static int bp_validate_control_model(const struct bp_host_snapshot *snapshot,
 	 */
 	if (!control_xcr0)
 		return -EOPNOTSUPP;
+	return 0;
+}
+
+static int bp_validate_control_model(const struct bp_host_snapshot *snapshot,
+				     unsigned long xsave_address,
+				     u64 xsave_bytes, u64 xsave_avx_end,
+				     u64 supported_xcr0, unsigned long entry_rsp)
+{
+	struct fki_x86_context_control_v1 control;
+	struct fki_x86_host_constraints host;
+	int err;
+
+	err = bp_probe_prepare_control_model(snapshot, xsave_address, xsave_bytes,
+					     xsave_avx_end, supported_xcr0, entry_rsp,
+					     (unsigned long)x86_boundary_probe_inner,
+					     &control, &host);
+	if (err)
+		return err;
 	return fki_x86_context_validate_host_bound_shim(&control, &host);
 }
 

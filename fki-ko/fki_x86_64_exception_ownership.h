@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef FKI_X86_64_EXCEPTION_OWNERSHIP_H
-#include <linux/string.h>
 #define FKI_X86_64_EXCEPTION_OWNERSHIP_H
 
 #include <linux/errno.h>
+#include <linux/string.h>
 #include <stdbool.h>
 #include <linux/types.h>
 

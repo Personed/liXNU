@@ -26,7 +26,8 @@ The following evidence is deliberately narrow. Export observations were checked 
 - `cpus_read_lock()` and cpuhp state setup/removal have exported forms in v6.8, but they are coordination/notification primitives, not foreign-execution ownership mechanisms. References: [`cpus_read_lock` export lines 487-503](https://github.com/torvalds/linux/blob/v6.8/kernel/cpu.c#L487-L503) and [cpuhp export lines 2558-2668](https://github.com/torvalds/linux/blob/v6.8/kernel/cpu.c#L2558-L2668).
 - cpuhp STARTING callbacks run on the hotplugged CPU with interrupts disabled during early CPU setup, while ONLINE callbacks run later with interrupts and preemption enabled. References: [STARTING section lines 198-212](https://github.com/torvalds/linux/blob/v6.8/Documentation/core-api/cpu_hotplug.rst#L198-L212) and [ONLINE section lines 214-225](https://github.com/torvalds/linux/blob/v6.8/Documentation/core-api/cpu_hotplug.rst#L214-L225).
 - Only the PREPARE and ONLINE cpuhp sections provide dynamic allocation; STARTING does not because its callbacks have explicit ordering requirements. References: [dynamic allocation lines 367-369](https://github.com/torvalds/linux/blob/v6.8/Documentation/core-api/cpu_hotplug.rst#L367-L369) and [dynamic state constants lines 391-394](https://github.com/torvalds/linux/blob/v6.8/Documentation/core-api/cpu_hotplug.rst#L391-L394).
-- No exported `native_cpu_up`, `start_cpu`, `wakeup_secondary_cpu`, or `do_boot_cpu` symbol was observed in the local kernel `Module.symvers`. This absence is evidence against assuming a module-accessible wake/reset mechanism; it is not proof that no future protocol could exist.
+- Linux v6.8 starts application processors through internal APIC wake mechanisms: `do_boot_cpu()` prefers internal `apic->wakeup_secondary_cpu_64`/`wakeup_secondary_cpu` hooks and otherwise falls back to static `wakeup_secondary_cpu_via_init()`, while `native_kick_ap()` prepares MTRR/idle/trampoline state first. References: [`wakeup_secondary_cpu_via_init` lines 846-885](https://github.com/torvalds/linux/blob/v6.8/arch/x86/kernel/smpboot.c#L846-L885) and [`do_boot_cpu`/`native_kick_ap` lines 996-1095](https://github.com/torvalds/linux/blob/v6.8/arch/x86/kernel/smpboot.c#L996-L1095).
+- No exported `native_cpu_up`, `native_kick_ap`, `start_cpu`, `wakeup_secondary_cpu`, `wakeup_secondary_cpu_via_init`, `do_boot_cpu`, `apic_icr_write`, `lapic_get_maxlvt`, or `smpboot_setup_warm_reset_vector` symbol was observed in the local kernel `Module.symvers`. This absence is evidence against assuming a module-accessible wake/reset mechanism; it is not proof that no future protocol could exist.
 
 ## Primitive evidence table
 
@@ -45,6 +46,8 @@ The following evidence is deliberately narrow. Export observations were checked 
 | module-usable cpuhp STARTING use | required but undesigned | Potentially relevant early-CPU context, but no documented dynamic module allocation exists and it does not authorize foreign execution. |
 | dynamically allocated cpuhp PREPARE/ONLINE callbacks | insufficient alone | Module-accessible in principle, but they do not provide a safe point before the CPU returns to Linux ownership. |
 | Claiming cpuhp STARTING as a foreign execution hook | forbidden as ownership/authorization claim | STARTING has no documented dynamically allocatable module hook and does not authorize foreign execution or ownership. |
+| INIT/SIPI injection hypothesis | unresolved/requires stronger protocol | Linux uses INIT/SIPI or internal APIC hooks for AP startup, but no module-safe exported implementation was observed; this is a documented hypothesis, not a route. |
+| Claiming module reimplementation of INIT/SIPI is currently authorized | forbidden as ownership/authorization claim | Reimplementing APIC/reset control would be direct ownership of shared interrupt/reset hardware and cannot be presumed authorized. |
 
 ## Required proof obligations
 
@@ -52,6 +55,11 @@ The following evidence is deliberately narrow. Export observations were checked 
 | --- | --- | --- |
 | CPU selection and physical possession | required but undesigned | A future design must define which CPU, how possession is established, and how Linux/hardware ownership conflicts are prevented. |
 | Execution injection point | required but undesigned | The logical-offline route lacks a documented production-safe injection point; this is absence of evidence/protocol, not proof of impossibility. |
+| APIC/x2APIC ownership and Linux LAPIC/IPI coexistence | required but undesigned | Any INIT/SIPI hypothesis must define ownership and coexistence with the Linux interrupt controller instead of reusing internal hooks blindly. |
+| Trampoline/memory placement | required but undesigned | Startup-vector memory, identity/transition state, and ownership are undefined. |
+| Warm-reset vector conflicts | unresolved/requires stronger protocol | Linux may install warm-reset vectors in its own AP startup flow; conflicts and restoration are unresolved. |
+| MTRR/microcode/CPU init state | required but undesigned | Linux synchronizes or initializes CPU state before AP startup; foreign use cannot ignore those requirements. |
+| SMI invariant | unresolved/requires stronger protocol | System-management interrupt ownership is unsupported and cannot be recovered or routed by this table. |
 | Wake/reset control | unresolved/requires stronger protocol | No module-accessible ownership mechanism is established here. |
 | Re-online and rollback control | unresolved/requires stronger protocol | `add_cpu()` alone does not prove reverse-order rollback or ownership during failure. |
 | Memory ownership | unresolved/requires stronger protocol | The separate ownership matrix remains unresolved for production composition. |
@@ -71,4 +79,4 @@ The following evidence is deliberately narrow. Export observations were checked 
 - No live-CPU CR3/control-state transfer is presumed safe.
 - No real CPU hotplug call, wake/reset operation, ownership transfer, runtime, XNU execution, loader, patch, entry, MSR/IDT access, userland, transaction change, ABI/layout change, VM harness change, or `#216` work is authorized.
 
-The only supported conclusion is that the inventoried Linux primitives are insufficient evidence for a production-safe ownership claim, and the logical-offline route lacks a documented production-safe execution-injection point. This is an absence of evidence and protocol, not a claim of absolute impossibility. A complete reviewed design must resolve the proof obligations above before any executable experiment can even be proposed.
+The only supported conclusion is that the inventoried Linux primitives are insufficient evidence for a production-safe ownership claim, and the logical-offline route lacks a documented production-safe execution-injection point. INIT/SIPI is only a documented hypothesis with explicit unresolved proof obligations, not a route or accepted mechanism. This is an absence of evidence and protocol, not a claim of absolute impossibility. A complete reviewed design must resolve the proof obligations above before any executable experiment can even be proposed.

@@ -90,6 +90,8 @@ The host must snapshot and restore enough floating-point/vector state even in `H
 
 ## Transaction lifecycle
 
+`fki-ko/fki_x86_64_transaction.h` defines a validation-only model of the lifecycle below. Its userspace fixtures use synthetic events for setup failure, normal return, resume, timeout/cancellation, and abort. The model does not execute an entry, arm CPU state, or implement the runtime transaction.
+
 The transaction states are:
 
 `INIT -> VALIDATED -> ARMED -> FOREIGN -> STOPPED -> RESTORED`

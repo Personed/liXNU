@@ -73,7 +73,7 @@ This answer is intentionally narrow. It means only that deep paravirtualization 
 Under current evidence, **there is no demonstrated minimum stock-kernel boundary for XNU kernel-mode mediation**. Neither SUD nor seccomp user notification mediates kernel-mode execution. If XNU kernel code executes in kernel context:
 
 - synchronous exceptions enter Linux's IDT/page-fault/general-protection path first;
-- syscall MSRs still belong to the architectural Linux entry path unless user syscalls are intercepted before entering that path;
+- syscall MSRs still belong to the architectural Linux entry path: SUD/seccomp act only after entry through that path and before the normal Linux syscall implementation, not in front of the architectural entry;
 - KPTI/CR3/GS/entry-stack/TSS/IST state must already be valid for Linux before any module-level forwarding logic can run;
 - LAPIC, interrupt, preemption, rollback, cleanup, and exactly-once behavior remain unresolved;
 - kprobes, die notifiers, and tracepoints are observation/debug mechanisms, not demonstrated production-safe ownership or routing boundaries.

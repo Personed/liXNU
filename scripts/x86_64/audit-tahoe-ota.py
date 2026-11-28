@@ -24,6 +24,7 @@ OTA_SHA256 = "b7b97ed3337af7408879da969964328f6d78282ab837333d1cc2f0507f4019a4"
 COLLECTION_NAMES = {"BootKernelExtensions.kc", "SystemKernelExtensions.kc"}
 COLLECTION_DELTAS = {f"{name}.bxdiff" for name in COLLECTION_NAMES}
 PAYLOAD_ROOT = PurePosixPath("AssetData/payloadv2")
+NAMED_PAYLOADS = {PAYLOAD_ROOT / name for name in ("data_payload", "firmlinks_payload")}
 PAYLOAD_PART = re.compile(r"payload\.\d+(?:\.(?:yaa|aar|aea))?", re.ASCII)
 MAX_REPORT_ENTRIES = 32
 
@@ -35,18 +36,18 @@ class AuditError(Exception):
 def entry_kind(filename):
     path = PurePosixPath(filename)
     name = path.name
+    is_collection = name in COLLECTION_NAMES or name in COLLECTION_DELTAS
     if path.is_relative_to(PAYLOAD_ROOT / "ecc_data"):
-        return "collection_ecc" if name in COLLECTION_NAMES | COLLECTION_DELTAS else None
-    if name in COLLECTION_DELTAS or (
-        name in COLLECTION_NAMES and path.is_relative_to(PAYLOAD_ROOT / "patches")
-    ):
+        return "collection_ecc" if is_collection else None
+    if path.is_relative_to(PAYLOAD_ROOT / "patches"):
+        return "collection_delta" if is_collection else None
+    if name in COLLECTION_DELTAS:
         return "collection_delta"
     if name in COLLECTION_NAMES:
         return "collection_file"
     if name.endswith(".bom"):
         return "bom"
-    if (path == PAYLOAD_ROOT / "data_payload" or PAYLOAD_PART.fullmatch(name)
-        or name.endswith((".yaa", ".aar", ".aea"))):
+    if path in NAMED_PAYLOADS or PAYLOAD_PART.fullmatch(name) or name.endswith((".yaa", ".aar", ".aea")):
         return "payload_archive"
     return None
 

@@ -42,9 +42,9 @@ of the Apple CDN ZIP indexed for `25G76 → 25G342` by
 On a machine with a verified local copy, run
 `python3 scripts/x86_64/audit-tahoe-ota.py --archive /path/to/intel-ota.zip`.
 The JSON lists collection files, binary deltas, error correction data, BOMs,
-and payload containers visible in the ZIP directory. A delta requires the matching base. Files
-inside payload containers and the collection selected by an installed System
-volume require separate inspection.
+and payload containers visible in the ZIP directory. A delta requires the
+matching base. Files inside payload containers and the collection selected by
+an installed System volume require separate inspection.
 
 The [full installer catalog recorded by #187](https://github.com/Personed/liXNU/actions/runs/46073430260/job/140755502992)
 lists `25G342` at 17,957,880 KiB (about 17.1 GiB). That exceeds the 14 GB of

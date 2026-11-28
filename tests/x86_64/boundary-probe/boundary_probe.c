@@ -123,12 +123,16 @@ static_assert(X86_BOUNDARY_PROBE_COOPERATIVE ==
 	      _IOW(0xb7, 2, struct x86_boundary_probe_request));
 static_assert(X86_BOUNDARY_PROBE_TASK_CONTINUATION ==
 	      _IOW(0xb7, 3, struct x86_boundary_continuation_request));
+static_assert(BP_RUN_MODE_SHUTDOWN_HALT == X86_BOUNDARY_PROBE_MODE_SHUTDOWN_HALT);
+static_assert(BP_RUN_MODE_SHUTDOWN_RESTART == X86_BOUNDARY_PROBE_MODE_SHUTDOWN_RESTART);
 
 void x86_boundary_probe_switch_stack(void *stack_top, struct bp_asm_result *result,
 				     unsigned int mode);
 long x86_boundary_probe_inner(struct bp_asm_result *result, unsigned int mode);
 extern const char x86_boundary_probe_normal_stop[];
 extern const char x86_boundary_probe_abort_stop[];
+extern const char x86_boundary_probe_shutdown_halt_stop[];
+extern const char x86_boundary_probe_shutdown_restart_stop[];
 void x86_boundary_probe_clobber_xstate(void);
 
 static int bp_read_xcr0(u64 *xcr0)
@@ -506,23 +510,42 @@ static long bp_run_on_cpu(void *arg)
 		pr_err("x86-boundary-probe: state mismatch on cpu %u mode %u\n",
 		       work->request.cpu, work->request.mode);
 		ret = -EUCLEAN;
-	} else if (work->request.mode == X86_BOUNDARY_PROBE_MODE_RETURN) {
-		if (result.status != 0)
+	} else if (work->request.mode == X86_BOUNDARY_PROBE_MODE_ABORT) {
+		if (result.status != -ECANCELED)
 			ret = -EUCLEAN;
-	} else if (result.status != -ECANCELED) {
+	} else if (result.status != 0) {
 		ret = -EUCLEAN;
 	}
 
-	expected_stop_rip = work->request.mode == X86_BOUNDARY_PROBE_MODE_RETURN ?
-		(unsigned long)x86_boundary_probe_normal_stop :
-		(unsigned long)x86_boundary_probe_abort_stop;
+	switch (work->request.mode) {
+	case X86_BOUNDARY_PROBE_MODE_RETURN:
+		expected_stop_rip = (unsigned long)x86_boundary_probe_normal_stop;
+		break;
+	case X86_BOUNDARY_PROBE_MODE_ABORT:
+		expected_stop_rip = (unsigned long)x86_boundary_probe_abort_stop;
+		break;
+	case X86_BOUNDARY_PROBE_MODE_SHUTDOWN_HALT:
+		expected_stop_rip = (unsigned long)x86_boundary_probe_shutdown_halt_stop;
+		break;
+	default:
+		expected_stop_rip = (unsigned long)x86_boundary_probe_shutdown_restart_stop;
+		break;
+	}
 	if (!ret && (result.stop_rip != expected_stop_rip ||
 		     result.stop_rsp != result.alt_entry_rsp))
 		ret = -EUCLEAN;
 	if (!ret) {
-		work->control_model.stop_reason =
-			work->request.mode == X86_BOUNDARY_PROBE_MODE_RETURN ?
-			FKI_X86_STOP_NORMAL_RETURN : FKI_X86_STOP_SOFTWARE_ABORT;
+		if (work->request.mode == X86_BOUNDARY_PROBE_MODE_RETURN) {
+			work->control_model.stop_reason = FKI_X86_STOP_NORMAL_RETURN;
+		} else if (work->request.mode == X86_BOUNDARY_PROBE_MODE_ABORT) {
+			work->control_model.stop_reason = FKI_X86_STOP_SOFTWARE_ABORT;
+		} else {
+			work->control_model.stop_reason = FKI_X86_STOP_SHUTDOWN;
+			work->control_model.stop_aux0 = FKI_X86_STOP_SHUTDOWN_HALT;
+			if (work->request.mode == X86_BOUNDARY_PROBE_MODE_SHUTDOWN_RESTART)
+				work->control_model.stop_aux1 =
+					FKI_X86_STOP_SHUTDOWN_RESTART_REQUESTED;
+		}
 		work->control_model.stop_rip = result.stop_rip;
 		work->control_model.stop_rsp = result.stop_rsp;
 		ret = fki_x86_validate_stop_report_v1(&work->control_model);
@@ -530,10 +553,10 @@ static long bp_run_on_cpu(void *arg)
 	if (!ret) {
 		ret = bp_tx_step(&tx, FKI_X86_TX_RESTORE_OK);
 		if (!ret)
-			ret = bp_tx_step(&tx, work->request.mode == X86_BOUNDARY_PROBE_MODE_RETURN ?
-					 FKI_X86_TX_FINISH : FKI_X86_TX_ABORT);
-		if (!ret && tx != (work->request.mode == X86_BOUNDARY_PROBE_MODE_RETURN ?
-				   FKI_X86_TX_COMPLETE : FKI_X86_TX_ABORTED))
+			ret = bp_tx_step(&tx, work->request.mode == X86_BOUNDARY_PROBE_MODE_ABORT ?
+					 FKI_X86_TX_ABORT : FKI_X86_TX_FINISH);
+		if (!ret && tx != (work->request.mode == X86_BOUNDARY_PROBE_MODE_ABORT ?
+				   FKI_X86_TX_ABORTED : FKI_X86_TX_COMPLETE))
 			ret = -EUCLEAN;
 	}
 
@@ -986,7 +1009,9 @@ static long bp_ioctl(struct file *file, unsigned int command, unsigned long arg)
 		return bp_run_cooperative(&request);
 	}
 	if (request.mode != X86_BOUNDARY_PROBE_MODE_RETURN &&
-	    request.mode != X86_BOUNDARY_PROBE_MODE_ABORT)
+	    request.mode != X86_BOUNDARY_PROBE_MODE_ABORT &&
+	    request.mode != X86_BOUNDARY_PROBE_MODE_SHUTDOWN_HALT &&
+	    request.mode != X86_BOUNDARY_PROBE_MODE_SHUTDOWN_RESTART)
 		return -EINVAL;
 	if (request.cpu >= nr_cpu_ids || !cpu_online(request.cpu))
 		return -EINVAL;

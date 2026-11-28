@@ -258,7 +258,7 @@ fail:
 static int run_probe_ioctl(int fd, pid_t pid, unsigned int cpu, unsigned int mode,
 			   const struct xsave_config *config)
 {
-	long expected = mode == X86_BOUNDARY_PROBE_MODE_RETURN ? 0 : -ECANCELED;
+	long expected = mode == X86_BOUNDARY_PROBE_MODE_ABORT ? -ECANCELED : 0;
 
 	return run_xstate_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_RUN, mode,
 				expected, "boundary", config);
@@ -305,6 +305,8 @@ int main(void)
 	for (cpu = 0; cpu < cpu_count; cpu++) {
 		if (run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_RETURN, &xsave) ||
 		    run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_ABORT, &xsave) ||
+		    run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_SHUTDOWN_HALT, &xsave) ||
+		    run_probe_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_MODE_SHUTDOWN_RESTART, &xsave) ||
 		    run_cooperative_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_COOP_REPLY, &xsave) ||
 		    run_cooperative_ioctl(fd, pid, cpu, X86_BOUNDARY_PROBE_COOP_TIMEOUT, &xsave))
 			return 1;
@@ -320,7 +322,7 @@ int main(void)
 		perror("close probe device");
 		return 1;
 	}
-	printf("x86 boundary probe passed: %ld CPUs, return/abort, cooperative callback reply/timeout, host state, enabled user XSAVE compared per ioctl, x87/MXCSR/YMM, Linux syscalls; task-stack continuation probe passed (xcr0=%#llx size=%zu)\n",
+	printf("x86 boundary probe passed: %ld CPUs, return/abort/shutdown, cooperative callback reply/timeout, host state, enabled user XSAVE compared per ioctl, x87/MXCSR/YMM, Linux syscalls; task-stack continuation probe passed (xcr0=%#llx size=%zu)\n",
 	       cpu_count, (unsigned long long)xsave.mask, xsave.size);
 	return 0;
 }

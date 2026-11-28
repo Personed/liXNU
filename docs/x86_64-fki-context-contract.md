@@ -74,6 +74,14 @@ The initial fixed control block must represent the following state explicitly. N
 
 The exact representation of CR3 must distinguish the page-table root physical address from PCID low bits. The implementation must reject a nonzero PCID when PCIDE is disabled or unsupported, reserved control-register bits, non-canonical long-mode addresses, invalid fixed RFLAGS bits, malformed XSAVE metadata, and combinations inconsistent with the selected profile.
 
+### Version-1 validation-only control block
+
+`fki-ko/fki_x86_64_context.h` fixes the first binary control block at 512 bytes, with ABI version 1 and control-block version 1. Static assertions pin the offsets of the register, control-state, XSAVE, stop-reporting, and reserved groups. The accompanying userspace fixtures in `tests/x86_64/test-fki-x86-context.c` exercise acceptance and rejection without loading either kernel module.
+
+Version 1 accepts only `HOST_BOUND_SHIM`/`ENTER`; `XNU_PREBOOT_LONG`, `XNU_COLD_BOOT`, and `RESUME` are rejected as unsupported. It describes a four-level-paging Linux long-mode host boundary: LA57, LAM, memory-encryption CR3 bits, interrupts, trap flag, direction flag, IOPL, virtual-8086 mode, nested task state, alignment-check control, and virtual interrupt flags are outside this profile. XSAVE version 1 accepts only the standard format and the x87/SSE/AVX feature subset; later XCR0 features require an explicitly designed extension. Boot payload and stop-reporting fields are output/future state and must be zero in validation input. Undefined metadata flags, feature bits, stop-mask bits, and reserved bytes must also be zero.
+
+Passing this validator means only that the fixed state object is internally well formed for the limited profile. It does not arm a transaction, prove equality with live host registers, establish ownership of the referenced GDT/IDT/XSAVE/stack/CR3 memory, or permit foreign execution. A future transaction implementation must perform those live-state, ownership, pinning, restoration, and abort checks before using the object.
+
 ### XSAVE policy
 
 The XSAVE area is out-of-line and variable length. Version 1 accepts only the architecturally defined standard format; compacted and supervisor-only formats are rejected until their use is designed. The recorded `xstate_bv` must be a subset of XCR0, XCR0 must be supported by the host CPU, and unsupported extended features must not be enabled merely because a hypervisor or CPUID leaf exposes them.

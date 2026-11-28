@@ -26,6 +26,8 @@ jobs:
           echo "KDIR=/usr/src/$pkg" >> "$GITHUB_ENV"
       - name: Check CR3 decoding and root placement fixtures
         run: bash tests/x86_64/test-fki-cr3.sh
+      - name: Check x86 context control validation fixtures
+        run: bash tests/x86_64/test-fki-x86-context.sh
       - name: Run boundary probe and check kernel release rejection in QEMU TCG
         run: |
           release=$(cat "$KDIR/include/config/kernel.release")

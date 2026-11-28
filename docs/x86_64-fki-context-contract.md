@@ -157,6 +157,8 @@ A page-fault stop records the vector, error code, CR2, foreign RIP/RSP/RFLAGS, a
 
 The architectural register/control fields of the control block are the in/out foreign-state area: a production stop capture may overwrite them with terminal foreign state such as RFLAGS and active CR3/PCID. Because those values are foreign output rather than host input, they are not rechecked by the entry validator or by the metadata-only stop-report helper. `stop_rip` and `stop_rsp` preserve the instruction/stack pointer of the stop event itself so a later fault-resolution design can distinguish the original stop location from any adjusted continuation state. This normative interpretation does not implement that capture.
 
+`SOFTWARE_ABORT` means a controlled abort after foreign execution has conceptually started, so the foreign stop location must still be captured. Setup or validation failures before entry are not stop reports at all; they remain input/transaction errors and must not be encoded as software-abort foreign state. Likewise, these x86 kernel-boundary values are not the legacy user-context `FKI_STOP_*` values and must not be reinterpreted through that separate interface without an explicit mapping contract.
+
 The defined v1 report reasons and field rules are:
 
 | `stop_reason` | Required report fields | Prohibited fields | Vector/error/CR2 rules | `aux` rules |

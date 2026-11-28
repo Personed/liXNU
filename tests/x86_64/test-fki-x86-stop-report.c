@@ -109,6 +109,8 @@ static void test_valid_reports(void)
 	state.stop_rsp = 0;
 	state.stop_aux0 = FKI_X86_STOP_SHUTDOWN_HALT;
 	assert(VALIDATE_STOP(&state) == 0);
+	state.stop_aux1 = FKI_X86_STOP_SHUTDOWN_RESTART_REQUESTED;
+	assert(VALIDATE_STOP(&state) == 0);
 	state.operation = FKI_X86_CONTEXT_OP_RESUME;
 	assert(VALIDATE_STOP(&state) == 0);
 	state = valid_report(FKI_X86_STOP_SHUTDOWN);
@@ -264,6 +266,10 @@ static void test_gp_rejections(void)
 	assert(VALIDATE_STOP(&state) == -EINVAL);
 	state = valid_report(FKI_X86_STOP_GENERAL_PROTECTION);
 	state.stop_vector = FKI_X86_STOP_VECTOR_GENERAL_PROTECTION;
+	state.stop_aux1 = 1;
+	assert(VALIDATE_STOP(&state) == -EINVAL);
+	state = valid_report(FKI_X86_STOP_GENERAL_PROTECTION);
+	state.stop_vector = FKI_X86_STOP_VECTOR_GENERAL_PROTECTION;
 	state.stop_rip = 0;
 	assert(VALIDATE_STOP(&state) == -ERANGE);
 	state = valid_report(FKI_X86_STOP_GENERAL_PROTECTION);
@@ -294,7 +300,15 @@ static void test_shutdown_rejections(void)
 	assert(VALIDATE_STOP(&state) == -EINVAL);
 	state = valid_report(FKI_X86_STOP_SHUTDOWN);
 	state.stop_aux0 = FKI_X86_STOP_SHUTDOWN_HALT;
-	state.stop_aux1 = 1;
+	state.stop_aux1 = FKI_X86_STOP_SHUTDOWN_RESTART_REQUESTED << 1;
+	assert(VALIDATE_STOP(&state) == -EINVAL);
+	state = valid_report(FKI_X86_STOP_SHUTDOWN);
+	state.stop_aux0 = FKI_X86_STOP_SHUTDOWN_TRIPLE_FAULT;
+	state.stop_aux1 = FKI_X86_STOP_SHUTDOWN_RESTART_REQUESTED;
+	assert(VALIDATE_STOP(&state) == -EINVAL);
+	state = valid_report(FKI_X86_STOP_SHUTDOWN);
+	state.stop_aux0 = FKI_X86_STOP_SHUTDOWN_UNRECOVERABLE;
+	state.stop_aux1 = FKI_X86_STOP_SHUTDOWN_RESTART_REQUESTED;
 	assert(VALIDATE_STOP(&state) == -EINVAL);
 	state = valid_report(FKI_X86_STOP_SHUTDOWN);
 	state.stop_aux0 = FKI_X86_STOP_SHUTDOWN_HALT;

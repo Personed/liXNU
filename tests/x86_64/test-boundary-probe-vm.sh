@@ -213,7 +213,7 @@ run_probe_vm() {
 }
 
 if [ "$QEMU_TCG_XSAVE_OK" -eq 1 ]; then
-  run_probe_vm tcg max "$STAGE/tcg.log"
+  run_probe_vm tcg max,la57=off "$STAGE/tcg.log"
 fi
 if [ "$KVM_USABLE" -eq 1 ]; then
   run_probe_vm kvm host "$STAGE/kvm.log"

@@ -362,6 +362,8 @@ static int bp_task_continuation_validate_model(struct bp_continuation_test *test
 					     control, host);
 	if (ret)
 		return ret;
+	control->operation = READ_ONCE(test->phase) == BP_CONT_FIRST_ENTRY ?
+		FKI_X86_CONTEXT_OP_ENTER : FKI_X86_CONTEXT_OP_RESUME;
 	ret = bp_task_continuation_phys_range(rip, 1, &text_phys);
 	if (ret)
 		return ret;

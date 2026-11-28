@@ -78,7 +78,11 @@ static void test_valid_reports(void)
 
 	state = valid_report(FKI_X86_STOP_NORMAL_RETURN);
 	assert(VALIDATE_STOP(&state) == 0);
+	state.operation = FKI_X86_CONTEXT_OP_RESUME;
+	assert(VALIDATE_STOP(&state) == 0);
 	state = valid_report(FKI_X86_STOP_SOFTWARE_ABORT);
+	assert(VALIDATE_STOP(&state) == 0);
+	state.operation = FKI_X86_CONTEXT_OP_RESUME;
 	assert(VALIDATE_STOP(&state) == 0);
 
 	state = valid_report(FKI_X86_STOP_PAGE_FAULT);
@@ -86,6 +90,9 @@ static void test_valid_reports(void)
 	state.stop_error_code = 0x7f | 0x8000;
 	state.stop_cr2 = HIGH_CANONICAL + 0x30000;
 	assert(VALIDATE_STOP(&state) == 0);
+	state.operation = FKI_X86_CONTEXT_OP_RESUME;
+	assert(VALIDATE_STOP(&state) == 0);
+	state.operation = FKI_X86_CONTEXT_OP_ENTER;
 	state.stop_error_code = 0;
 	state.stop_cr2 = 0;
 	assert(VALIDATE_STOP(&state) == 0);
@@ -94,11 +101,15 @@ static void test_valid_reports(void)
 	state.stop_vector = FKI_X86_STOP_VECTOR_GENERAL_PROTECTION;
 	state.stop_error_code = 0xfff8;
 	assert(VALIDATE_STOP(&state) == 0);
+	state.operation = FKI_X86_CONTEXT_OP_RESUME;
+	assert(VALIDATE_STOP(&state) == 0);
 
 	state = valid_report(FKI_X86_STOP_SHUTDOWN);
 	state.stop_rip = 0;
 	state.stop_rsp = 0;
 	state.stop_aux0 = FKI_X86_STOP_SHUTDOWN_HALT;
+	assert(VALIDATE_STOP(&state) == 0);
+	state.operation = FKI_X86_CONTEXT_OP_RESUME;
 	assert(VALIDATE_STOP(&state) == 0);
 	state = valid_report(FKI_X86_STOP_SHUTDOWN);
 	state.stop_aux0 = FKI_X86_STOP_SHUTDOWN_TRIPLE_FAULT;
@@ -130,7 +141,9 @@ static void test_metadata_rejections(void)
 	state.profile = FKI_X86_CONTEXT_PROFILE_XNU_PREBOOT_LONG;
 	assert(VALIDATE_STOP(&state) == -EOPNOTSUPP);
 	state = valid_report(FKI_X86_STOP_NORMAL_RETURN);
-	state.operation = FKI_X86_CONTEXT_OP_RESUME;
+	state.operation = 0;
+	assert(VALIDATE_STOP(&state) == -EOPNOTSUPP);
+	state.operation = 3;
 	assert(VALIDATE_STOP(&state) == -EOPNOTSUPP);
 	state = valid_report(FKI_X86_STOP_NORMAL_RETURN);
 	state.stop_reason = 0;

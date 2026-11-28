@@ -20,9 +20,11 @@ typedef uint32_t fki_u32;
  *
  * This is a validation-only host/foreign boundary description. It does not
  * create a transaction, enter foreign code, or expose an FKI capability.
- * Version 1 validates only HOST_BOUND_SHIM/ENTER input shaped like a
- * Linux long-mode host context; XNU profiles and resume transactions are
- * rejected until their ownership semantics are implemented.
+ * Version 1 validates HOST_BOUND_SHIM/ENTER and HOST_BOUND_SHIM/RESUME
+ * input shaped like a Linux long-mode host context; XNU profiles are
+ * rejected until their ownership semantics are implemented. RESUME validation
+ * is structural only and does not prove continuation identity or exactly-once
+ * ownership.
  */
 #define FKI_X86_CONTEXT_ABI_VERSION 1U
 #define FKI_X86_CONTEXT_CONTROL_VERSION 1U
@@ -392,7 +394,8 @@ static inline int fki_x86_context_validate_host_bound_shim(
 	if (state->state_size != FKI_X86_CONTEXT_V1_BYTES)
 		return -EINVAL;
 	if (state->profile != FKI_X86_CONTEXT_PROFILE_HOST_BOUND_SHIM ||
-	    state->operation != FKI_X86_CONTEXT_OP_ENTER)
+	    (state->operation != FKI_X86_CONTEXT_OP_ENTER &&
+	     state->operation != FKI_X86_CONTEXT_OP_RESUME))
 		return -EOPNOTSUPP;
 	if (state->flags || state->stop_mask || state->feature_bits ||
 	    state->boot_address || state->boot_bytes || state->boot_identity ||
@@ -461,8 +464,8 @@ static inline int fki_x86_stop_no_vector_data(
 /*
  * Validate only the terminal stop-report metadata in a fixed v1 control
  * block. This helper is for synthetic output records: it does not validate
- * the entry input, prove that the captured foreign state is safe, or permit
- * RESUME. ENTER input validation continues to require all stop fields zero.
+ * the entry input or prove that the captured foreign state is safe. ENTER
+ * and RESUME input validation continues to require all stop fields zero.
  */
 static inline int fki_x86_validate_stop_report_v1(
 	const struct fki_x86_context_control_v1 *state)
@@ -475,7 +478,8 @@ static inline int fki_x86_validate_stop_report_v1(
 	if (state->state_size != FKI_X86_CONTEXT_V1_BYTES)
 		return -EINVAL;
 	if (state->profile != FKI_X86_CONTEXT_PROFILE_HOST_BOUND_SHIM ||
-	    state->operation != FKI_X86_CONTEXT_OP_ENTER)
+	    (state->operation != FKI_X86_CONTEXT_OP_ENTER &&
+	     state->operation != FKI_X86_CONTEXT_OP_RESUME))
 		return -EOPNOTSUPP;
 	if (state->flags || state->stop_mask || state->feature_bits ||
 	    state->boot_address || state->boot_bytes || state->boot_identity ||

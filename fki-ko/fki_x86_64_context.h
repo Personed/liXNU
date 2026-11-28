@@ -119,6 +119,29 @@ typedef uint32_t fki_u32;
 #define FKI_X86_XSAVE_AVX_MIN_BYTES 832ULL
 #define FKI_X86_XSAVE_ALIGNMENT 64ULL
 
+/*
+ * Version-1 synthetic stop-report reasons. These values describe terminal
+ * output records only; HOST_BOUND_SHIM/ENTER input still requires every
+ * stop_* field to be zero.
+ */
+#define FKI_X86_STOP_NORMAL_RETURN 1U
+#define FKI_X86_STOP_SOFTWARE_ABORT 2U
+#define FKI_X86_STOP_PAGE_FAULT 3U
+#define FKI_X86_STOP_GENERAL_PROTECTION 4U
+#define FKI_X86_STOP_SHUTDOWN 5U
+
+#define FKI_X86_STOP_VECTOR_GENERAL_PROTECTION 13U
+#define FKI_X86_STOP_VECTOR_PAGE_FAULT 14U
+
+#define FKI_X86_STOP_SHUTDOWN_HALT 1ULL
+#define FKI_X86_STOP_SHUTDOWN_TRIPLE_FAULT 2ULL
+#define FKI_X86_STOP_SHUTDOWN_UNRECOVERABLE 3ULL
+
+/* PF allows P/W/U/R/I/PK/SS and the architectural SGX bit; the rest is reserved. */
+#define FKI_X86_STOP_PF_ERROR_MASK 0x807fULL
+/* #GP uses the architectural 16-bit selector error-code form. */
+#define FKI_X86_STOP_GP_ERROR_MASK 0xffffULL
+
 struct fki_x86_host_constraints {
 	fki_u64 cr4_allowed;
 	fki_u64 efer_allowed;
@@ -418,4 +441,80 @@ static inline int fki_x86_context_validate_host_bound_shim(
 	if (err)
 		return err;
 	return fki_x86_validate_xsave_v1(state, host);
+}
+
+static inline bool fki_x86_stop_state_valid(const struct fki_x86_context_control_v1 *state)
+{
+	return state->stop_rip && state->stop_rsp &&
+	       fki_x86_canonical48(state->stop_rip) &&
+	       fki_x86_canonical48(state->stop_rsp);
+}
+
+static inline int fki_x86_stop_no_vector_data(
+	const struct fki_x86_context_control_v1 *state)
+{
+	if (state->stop_vector || state->stop_error_code || state->stop_cr2)
+		return -EINVAL;
+	return fki_x86_stop_state_valid(state) ? 0 : -ERANGE;
+}
+
+/*
+ * Validate only the terminal stop-report metadata in a fixed v1 control
+ * block. This helper is for synthetic output records: it does not validate
+ * the entry input, prove that the captured foreign state is safe, or permit
+ * RESUME. ENTER input validation continues to require all stop fields zero.
+ */
+static inline int fki_x86_validate_stop_report_v1(
+	const struct fki_x86_context_control_v1 *state)
+{
+	if (!state || (unsigned long)state & 7)
+		return -EINVAL;
+	if (state->abi_version != FKI_X86_CONTEXT_ABI_VERSION ||
+	    state->control_version != FKI_X86_CONTEXT_CONTROL_VERSION)
+		return -EOPNOTSUPP;
+	if (state->state_size != FKI_X86_CONTEXT_V1_BYTES)
+		return -EINVAL;
+	if (state->profile != FKI_X86_CONTEXT_PROFILE_HOST_BOUND_SHIM ||
+	    state->operation != FKI_X86_CONTEXT_OP_ENTER)
+		return -EOPNOTSUPP;
+	if (state->flags || state->stop_mask || state->feature_bits ||
+	    state->boot_address || state->boot_bytes || state->boot_identity ||
+	    !fki_x86_zeroed(state->reserved,
+			    sizeof(state->reserved) / sizeof(state->reserved[0])))
+		return -EINVAL;
+
+	switch (state->stop_reason) {
+	case FKI_X86_STOP_NORMAL_RETURN:
+	case FKI_X86_STOP_SOFTWARE_ABORT:
+		if (state->stop_aux0 || state->stop_aux1)
+			return -EINVAL;
+		return fki_x86_stop_no_vector_data(state);
+	case FKI_X86_STOP_PAGE_FAULT:
+		if (state->stop_vector != FKI_X86_STOP_VECTOR_PAGE_FAULT ||
+		    (state->stop_error_code & ~FKI_X86_STOP_PF_ERROR_MASK) ||
+		    state->stop_aux0 || state->stop_aux1)
+			return -EINVAL;
+		if (!fki_x86_canonical48(state->stop_cr2))
+			return -ERANGE;
+		return fki_x86_stop_state_valid(state) ? 0 : -ERANGE;
+	case FKI_X86_STOP_GENERAL_PROTECTION:
+		if (state->stop_vector != FKI_X86_STOP_VECTOR_GENERAL_PROTECTION ||
+		    (state->stop_error_code & ~FKI_X86_STOP_GP_ERROR_MASK) ||
+		    state->stop_cr2 || state->stop_aux0 || state->stop_aux1)
+			return -EINVAL;
+		return fki_x86_stop_state_valid(state) ? 0 : -ERANGE;
+	case FKI_X86_STOP_SHUTDOWN:
+		if (state->stop_vector || state->stop_error_code ||
+		    state->stop_cr2 || state->stop_aux1 ||
+		    state->stop_aux0 < FKI_X86_STOP_SHUTDOWN_HALT ||
+		    state->stop_aux0 > FKI_X86_STOP_SHUTDOWN_UNRECOVERABLE)
+			return -EINVAL;
+		if ((state->stop_rip || state->stop_rsp) &&
+		    (!state->stop_rip || !state->stop_rsp ||
+		     !fki_x86_stop_state_valid(state)))
+			return -ERANGE;
+		return 0;
+	default:
+		return -EINVAL;
+	}
 }

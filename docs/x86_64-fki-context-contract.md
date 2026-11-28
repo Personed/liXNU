@@ -151,6 +151,28 @@ The machine-readable stop taxonomy must distinguish at least:
 
 A page-fault stop records the vector, error code, CR2, foreign RIP/RSP/RFLAGS, active CR3/PCID, and the translation-ownership class if known. A syscall stop must not be conflated with a Linux syscall merely because the same architectural instruction is used; XNU syscall semantics are a separate contract.
 
+### Version-1 synthetic stop-report shape
+
+`fki-ko/fki_x86_64_context.h` defines a small validation-only stop taxonomy for the fields already present in the fixed v1 control block. The helper `fki_x86_validate_stop_report_v1()` validates terminal output records only. It does not validate an entry input, authorize a resume operation, prove that the captured foreign state is safe or resumable, implement fault/shutdown handling, or change the fixed layout. `HOST_BOUND_SHIM`/`ENTER` input validation therefore continues to require every `stop_*` field to be zero; a report with `operation = RESUME` is rejected while resume input remains outside v1.
+
+The architectural register/control fields of the control block are the in/out foreign-state area: a production stop capture may overwrite them with terminal foreign state such as RFLAGS and active CR3/PCID. Because those values are foreign output rather than host input, they are not rechecked by the entry validator or by the metadata-only stop-report helper. `stop_rip` and `stop_rsp` preserve the instruction/stack pointer of the stop event itself so a later fault-resolution design can distinguish the original stop location from any adjusted continuation state. This normative interpretation does not implement that capture.
+
+`SOFTWARE_ABORT` means a controlled abort after foreign execution has conceptually started, so the foreign stop location must still be captured. Setup or validation failures before entry are not stop reports at all; they remain input/transaction errors and must not be encoded as software-abort foreign state. Likewise, these x86 kernel-boundary values are not the legacy user-context `FKI_STOP_*` values and must not be reinterpreted through that separate interface without an explicit mapping contract.
+
+The defined v1 report reasons and field rules are:
+
+| `stop_reason` | Required report fields | Prohibited fields | Vector/error/CR2 rules | `aux` rules |
+| --- | --- | --- | --- | --- |
+| `FKI_X86_STOP_NORMAL_RETURN` | nonzero canonical `stop_rip`/`stop_rsp` | `stop_vector`, `stop_error_code`, `stop_cr2`, `stop_aux0`, `stop_aux1` | no architectural vector, error code, or CR2 | both zero |
+| `FKI_X86_STOP_SOFTWARE_ABORT` | nonzero canonical `stop_rip`/`stop_rsp` | same as normal return | no architectural vector, error code, or CR2 | both zero |
+| `FKI_X86_STOP_PAGE_FAULT` | vector 14, canonical CR2, nonzero canonical `stop_rip`/`stop_rsp` | `stop_aux0`, `stop_aux1` | error code may contain only architectural PF bits P/W/U/R/I/PK/SS plus the SGX bit; CR2 is validated for 48-bit canonicity and may be zero | both zero; translation ownership remains undocumented and must not be invented in v1 |
+| `FKI_X86_STOP_GENERAL_PROTECTION` | vector 13, architectural 16-bit selector-form error code, nonzero canonical `stop_rip`/`stop_rsp` | `stop_cr2`, `stop_aux0`, `stop_aux1` | error-code bits above bit 15 are prohibited; CR2 is not meaningful and must be zero | both zero |
+| `FKI_X86_STOP_SHUTDOWN` | `stop_aux0` subtype | `stop_vector`, `stop_error_code`, `stop_cr2`, `stop_aux1` | no architectural vector, error code, or CR2 | `stop_aux0` is exactly one of `FKI_X86_STOP_SHUTDOWN_HALT`, `FKI_X86_STOP_SHUTDOWN_TRIPLE_FAULT`, or `FKI_X86_STOP_SHUTDOWN_UNRECOVERABLE`; `stop_aux1` is zero |
+
+For `NORMAL_RETURN`, `SOFTWARE_ABORT`, `PAGE_FAULT`, and `GENERAL_PROTECTION`, `stop_rip` and `stop_rsp` are mandatory captured values and must be nonzero and canonical in the v1 kernel profile. That is representation validation only; it does not prove that the captured foreign state is safe or resumable. For `SHUTDOWN`, the pair is optional because a halt, triple-fault equivalent, or unrecoverable foreign state may not have a trustworthy capture. If either shutdown field is present, both must be nonzero and canonical; both zero means omitted.
+
+All other stop causes in the broader taxonomy—syscall boundaries, yield/host calls, external interrupts, NMI/machine check, generic synchronous exceptions other than #GP, host invariant violations, and detailed translation-fault ownership—remain unspecified in v1 and must not be encoded by repurposing these values or `aux` fields. `stop_mask` remains zero in v1 input. Extending the taxonomy requires an explicit versioned contract decision, not silent use of reserved bits.
+
 ## Linux calls that can sleep
 
 The x86_64 branch of `fki_arch_linux_runs()` can switch to a single alternate stack for the current CPU. The common FKI calls include `fki_yield()` and `fki_idle_until()`, which enable preemption, and file and service calls that can block. A per-CPU stack can still hold a suspended callback when another task runs on that CPU. Pinning the task to that CPU does not prevent the second task from running. That stack also lies outside the task stack Linux uses for normal unwinding.
@@ -215,7 +237,7 @@ The implementation must add automated fixtures before exposing a capability:
 
 1. fixed-layout and reserved-byte tests for every versioned structure;
 2. invalid-state rejection fixtures for control registers, descriptor state, RFLAGS, XSAVE metadata, PCID, memory-reference ownership/overlap, and inconsistent mode combinations;
-3. transaction-state machine tests covering setup failure, normal return, resume, and abort;
+3. transaction-state machine tests covering setup failure, normal return, resume, abort, and synthetic terminal stop-report shape;
 4. disposable-VM host-preservation tests extending the boundary probe to entry, faults, shutdown, and abort;
 5. Intel/AMD feature-matrix tests with explicit unsupported-feature failures;
 6. artifact-specific source/configuration binding before any authentic XNU entry profile is enabled.

@@ -40,6 +40,8 @@ jobs:
         run: bash tests/x86_64/test-fki-x86-syscall-ownership.sh
       - name: Validate x86 control/memory ownership matrix fixtures
         run: bash tests/x86_64/test-fki-x86-control-memory-ownership.sh
+      - name: Validate x86 CPU-quiescence decision fixtures
+        run: bash tests/x86_64/test-fki-x86-cpu-quiescence-decision.sh
       - name: Run boundary probe and check kernel release rejection in QEMU TCG
         run: |
           release=$(cat "$KDIR/include/config/kernel.release")

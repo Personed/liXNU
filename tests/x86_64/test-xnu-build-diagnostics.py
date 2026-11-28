@@ -158,6 +158,19 @@ def test_interleaved_linker_fragment_does_not_end_symbol_context() -> None:
     ], output
 
 
+def test_last_symbol_block_limits_interleaved_fragment_reading() -> None:
+    def bounded_input():
+        for index in range(MODULE.MAX_DIAGNOSTICS - 1):
+            yield f"/src/file{index}.c:1:2: error: synthetic failure"
+        yield "Undefined symbols for architecture x86_64:"
+        for _ in range(MODULE.LINKER_CONTEXT_LINES):
+            yield "    ld: interleaved fragment"
+        raise AssertionError("summary read beyond the final context scan limit")
+
+    output = MODULE.summarize(bounded_input())
+    assert len(output) == MODULE.MAX_DIAGNOSTICS, output
+
+
 if __name__ == "__main__":
     test_symbol_context_does_not_hide_terminal_errors()
     test_only_main_diagnostics_consume_the_limit()
@@ -173,4 +186,5 @@ if __name__ == "__main__":
     test_partial_darwin_link_error_without_clang_confirmation()
     test_interleaved_prefix_does_not_hide_compiler_error()
     test_interleaved_linker_fragment_does_not_end_symbol_context()
+    test_last_symbol_block_limits_interleaved_fragment_reading()
     print("XNU diagnostic summary tests passed.")

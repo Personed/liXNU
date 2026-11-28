@@ -71,10 +71,11 @@ def summarize(lines: Iterable[str]) -> list[str]:
 
         if line.startswith("Undefined symbols"):
             context_count = 0
+            context_index = index
             while True:
-                if (
-                    diagnostics >= MAX_DIAGNOSTICS
-                    and context_count >= MAX_UNDEFINED_SYMBOL_CONTEXT
+                if diagnostics >= MAX_DIAGNOSTICS and (
+                    context_count >= MAX_UNDEFINED_SYMBOL_CONTEXT
+                    or context_index - index >= LINKER_CONTEXT_LINES
                 ):
                     break
                 try:

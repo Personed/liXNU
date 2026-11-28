@@ -3,6 +3,7 @@
 
 import hashlib
 from pathlib import Path
+import plistlib
 import runpy
 import stat
 import subprocess
@@ -16,6 +17,34 @@ AUDIT = runpy.run_path(str(ROOT / "scripts/x86_64/audit-tahoe-ota.py"))
 
 
 class OtaInventoryTests(unittest.TestCase):
+    def test_installed_delta_requires_the_matching_base_digest(self):
+        base = b"prerequisite boot collection"
+        header = AUDIT["DELTA_HEADER"].pack(
+            b"BXDIFF50", 1, 128, 1, 1, b"r" * 20, 1, hashlib.sha1(base).digest(),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plist = root / "System/Library/CoreServices/SystemVersion.plist"
+            collection = root / AUDIT["SYSTEM_BOOTKC"]
+            plist.parent.mkdir(parents=True)
+            collection.parent.mkdir(parents=True)
+            path = root / "fixture.zip"
+            with zipfile.ZipFile(path, "x") as archive:
+                archive.writestr(AUDIT["SYSTEM_BOOTKC_DELTA"], header + b"abc")
+            plist.write_bytes(plistlib.dumps({"ProductBuildVersion": "25G83"}))
+            with zipfile.ZipFile(path) as archive:
+                result = AUDIT["probe_delta_base"](archive, root)
+                self.assertEqual(result["base_status"], "build_mismatch")
+                plist.write_bytes(plistlib.dumps({"ProductBuildVersion": "25G76"}))
+                self.assertEqual(AUDIT["probe_delta_base"](archive, root)["base_status"], "collection_unavailable")
+                collection.write_bytes(base + b"x")
+                self.assertEqual(AUDIT["probe_delta_base"](archive, root)["base_status"], "hash_mismatch")
+                collection.write_bytes(base)
+                result = AUDIT["probe_delta_base"](archive, root)
+                self.assertEqual(result["base_status"], "hash_match")
+                self.assertEqual(result["declared_result_sha1"], (b"r" * 20).hex())
+                self.assertEqual(collection.read_bytes(), base)
+
     def test_inspect_only_the_direct_boot_collection(self):
         fixtures = runpy.run_path(str(ROOT / "tests/x86_64/test-fileset-metadata.py"))
         image = bytes(fixtures["make_segmented_fileset"]()) + b"xnu-12377.161.15.701.48~2/RELEASE_X86_64\0"

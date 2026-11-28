@@ -38,6 +38,7 @@ jobs:
           set -o pipefail
           python3 scripts/x86_64/audit-tahoe-ota.py --download \
             --fileset-inspector "$RUNNER_TEMP/xnu-fileset-metadata" \
+            --base-system-root / \
             | tee "$RUNNER_TEMP/tahoe-intel-ota.json"
       - uses: actions/upload-artifact@v4
         if: ${{ always() }}

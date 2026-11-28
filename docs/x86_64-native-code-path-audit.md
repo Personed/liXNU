@@ -64,6 +64,11 @@ Reproduce both steps from the checkout with a local copy of the OTA:
 )
 ```
 
+With a local System volume from `25G76`, add `--base-system-root /path/to/volume`
+to compare its BootKC with the exact base digest declared by the installed
+System delta. CI tries this read-only comparison against its System volume.
+The report records eligibility as a delta base. Reconstruction is a later step.
+
 The [full installer catalog recorded by #187](https://github.com/Personed/liXNU/actions/runs/46073430260/job/140755502992)
 lists `25G342` at 17,957,880 KiB (about 17.1 GiB). That exceeds the 14 GB of
 SSD documented for the [standard Intel runner](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).

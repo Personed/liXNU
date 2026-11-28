@@ -8,10 +8,13 @@ import json
 import mmap
 import os
 from pathlib import Path, PurePosixPath
+import plistlib
 import re
 import stat
+import struct
 import subprocess
 import tempfile
+from xml.parsers.expat import ExpatError
 import zipfile
 
 
@@ -24,6 +27,10 @@ OTA_BYTES = 1461006831
 OTA_SHA256 = "b7b97ed3337af7408879da969964328f6d78282ab837333d1cc2f0507f4019a4"
 BOOT_MEMBER = "AssetData/boot/System/Library/KernelCollections/BootKernelExtensions.kc"
 BOOT_MEMBER_BYTES = 67_600_384
+SYSTEM_BOOTKC = "System/Library/KernelCollections/BootKernelExtensions.kc"
+SYSTEM_BOOTKC_DELTA = f"AssetData/payloadv2/patches/{SYSTEM_BOOTKC}"
+DELTA_HEADER = struct.Struct("<8sQQQQ20sQ20s")
+PREREQUISITE_BUILD = "25G76"
 XNU_RELEASE_PATTERN = re.compile(rb"xnu-([0-9]+(?:\.[0-9]+){2,}(?:~[0-9]+)?)/RELEASE_X86_64\b")
 COLLECTION_NAMES = {"BootKernelExtensions.kc", "SystemKernelExtensions.kc"}
 COLLECTION_DELTAS = {f"{name}.bxdiff" for name in COLLECTION_NAMES}
@@ -111,7 +118,68 @@ def inspect_boot_collection(archive, inspector, report, expected_size=BOOT_MEMBE
             raise AuditError("fileset inspector did not accept an Intel kernel with segments")
 
 
-def inspect(path, report, expected_size=OTA_BYTES, expected_sha256=OTA_SHA256, inspector=None):
+def probe_delta_base(archive, root):
+    """Compare the OTA delta's declared source digest with a local System volume."""
+    matches = [entry for entry in archive.infolist() if entry.filename == SYSTEM_BOOTKC_DELTA]
+    if len(matches) != 1:
+        raise AuditError("expected exactly one installed-System BootKC delta")
+    with archive.open(matches[0]) as delta:
+        header = delta.read(DELTA_HEADER.size)
+    if len(header) != DELTA_HEADER.size:
+        raise AuditError("truncated OTA boot collection delta header")
+    magic, version, size, control, extra, result_sha1, diff, base_sha1 = DELTA_HEADER.unpack(header)
+    if magic != b"BXDIFF50" or not 0 < size <= 1 << 30:
+        raise AuditError("unsupported OTA boot collection delta header")
+    if control + diff + extra > matches[0].file_size - DELTA_HEADER.size:
+        raise AuditError("OTA boot collection delta streams exceed the member")
+
+    result = {"path": SYSTEM_BOOTKC_DELTA, "header_version": version,
+              "declared_result_bytes": size, "declared_result_sha1": result_sha1.hex()}
+    if control == 0:
+        result["base_status"] = "full_replacement"
+        return result
+    result["declared_base_sha1"] = base_sha1.hex()
+    try:
+        with (root / "System/Library/CoreServices/SystemVersion.plist").open("rb") as source:
+            data = source.read(1 << 20)
+            if source.read(1):
+                raise ValueError("SystemVersion.plist exceeds size limit")
+        product = plistlib.loads(data)
+        build = product.get("ProductBuildVersion") if isinstance(product, dict) else None
+        result["local_build"] = build if isinstance(build, str) else None
+    except (OSError, ValueError, ExpatError, RecursionError):
+        result["base_status"] = "build_unavailable"
+        return result
+    if result["local_build"] != PREREQUISITE_BUILD:
+        result["base_status"] = "build_mismatch"
+        return result
+
+    try:
+        fd = os.open(root / SYSTEM_BOOTKC, os.O_RDONLY | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as source:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= 1 << 30:
+                raise OSError("local BootKC is not a bounded regular file")
+            digest = hashlib.sha1()
+            remaining = info.st_size
+            while remaining:
+                chunk = source.read(min(remaining, 1 << 20))
+                if not chunk:
+                    raise OSError("local BootKC was truncated")
+                digest.update(chunk)
+                remaining -= len(chunk)
+            end = os.fstat(fd)
+            if (info.st_size, info.st_mtime_ns, info.st_ctime_ns) != (end.st_size, end.st_mtime_ns, end.st_ctime_ns):
+                raise OSError("local BootKC changed during hashing")
+    except OSError:
+        result["base_status"] = "collection_unavailable"
+        return result
+    result["local_base_sha1"] = digest.hexdigest()
+    result["base_status"] = "hash_match" if digest.digest() == base_sha1 else "hash_mismatch"
+    return result
+
+
+def inspect(path, report, expected_size=OTA_BYTES, expected_sha256=OTA_SHA256, inspector=None, base_root=None):
     fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as source:
         # Verify the pinned object before asking zipfile to read its directory.
@@ -144,6 +212,12 @@ def inspect(path, report, expected_size=OTA_BYTES, expected_sha256=OTA_SHA256, i
                 except (AuditError, OSError, subprocess.SubprocessError, ValueError, zipfile.BadZipFile) as error:
                     message = str(error) if isinstance(error, AuditError) else "unable to inspect the OTA boot member"
                     result["ota_boot_collection"]["error"] = message
+            if base_root is not None:
+                try:
+                    result["installed_boot_delta"] = probe_delta_base(archive, base_root)
+                except (AuditError, OSError, zipfile.BadZipFile) as error:
+                    message = str(error) if isinstance(error, AuditError) else "unable to read the OTA delta header"
+                    result["installed_boot_delta"] = {"base_status": "delta_unavailable", "error": message}
         after = os.fstat(fd)
         if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
             after.st_size, after.st_mtime_ns, after.st_ctime_ns
@@ -173,12 +247,14 @@ def main():
     source.add_argument("--download", action="store_true", help="download the pinned ZIP to a temporary directory")
     parser.add_argument("--fileset-inspector", type=Path,
                         help="also inspect the OTA boot member with the compiled xnu-fileset-metadata helper")
+    parser.add_argument("--base-system-root", type=Path,
+                        help="compare the local System volume with the installed BootKC delta's base digest")
     args = parser.parse_args()
     inspector = args.fileset_inspector.resolve() if args.fileset_inspector is not None else None
 
     report = {
         "schema_version": 1,
-        "catalog_prerequisite_build": "25G76",
+        "catalog_prerequisite_build": PREREQUISITE_BUILD,
         "catalog_target_build": "25G342",
         "source_digest_verified": False,
         "installed_collection_verified": False,
@@ -186,12 +262,12 @@ def main():
     }
     try:
         if args.archive is not None:
-            inspect(args.archive, report, inspector=inspector)
+            inspect(args.archive, report, inspector=inspector, base_root=args.base_system_root)
         else:
             with tempfile.TemporaryDirectory(prefix="lixnu-tahoe-ota-") as directory:
                 archive = Path(directory) / "intel-ota.zip"
                 download(archive)
-                inspect(archive, report, inspector=inspector)
+                inspect(archive, report, inspector=inspector, base_root=args.base_system_root)
     except AuditError as error:
         report.update(status="failed", error=str(error))
     except (OSError, subprocess.SubprocessError, zipfile.BadZipFile):

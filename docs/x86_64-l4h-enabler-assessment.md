@@ -20,6 +20,7 @@ Repository evidence:
 
 - `fki-ko/fki_l4h.c` is explicitly labeled “L4H AArch64 (EL0) backend”. It includes external headers `l4h_sys.h`, `l4h_caps.h`, `l4h_vspace.h`, and `l4h/provider-registers.h`, and is built only under `CONFIG_L4H`.
 - The same file implements FKI user address spaces and user execution contexts (`fki_as_*`, `fki_utcb_*`) for AArch64 register/PAC conventions. That is repository evidence that the FKI interface has already been shaped around host-mediated user execution, not evidence that an x86_64 backend exists.
+- `xnu-patches/include/linux64_abi.h` is also AArch64-specific in the current tree: it describes `blr linux64_hook`, carries `x[31]`, `pstate`, `tpidr/tpidrro`, NEON state, and PAC/JOP-key operations, and says it is copied into XNU's `osfmk/arm64` tree. Thus an x86 hosted-XNU integration needs a machine ABI redesign, not only a new low-level FKI backend.
 
 ## Foreign user tasks
 
@@ -89,7 +90,7 @@ Whether that deployment model satisfies the project goal “native x86_64 Linux 
 | Kernel integration | Design an x86 `fki_l4h` backend and the XNU machine-layer interface; none exists now. |
 | Rollback/cleanup | Define exactly-once cleanup for user contexts, address spaces, memory frames, TCBs, endpoints, timers, and XNU shutdown/panic paths. |
 | Boot/deploy | Define how users install/boot L4H/seL4, what hardware/firmware is required, how Linux guests and xnulinux modules are provisioned, and how upgrades/rollback work. |
-| XNU patch integration | Determine which existing LINUX64/EL0 concepts transfer to x86 and which x86-specific machine-layer patches are required. |
+| XNU patch integration | Replace or parallelize the current AArch64 LINUX64 machine ABI (`x[31]`, `pstate`, TPIDR/NEON/PAC concepts) with an x86-specific contract, then determine which EL0 host concepts transfer. |
 | Hardware acceptance | Validate Intel and AMD separately on physical hosts; upstream QEMU/cloud claims are not xnulinux acceptance evidence. |
 | upstream maintenance/security | Track L4H/seL4 extensions, upstream maintenance, security response, reproducible builds, version pinning, and supply-chain review. |
 | Goal compatibility | Decide whether type-1 seL4/L4H deployment is within the project definition of “Linux PCs”; this is explicitly unresolved owner-level scope. |

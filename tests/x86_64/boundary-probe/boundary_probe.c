@@ -292,6 +292,7 @@ static int bp_validate_control_model(const struct bp_host_snapshot *snapshot,
 		.physical_bits = boot_cpu_data.x86_phys_bits,
 		.flags = boot_cpu_has(X86_FEATURE_PCID) ? FKI_X86_HOST_CPU_HAS_PCID : 0,
 	};
+	u64 control_xcr0 = snapshot->xcr0 & FKI_X86_XCR0_V1_MASK;
 	struct fki_x86_context_control_v1 control = {
 		.abi_version = FKI_X86_CONTEXT_ABI_VERSION,
 		.control_version = FKI_X86_CONTEXT_CONTROL_VERSION,
@@ -314,18 +315,21 @@ static int bp_validate_control_model(const struct bp_host_snapshot *snapshot,
 		       snapshot->cr3.cache_flags,
 		.cr4 = snapshot->cr4,
 		.efer = snapshot->efer,
-		.xcr0 = snapshot->xcr0,
+		.xcr0 = control_xcr0,
 		.gdt_base = snapshot->gdt_base,
 		.idt_base = snapshot->idt_base,
 		.gdt_limit = snapshot->gdt_limit,
 		.idt_limit = snapshot->idt_limit,
 		.xsave_address = xsave_address,
 		.xsave_bytes = xsave_bytes,
-		.xsave_xstate_bv = snapshot->xcr0,
+		.xsave_xstate_bv = control_xcr0,
 		.xsave_format = FKI_X86_XSAVE_FORMAT_STANDARD,
 	};
 
-	if (snapshot->xcr0 & ~(u64)FKI_X86_XCR0_V1_MASK)
+	/* Version 1 models only x87/SSE/AVX; the host-state oracle still
+	 * compares the complete live XCR0 before and after the synthetic call.
+	 */
+	if (!control_xcr0)
 		return -EOPNOTSUPP;
 	return fki_x86_context_validate_host_bound_shim(&control, &host);
 }

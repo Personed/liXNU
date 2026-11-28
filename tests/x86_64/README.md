@@ -120,7 +120,7 @@ The boundary probe also exercises the validation-only FKI control-block and tran
 same normal-return and software-abort calls. The test builds a synthetic `HOST_BOUND_SHIM`/`ENTER` object from live
 host control state plus probe-owned XSAVE and alternate-stack memory, validates it, and requires the synthetic state
 machine to reach `COMPLETE` for normal return or `ABORTED` for controlled software abort. This coupling is a fixture
-shape check around the existing probe, not a production entry transaction.
+shape check around the existing probe, not a production entry transaction. On hosts enabling later XCR0 features, only the x87/SSE/AVX projection is represented in version-1 control state; the oracle still compares the complete live XCR0.
 
 The boundary probe described above is a host-only call/return test. It does not enter XNU, change `fki.h`, enable FKI
 capabilities, change CR3 or GS, inspect supervisor XSS state, install or replace an IDT or exception handler, or run C

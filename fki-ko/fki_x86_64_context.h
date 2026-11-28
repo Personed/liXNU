@@ -62,8 +62,11 @@ typedef uint32_t fki_u32;
 	 FKI_X86_CR0_CD | FKI_X86_CR0_PG)
 
 #define FKI_X86_CR4_PAE (1ULL << 5)
+#define FKI_X86_CR4_OSFXSR (1ULL << 9)
+#define FKI_X86_CR4_OSXMMEXCPT (1ULL << 10)
 #define FKI_X86_CR4_LA57 (1ULL << 12)
 #define FKI_X86_CR4_PCIDE (1ULL << 17)
+#define FKI_X86_CR4_OSXSAVE (1ULL << 18)
 
 #define FKI_X86_EFER_SCE (1ULL << 0)
 #define FKI_X86_EFER_LME (1ULL << 8)
@@ -113,6 +116,7 @@ typedef uint32_t fki_u32;
 	 FKI_X86_RFLAGS_VIP)
 
 #define FKI_X86_XSAVE_MIN_BYTES 576ULL
+#define FKI_X86_XSAVE_AVX_MIN_BYTES 832ULL
 #define FKI_X86_XSAVE_ALIGNMENT 64ULL
 
 struct fki_x86_host_constraints {
@@ -120,6 +124,8 @@ struct fki_x86_host_constraints {
 	fki_u64 efer_allowed;
 	fki_u64 xcr0_supported;
 	fki_u64 xsave_max_bytes;
+	/* First byte after the AVX component, as enumerated by the host. */
+	fki_u64 xsave_avx_end;
 	fki_u32 physical_bits;
 	fki_u32 flags;
 };
@@ -235,7 +241,10 @@ static inline int fki_x86_validate_cr4_v1(fki_u64 cr4,
 {
 	if (cr4 & ~host->cr4_allowed)
 		return -EINVAL;
-	if (!(cr4 & FKI_X86_CR4_PAE))
+	if ((cr4 & (FKI_X86_CR4_PAE | FKI_X86_CR4_OSFXSR |
+		    FKI_X86_CR4_OSXMMEXCPT | FKI_X86_CR4_OSXSAVE)) !=
+	    (FKI_X86_CR4_PAE | FKI_X86_CR4_OSFXSR |
+	     FKI_X86_CR4_OSXMMEXCPT | FKI_X86_CR4_OSXSAVE))
 		return -EINVAL;
 	if (cr4 & FKI_X86_CR4_LA57)
 		return -EOPNOTSUPP;
@@ -288,9 +297,13 @@ static inline int fki_x86_validate_tables_v1(
 	if (!state->cs || !state->ss || state->ldtr || state->descriptor_reserved)
 		return -EINVAL;
 	for (i = 0; i < sizeof(selectors) / sizeof(selectors[0]); i++) {
+		/* TR is seventh here; its long-mode system descriptor is 16 bytes. */
+		fki_u64 descriptor_bytes = i == 6 ? 16 : 8;
+
 		if (!fki_x86_selector_ring0_gdt(selectors[i]))
 			return -EINVAL;
-		if (selectors[i] && selectors[i] + 7ULL > state->gdt_limit)
+		if (selectors[i] &&
+		    selectors[i] + descriptor_bytes - 1 > state->gdt_limit)
 			return -ERANGE;
 	}
 	if (state->idt_limit < 15 ||
@@ -310,11 +323,19 @@ static inline int fki_x86_validate_xsave_v1(
 		return -EOPNOTSUPP;
 	if (!host->xsave_max_bytes || host->xsave_max_bytes < FKI_X86_XSAVE_MIN_BYTES)
 		return -EINVAL;
+	if (host->xcr0_supported & FKI_X86_XCR0_AVX) {
+		if (host->xsave_avx_end < FKI_X86_XSAVE_AVX_MIN_BYTES ||
+		    host->xsave_avx_end > host->xsave_max_bytes)
+			return -EINVAL;
+	} else if (host->xsave_avx_end) {
+		return -EINVAL;
+	}
 	if (!state->xsave_address ||
 	    (state->xsave_address & (FKI_X86_XSAVE_ALIGNMENT - 1)) ||
 	    !fki_x86_canonical_range48(state->xsave_address, state->xsave_bytes))
 		return -ERANGE;
-	if (state->xsave_bytes < FKI_X86_XSAVE_MIN_BYTES ||
+	if (state->xsave_bytes < ((state->xcr0 & FKI_X86_XCR0_AVX) ?
+				    host->xsave_avx_end : FKI_X86_XSAVE_MIN_BYTES) ||
 	    state->xsave_bytes > host->xsave_max_bytes)
 		return -EINVAL;
 	if (state->xsave_xstate_bv & ~state->xcr0)

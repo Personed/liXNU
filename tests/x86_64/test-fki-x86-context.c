@@ -12,12 +12,14 @@
 static struct fki_x86_host_constraints valid_host(void)
 {
 	return (struct fki_x86_host_constraints) {
-		.cr4_allowed = FKI_X86_CR4_PAE,
+		.cr4_allowed = FKI_X86_CR4_PAE | FKI_X86_CR4_OSFXSR |
+				 FKI_X86_CR4_OSXMMEXCPT | FKI_X86_CR4_OSXSAVE,
 		.efer_allowed = FKI_X86_EFER_SCE | FKI_X86_EFER_LME |
 				FKI_X86_EFER_LMA | FKI_X86_EFER_NXE,
 		.xcr0_supported = FKI_X86_XCR0_X87 | FKI_X86_XCR0_SSE |
 				  FKI_X86_XCR0_AVX,
 		.xsave_max_bytes = 4096,
+		.xsave_avx_end = FKI_X86_XSAVE_AVX_MIN_BYTES,
 		.physical_bits = 48,
 	};
 }
@@ -42,7 +44,8 @@ static struct fki_x86_context_control_v1 valid_state(void)
 		.cr0 = FKI_X86_CR0_PE | FKI_X86_CR0_ET | FKI_X86_CR0_NE |
 		       FKI_X86_CR0_WP | FKI_X86_CR0_PG,
 		.cr3 = 0x200000,
-		.cr4 = FKI_X86_CR4_PAE,
+		.cr4 = FKI_X86_CR4_PAE | FKI_X86_CR4_OSFXSR |
+		       FKI_X86_CR4_OSXMMEXCPT | FKI_X86_CR4_OSXSAVE,
 		.efer = FKI_X86_EFER_SCE | FKI_X86_EFER_LME |
 			FKI_X86_EFER_LMA | FKI_X86_EFER_NXE,
 		.xcr0 = FKI_X86_XCR0_X87 | FKI_X86_XCR0_SSE | FKI_X86_XCR0_AVX,
@@ -164,6 +167,16 @@ static void test_control_register_rejections(void)
 	state = valid_state();
 	state.cr4 = 0;
 	assert(VALIDATE(&state, &host) == -EINVAL);
+	for (int bit = 0; bit < 4; bit++) {
+		const fki_u64 required[] = {
+			FKI_X86_CR4_PAE, FKI_X86_CR4_OSFXSR,
+			FKI_X86_CR4_OSXMMEXCPT, FKI_X86_CR4_OSXSAVE,
+		};
+
+		state = valid_state();
+		state.cr4 &= ~required[bit];
+		assert(VALIDATE(&state, &host) == -EINVAL);
+	}
 	state = valid_state();
 	state.cr4 |= FKI_X86_CR4_LA57;
 	host.cr4_allowed |= FKI_X86_CR4_LA57;
@@ -251,6 +264,9 @@ static void test_canonical_and_table_rejections(void)
 	state.ldtr = 0x20;
 	assert(VALIDATE(&state, &host) == -EINVAL);
 	state = valid_state();
+	state.gdt_limit = 0x47;
+	assert(VALIDATE(&state, &host) == -ERANGE);
+	state = valid_state();
 	state.gdt_limit = 0x3f;
 	assert(VALIDATE(&state, &host) == -ERANGE);
 	state = valid_state();
@@ -285,6 +301,12 @@ static void test_xsave_rejections(void)
 	state.xsave_bytes = FKI_X86_XSAVE_MIN_BYTES - 1;
 	assert(VALIDATE(&state, &host) == -EINVAL);
 	state = valid_state();
+	state.xsave_bytes = FKI_X86_XSAVE_AVX_MIN_BYTES - 1;
+	assert(VALIDATE(&state, &host) == -EINVAL);
+	state = valid_state();
+	state.xsave_bytes = FKI_X86_XSAVE_AVX_MIN_BYTES;
+	assert(VALIDATE(&state, &host) == 0);
+	state = valid_state();
 	state.xsave_bytes = 4097;
 	assert(VALIDATE(&state, &host) == -EINVAL);
 	state = valid_state();
@@ -316,6 +338,12 @@ static void test_host_constraint_rejections(void)
 	host = valid_host();
 	host.flags |= FKI_X86_HOST_MEMORY_ENCRYPTION_ACTIVE;
 	assert(VALIDATE(&state, &host) == -EOPNOTSUPP);
+	host = valid_host();
+	host.xsave_avx_end = FKI_X86_XSAVE_MIN_BYTES;
+	assert(VALIDATE(&state, &host) == -EINVAL);
+	host = valid_host();
+	host.xsave_avx_end = 4097;
+	assert(VALIDATE(&state, &host) == -EINVAL);
 	host = valid_host();
 	host.xsave_max_bytes = 0;
 	assert(VALIDATE(&state, &host) == -EINVAL);

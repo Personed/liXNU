@@ -146,6 +146,18 @@ def test_interleaved_prefix_does_not_hide_compiler_error() -> None:
     assert output == [f"  {error}"], output
 
 
+def test_interleaved_linker_fragment_does_not_end_symbol_context() -> None:
+    header = "Undefined symbols for architecture x86_64:"
+    fragment = "ld: interleaved linker detail"
+    symbol = '    "_required_symbol", referenced from:'
+    reference = "        _callee in real.o"
+    terminal = "clang: error: linker command failed with exit code 1"
+    output = MODULE.summarize([header, f"    {fragment}", symbol, reference, terminal])
+    assert output == [
+        f"  {header}", f"  {symbol}", f"  {reference}", f"    {fragment}", f"  {terminal}",
+    ], output
+
+
 if __name__ == "__main__":
     test_symbol_context_does_not_hide_terminal_errors()
     test_only_main_diagnostics_consume_the_limit()
@@ -160,4 +172,5 @@ if __name__ == "__main__":
     test_compiler_diagnostic_cannot_confirm_linker_context()
     test_partial_darwin_link_error_without_clang_confirmation()
     test_interleaved_prefix_does_not_hide_compiler_error()
+    test_interleaved_linker_fragment_does_not_end_symbol_context()
     print("XNU diagnostic summary tests passed.")

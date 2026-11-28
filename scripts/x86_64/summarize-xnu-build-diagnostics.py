@@ -83,6 +83,16 @@ def summarize(lines: Iterable[str]) -> list[str]:
                     break
                 context = raw_context.rstrip("\r\n")
                 if (
+                    context[:1].isspace()
+                    and LINKER_LINE.match(context)
+                    and not LINKER_ERROR.match(context)
+                    and not INTERLEAVED_COMPILER_ERROR.match(context)
+                ):
+                    # Parallel linker fragments can appear between symbol lines.
+                    if not LINKER_NONERROR.match(context):
+                        linker_context.append((context_index, clean(context.lstrip())))
+                    continue
+                if (
                     not context.strip()
                     or not context[:1].isspace()
                     or ERROR_LINE.search(context)

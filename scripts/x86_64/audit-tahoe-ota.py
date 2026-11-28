@@ -95,6 +95,7 @@ def inspect_boot_collection(archive, inspector, report, expected_size=BOOT_MEMBE
     with tempfile.TemporaryDirectory(prefix="lixnu-ota-bootkc-") as directory:
         collection = Path(directory) / "BootKernelExtensions.kc"
         digest = hashlib.sha256()
+        legacy_digest = hashlib.sha1()
         remaining = expected_size
         with archive.open(entry) as source, collection.open("xb") as destination:
             while remaining:
@@ -103,8 +104,9 @@ def inspect_boot_collection(archive, inspector, report, expected_size=BOOT_MEMBE
                     raise AuditError("truncated OTA boot collection member")
                 destination.write(chunk)
                 digest.update(chunk)
+                legacy_digest.update(chunk)
                 remaining -= len(chunk)
-        report.update(path=BOOT_MEMBER, bytes=expected_size, sha256=digest.hexdigest())
+        report.update(path=BOOT_MEMBER, bytes=expected_size, sha256=digest.hexdigest(), sha1=legacy_digest.hexdigest())
         with collection.open("rb") as file, mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ) as data:
             report["xnu_release_candidates"] = sorted({
                 match.decode("ascii") for match in XNU_RELEASE_PATTERN.findall(data)
@@ -140,13 +142,19 @@ def probe_delta_base(archive, root):
         return result
     result["declared_base_sha1"] = base_sha1.hex()
     try:
-        with (root / "System/Library/CoreServices/SystemVersion.plist").open("rb") as source:
-            data = source.read(1 << 20)
-            if source.read(1):
-                raise ValueError("SystemVersion.plist exceeds size limit")
+        fd = os.open(root / "System/Library/CoreServices/SystemVersion.plist", os.O_RDONLY | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as source:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= 1 << 20:
+                raise ValueError("SystemVersion.plist must be a bounded regular file")
+            data = source.read(info.st_size + 1)
+            if len(data) != info.st_size:
+                raise ValueError("SystemVersion.plist changed during inspection")
         product = plistlib.loads(data)
         build = product.get("ProductBuildVersion") if isinstance(product, dict) else None
-        result["local_build"] = build if isinstance(build, str) else None
+        if not isinstance(build, str) or not build:
+            raise ValueError("SystemVersion.plist lacks a build")
+        result["local_build"] = build
     except (OSError, ValueError, ExpatError, AttributeError, IndexError, TypeError, OverflowError, RecursionError):
         result["base_status"] = "build_unavailable"
         return result
@@ -177,6 +185,14 @@ def probe_delta_base(archive, root):
     result["local_base_sha1"] = digest.hexdigest()
     result["base_status"] = "hash_match" if digest.digest() == base_sha1 else "hash_mismatch"
     return result
+
+
+def compare_declared_delta_result(boot, delta):
+    if "sha1" not in boot or "declared_result_sha1" not in delta:
+        return "unavailable"
+    if boot["bytes"] == delta["declared_result_bytes"] and boot["sha1"] == delta["declared_result_sha1"]:
+        return "hash_and_size_match"
+    return "mismatch"
 
 
 def inspect(path, report, expected_size=OTA_BYTES, expected_sha256=OTA_SHA256, inspector=None, base_root=None):
@@ -218,6 +234,10 @@ def inspect(path, report, expected_size=OTA_BYTES, expected_sha256=OTA_SHA256, i
                 except (AuditError, OSError, zipfile.BadZipFile) as error:
                     message = str(error) if isinstance(error, AuditError) else "unable to read the OTA delta header"
                     result["installed_boot_delta"] = {"base_status": "delta_unavailable", "error": message}
+                if inspector is not None:
+                    result["ota_boot_vs_declared_delta_result"] = compare_declared_delta_result(
+                        result["ota_boot_collection"], result["installed_boot_delta"],
+                    )
         after = os.fstat(fd)
         if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
             after.st_size, after.st_mtime_ns, after.st_ctime_ns

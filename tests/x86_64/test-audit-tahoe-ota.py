@@ -19,9 +19,9 @@ AUDIT = runpy.run_path(str(ROOT / "scripts/x86_64/audit-tahoe-ota.py"))
 class OtaInventoryTests(unittest.TestCase):
     def test_installed_delta_requires_the_matching_base_digest(self):
         base = b"prerequisite boot collection"
-        header = AUDIT["DELTA_HEADER"].pack(
-            b"BXDIFF50", 1, 128, 1, 1, b"r" * 20, 1, hashlib.sha1(base).digest(),
-        )
+        one = b"\x01\x00\x00\x00\x00\x00\x00\x00"
+        length = b"\x80\x00\x00\x00\x00\x00\x00\x00"
+        header = b"BXDIFF50" + one + length + one + one + b"r" * 20 + one + hashlib.sha1(base).digest()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             plist = root / "System/Library/CoreServices/SystemVersion.plist"
@@ -38,6 +38,7 @@ class OtaInventoryTests(unittest.TestCase):
                 for malformed in (
                     b"<plist><key>ProductBuildVersion</key></plist>",
                     b"<plist><dict><key>date</key><date>invalid</date></dict></plist>",
+                    plistlib.dumps({}),
                 ):
                     plist.write_bytes(malformed)
                     self.assertEqual(AUDIT["probe_delta_base"](archive, root)["base_status"], "build_unavailable")
@@ -49,7 +50,14 @@ class OtaInventoryTests(unittest.TestCase):
                 result = AUDIT["probe_delta_base"](archive, root)
                 self.assertEqual(result["base_status"], "hash_match")
                 self.assertEqual(result["declared_result_sha1"], (b"r" * 20).hex())
+                self.assertEqual(result["declared_result_bytes"], 128)
                 self.assertEqual(collection.read_bytes(), base)
+            compare = AUDIT["compare_declared_delta_result"]
+            direct = {"sha1": (b"r" * 20).hex(), "bytes": 128}
+            self.assertEqual(compare(direct, result), "hash_and_size_match")
+            self.assertEqual(compare({**direct, "bytes": 127}, result), "mismatch")
+            self.assertEqual(compare({**direct, "sha1": "0" * 40}, result), "mismatch")
+            self.assertEqual(compare({}, result), "unavailable")
 
     def test_inspect_only_the_direct_boot_collection(self):
         fixtures = runpy.run_path(str(ROOT / "tests/x86_64/test-fileset-metadata.py"))
@@ -78,6 +86,7 @@ class OtaInventoryTests(unittest.TestCase):
             self.assertEqual(report["path"], AUDIT["BOOT_MEMBER"])
             self.assertEqual(report["fileset"]["status"], "accepted")
             self.assertEqual(report["sha256"], hashlib.sha256(image).hexdigest())
+            self.assertEqual(report["sha1"], hashlib.sha1(image).hexdigest())
             self.assertEqual(report["xnu_release_candidates"], ["12377.161.15.701.48~2"])
 
     def test_verified_directory_distinguishes_collection_from_delta(self):

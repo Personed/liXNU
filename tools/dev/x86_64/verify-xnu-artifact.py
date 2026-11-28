@@ -423,8 +423,10 @@ def verify_entry_sequence(artifact: pathlib.Path, report: dict[str, object]) -> 
             raise VerificationError(f"post-entry {label} branch target is invalid")
 
     expect_rel8_branch(0x6A, 0x74, 0x8A, "non-BSP canary bypass")
-    expect(0x6C, b"\xb8\x01\x00\x00\x00\x0f\xa2", "CPUID leaf-1 setup")
-    expect(0x73, b"\xf7\xc1\x00\x00\x00\x40", "RDRAND feature-bit test")
+    if sequence[0x6C] != 0xB8 or read_u32le(sequence, 0x6D) != 1 or sequence[0x71:0x73] != b"\x0f\xa2":
+        raise VerificationError("post-entry CPUID leaf-1 setup is invalid")
+    if sequence[0x73:0x75] != b"\xf7\xc1" or read_u32le(sequence, 0x75) != 0x40000000:
+        raise VerificationError("post-entry RDRAND feature-bit test is invalid")
     expect_rel8_branch(0x79, 0x74, 0xAA, "missing-RDRAND fallback")
     expect(0x7B, b"\x48\x0f\xc7\xf0", "RDRAND canary read")
     expect_rel8_branch(0x7F, 0x73, 0xAA, "failed-RDRAND fallback")

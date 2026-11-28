@@ -41,8 +41,8 @@ of the Apple CDN ZIP indexed for `25G76 → 25G342` by
 [AppleDB](https://github.com/littlebyteorg/appledb/blob/2d59226769714041389efda35daf4b9a938ba8a9/osFiles/macOS/25x%20-%2026.x/25G342.json).
 On a machine with a verified local copy, run
 `python3 scripts/x86_64/audit-tahoe-ota.py --archive /path/to/intel-ota.zip`.
-The JSON lists collection files, binary deltas, BOMs, and payload containers
-visible in the ZIP directory. A delta requires the matching base. Files
+The JSON lists collection files, binary deltas, error correction data, BOMs,
+and payload containers visible in the ZIP directory. A delta requires the matching base. Files
 inside payload containers and the collection selected by an installed System
 volume require separate inspection.
 

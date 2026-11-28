@@ -22,6 +22,8 @@ OTA_URL = (
 OTA_BYTES = 1461006831
 OTA_SHA256 = "b7b97ed3337af7408879da969964328f6d78282ab837333d1cc2f0507f4019a4"
 COLLECTION_NAMES = {"BootKernelExtensions.kc", "SystemKernelExtensions.kc"}
+COLLECTION_DELTAS = {f"{name}.bxdiff" for name in COLLECTION_NAMES}
+PAYLOAD_ROOT = PurePosixPath("AssetData/payloadv2")
 PAYLOAD_PART = re.compile(r"payload\.\d+(?:\.(?:yaa|aar|aea))?", re.ASCII)
 MAX_REPORT_ENTRIES = 32
 
@@ -33,13 +35,18 @@ class AuditError(Exception):
 def entry_kind(filename):
     path = PurePosixPath(filename)
     name = path.name
+    if path.is_relative_to(PAYLOAD_ROOT / "ecc_data"):
+        return "collection_ecc" if name in COLLECTION_NAMES | COLLECTION_DELTAS else None
+    if name in COLLECTION_DELTAS or (
+        name in COLLECTION_NAMES and path.is_relative_to(PAYLOAD_ROOT / "patches")
+    ):
+        return "collection_delta"
     if name in COLLECTION_NAMES:
         return "collection_file"
-    if name.removesuffix(".bxdiff") in COLLECTION_NAMES and name.endswith(".bxdiff"):
-        return "collection_delta"
     if name.endswith(".bom"):
         return "bom"
-    if PAYLOAD_PART.fullmatch(name) or name.endswith((".yaa", ".aar", ".aea")):
+    if (path == PAYLOAD_ROOT / "data_payload" or PAYLOAD_PART.fullmatch(name)
+        or name.endswith((".yaa", ".aar", ".aea"))):
         return "payload_archive"
     return None
 
@@ -47,7 +54,7 @@ def entry_kind(filename):
 def inventory(archive):
     entries = archive.infolist()
     groups = {kind: {"count": 0, "entries": []} for kind in (
-        "collection_file", "collection_delta", "bom", "payload_archive",
+        "collection_file", "collection_delta", "collection_ecc", "bom", "payload_archive",
     )}
     for entry in entries:
         mode = entry.external_attr >> 16

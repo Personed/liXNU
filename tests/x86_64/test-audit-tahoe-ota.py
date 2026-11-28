@@ -20,6 +20,9 @@ class OtaInventoryTests(unittest.TestCase):
         paths = {
             "AssetData/boot/BootKernelExtensions.kc": b"collection stand-in",
             "AssetData/delta/SystemKernelExtensions.kc.bxdiff": b"delta stand-in",
+            "AssetData/payloadv2/patches/System/Library/KernelCollections/BootKernelExtensions.kc": b"BXDIFF50",
+            "AssetData/payloadv2/ecc_data/System/Library/KernelCollections/BootKernelExtensions.kc": b"BXECC010",
+            "AssetData/payloadv2/data_payload": b"opaque",
             "AssetData/post.bom": b"BootKernelExtensions.kc",
             "AssetData/SystemKernelExtensions.kc.bak": b"unrelated",
             "AssetData/unrelated/BootKernelExtensions.kc/": b"",
@@ -44,11 +47,13 @@ class OtaInventoryTests(unittest.TestCase):
             "count": 1,
             "entries": [{"path": "AssetData/boot/BootKernelExtensions.kc", "bytes": 19}],
         })
-        self.assertEqual(report["matches"]["collection_delta"]["count"], 1)
+        self.assertEqual(report["matches"]["collection_delta"]["count"], 2)
+        self.assertEqual(report["matches"]["collection_ecc"]["count"], 1)
         self.assertEqual(report["matches"]["bom"]["count"], 1)
         payload = report["matches"]["payload_archive"]
-        self.assertEqual(payload["count"], payload_count)
+        self.assertEqual(payload["count"], payload_count + 1)
         self.assertEqual(len(payload["entries"]), AUDIT["MAX_REPORT_ENTRIES"])
+        self.assertIn("AssetData/payloadv2/data_payload", {entry["path"] for entry in payload["entries"]})
 
     def test_identity_must_match_before_reading_zip_directory(self):
         with tempfile.TemporaryDirectory() as temporary:

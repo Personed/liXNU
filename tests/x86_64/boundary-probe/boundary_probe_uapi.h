@@ -15,8 +15,10 @@ struct x86_boundary_continuation_request {
 	__u32 responder_cpu;
 };
 
-#define X86_BOUNDARY_PROBE_MODE_RETURN 0
-#define X86_BOUNDARY_PROBE_MODE_ABORT  1
+#define X86_BOUNDARY_PROBE_MODE_RETURN          0
+#define X86_BOUNDARY_PROBE_MODE_ABORT           1
+#define X86_BOUNDARY_PROBE_MODE_SHUTDOWN_HALT   2
+#define X86_BOUNDARY_PROBE_MODE_SHUTDOWN_RESTART 3
 #define X86_BOUNDARY_PROBE_COOP_REPLY  0
 #define X86_BOUNDARY_PROBE_COOP_TIMEOUT 1
 #define X86_BOUNDARY_PROBE_RUN _IOW(0xb7, 1, struct x86_boundary_probe_request)

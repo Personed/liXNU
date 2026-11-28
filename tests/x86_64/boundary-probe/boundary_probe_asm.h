@@ -24,8 +24,11 @@
 #define BP_OFF_STOP_RIP           272
 #define BP_OFF_STOP_RSP           280
 
-#define BP_COOP_MODE_STOP           2
-#define BP_COOP_MODE_RESUME         3
+#define BP_RUN_MODE_SHUTDOWN_HALT    2
+#define BP_RUN_MODE_SHUTDOWN_RESTART 3
+
+#define BP_COOP_MODE_STOP           4
+#define BP_COOP_MODE_RESUME         5
 #define BP_COOP_STATE_PENDING       1
 #define BP_COOP_STATE_REPLYING      2
 #define BP_COOP_STATE_REPLIED       3

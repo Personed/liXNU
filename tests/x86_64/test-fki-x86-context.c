@@ -102,6 +102,10 @@ static void test_metadata_rejections(void)
 	assert(VALIDATE(&state, &host) == -EOPNOTSUPP);
 	state = valid_state();
 	state.operation = FKI_X86_CONTEXT_OP_RESUME;
+	assert(VALIDATE(&state, &host) == 0);
+	state.operation = 0;
+	assert(VALIDATE(&state, &host) == -EOPNOTSUPP);
+	state.operation = 3;
 	assert(VALIDATE(&state, &host) == -EOPNOTSUPP);
 
 	state = valid_state();

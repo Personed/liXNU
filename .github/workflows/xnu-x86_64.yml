@@ -35,6 +35,7 @@ jobs:
         run: |
           bash tests/x86_64/test-x86-boot-ptd.sh
           bash tests/x86_64/test-x86-page-table-audit.sh
+          bash tests/x86_64/test-x86-boot-preflight.sh
       - name: Run source-pinned x86 CPU eligibility fixtures
         run: tests/x86_64/test-x86-cpu-compat.sh
       - name: Run read-only Mach-O artifact inspector fixtures

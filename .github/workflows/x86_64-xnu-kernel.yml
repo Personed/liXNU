@@ -19,6 +19,8 @@ on:
       - "xnu-ko/macho_parse_x86_64.h"
       - "tests/x86_64/test-xnu-artifact-verifier.py"
       - "tests/x86_64/test-xnu-artifact-verifier.sh"
+      - "scripts/x86_64/summarize-xnu-build-diagnostics.py"
+      - "tests/x86_64/test-xnu-build-diagnostics.py"
   push:
     branches: [main]
     paths:
@@ -36,6 +38,8 @@ on:
       - "xnu-ko/macho_parse_x86_64.h"
       - "tests/x86_64/test-xnu-artifact-verifier.py"
       - "tests/x86_64/test-xnu-artifact-verifier.sh"
+      - "scripts/x86_64/summarize-xnu-build-diagnostics.py"
+      - "tests/x86_64/test-xnu-build-diagnostics.py"
 permissions:
   contents: read
 concurrency:
@@ -135,6 +139,8 @@ jobs:
           PY
       - name: Test read-only --check diagnostic workspace
         run: bash scripts/x86_64/xnu-trustcache-scan-workspace.sh --self-test
+      - name: Test bounded XNU build diagnostic summary
+        run: python3 tests/x86_64/test-xnu-build-diagnostics.py
       - name: Provision the pinned Apple KDK on the Intel runner
         # The checked-in digest pins Dortania's public copy; the package must
         # also pass macOS trust validation as Apple's Software Update signer.
@@ -286,6 +292,16 @@ jobs:
             ${{ runner.temp }}/xnulinux-x86_64-xnu/out/libdispatch/dst/usr/local/lib/kernel/libfirehose_kernel.a
           if-no-files-found: error
           retention-days: 5
+      - name: Report Intel XNU compiler diagnostics
+        if: failure() || cancelled()
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/xnulinux-x86_64-xnu/out/xnu-build.log"
+          if [[ ! -s "$log" ]]; then
+            echo "No XNU compilation log was produced."
+            exit 0
+          fi
+          python3 scripts/x86_64/summarize-xnu-build-diagnostics.py "$log"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

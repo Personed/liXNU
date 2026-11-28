@@ -123,8 +123,8 @@ typedef uint32_t fki_u32;
 
 /*
  * Version-1 synthetic stop-report reasons. These values describe terminal
- * output records only; HOST_BOUND_SHIM/ENTER input still requires every
- * stop_* field to be zero.
+ * output records only; HOST_BOUND_SHIM/ENTER and HOST_BOUND_SHIM/RESUME input
+ * still requires every stop_* field to be zero.
  */
 #define FKI_X86_STOP_NORMAL_RETURN 1U
 #define FKI_X86_STOP_SOFTWARE_ABORT 2U
@@ -138,6 +138,9 @@ typedef uint32_t fki_u32;
 #define FKI_X86_STOP_SHUTDOWN_HALT 1ULL
 #define FKI_X86_STOP_SHUTDOWN_TRIPLE_FAULT 2ULL
 #define FKI_X86_STOP_SHUTDOWN_UNRECOVERABLE 3ULL
+
+/* Valid only in stop_aux1 for SHUTDOWN_HALT controlled shutdown reports. */
+#define FKI_X86_STOP_SHUTDOWN_RESTART_REQUESTED 1ULL
 
 /* PF allows P/W/U/R/I/PK/SS and the architectural SGX bit; the rest is reserved. */
 #define FKI_X86_STOP_PF_ERROR_MASK 0x807fULL
@@ -509,10 +512,17 @@ static inline int fki_x86_validate_stop_report_v1(
 		return fki_x86_stop_state_valid(state) ? 0 : -ERANGE;
 	case FKI_X86_STOP_SHUTDOWN:
 		if (state->stop_vector || state->stop_error_code ||
-		    state->stop_cr2 || state->stop_aux1 ||
+		    state->stop_cr2 ||
 		    state->stop_aux0 < FKI_X86_STOP_SHUTDOWN_HALT ||
 		    state->stop_aux0 > FKI_X86_STOP_SHUTDOWN_UNRECOVERABLE)
 			return -EINVAL;
+		if (state->stop_aux0 == FKI_X86_STOP_SHUTDOWN_HALT) {
+			if (state->stop_aux1 &
+			    ~FKI_X86_STOP_SHUTDOWN_RESTART_REQUESTED)
+				return -EINVAL;
+		} else if (state->stop_aux1) {
+			return -EINVAL;
+		}
 		if ((state->stop_rip || state->stop_rsp) &&
 		    (!state->stop_rip || !state->stop_rsp ||
 		     !fki_x86_stop_state_valid(state)))

@@ -45,6 +45,28 @@ static void test_resume_cycle(void)
 	assert(state == FKI_X86_TX_COMPLETE);
 }
 
+static void test_shutdown_terminal_mappings(void)
+{
+	enum fki_x86_transaction_state state = FKI_X86_TX_INIT;
+	const enum fki_x86_transaction_event controlled[] = {
+		FKI_X86_TX_VALIDATE_OK, FKI_X86_TX_SNAPSHOT_OK,
+		FKI_X86_TX_ENTER, FKI_X86_TX_COOPERATIVE_STOP,
+		FKI_X86_TX_RESTORE_OK, FKI_X86_TX_FINISH,
+	};
+	const enum fki_x86_transaction_event unrecoverable[] = {
+		FKI_X86_TX_VALIDATE_OK, FKI_X86_TX_SNAPSHOT_OK,
+		FKI_X86_TX_ENTER, FKI_X86_TX_FAULT_STOP,
+		FKI_X86_TX_RESTORE_OK, FKI_X86_TX_ABORT,
+	};
+
+	run_events(&state, controlled, sizeof(controlled) / sizeof(controlled[0]));
+	assert(state == FKI_X86_TX_COMPLETE);
+	state = FKI_X86_TX_INIT;
+	run_events(&state, unrecoverable,
+		   sizeof(unrecoverable) / sizeof(unrecoverable[0]));
+	assert(state == FKI_X86_TX_ABORTED);
+}
+
 static void test_setup_failures(void)
 {
 	enum fki_x86_transaction_state state = FKI_X86_TX_INIT;
@@ -105,6 +127,7 @@ int main(void)
 {
 	test_normal_return();
 	test_resume_cycle();
+	test_shutdown_terminal_mappings();
 	test_setup_failures();
 	test_abort_timeout_and_cancel();
 	test_invalid_transitions();

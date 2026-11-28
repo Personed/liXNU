@@ -10,7 +10,7 @@ No route is accepted. The documented conclusion is conservative: logical CPU off
 
 - **evidence-only primitive**: an exported or documented primitive exists, but the evidence only describes a Linux mechanism and does not imply ownership transfer.
 - **insufficient alone**: the primitive or combination may be useful evidence for a future design, but cannot satisfy production-safe ownership by itself.
-- **forbidden as ownership claim**: using the primitive or state as a claim of physical CPU, memory, or control-state ownership is forbidden.
+- **forbidden as ownership/authorization claim**: using the primitive or state as a claim of physical CPU, memory, control-state ownership, or foreign-execution authorization is forbidden.
 - **unresolved/requires stronger protocol**: the obligation is explicitly unresolved and must be answered by a later reviewed design.
 - **required but undesigned**: the obligation is necessary for any complete design, but no design exists here.
 
@@ -24,6 +24,8 @@ The following evidence is deliberately narrow. Export observations were checked 
 - `add_cpu()` serializes `device_online()` through the device hotplug lock and is exported GPL in v6.8. Reference: [`kernel/cpu.c` lines 1785-1795](https://github.com/torvalds/linux/blob/v6.8/kernel/cpu.c#L1785-L1795).
 - `cpu_hotplug_disable()` waits for current hotplug operations and disables future `cpu_up`/`cpu_down` operations, but it is a global nested kernel-wide mechanism rather than ownership of one physical CPU. Reference: [`kernel/cpu.c` lines 546-574](https://github.com/torvalds/linux/blob/v6.8/kernel/cpu.c#L546-L574).
 - `cpus_read_lock()` and cpuhp state setup/removal have exported forms in v6.8, but they are coordination/notification primitives, not foreign-execution ownership mechanisms. References: [`cpus_read_lock` export lines 487-503](https://github.com/torvalds/linux/blob/v6.8/kernel/cpu.c#L487-L503) and [cpuhp export lines 2558-2668](https://github.com/torvalds/linux/blob/v6.8/kernel/cpu.c#L2558-L2668).
+- cpuhp STARTING callbacks run on the hotplugged CPU with interrupts disabled during early CPU setup, while ONLINE callbacks run later with interrupts and preemption enabled. References: [STARTING section lines 198-212](https://github.com/torvalds/linux/blob/v6.8/Documentation/core-api/cpu_hotplug.rst#L198-L212) and [ONLINE section lines 214-225](https://github.com/torvalds/linux/blob/v6.8/Documentation/core-api/cpu_hotplug.rst#L214-L225).
+- Only the PREPARE and ONLINE cpuhp sections provide dynamic allocation; STARTING does not because its callbacks have explicit ordering requirements. References: [dynamic allocation lines 367-369](https://github.com/torvalds/linux/blob/v6.8/Documentation/core-api/cpu_hotplug.rst#L367-L369) and [dynamic state constants lines 391-394](https://github.com/torvalds/linux/blob/v6.8/Documentation/core-api/cpu_hotplug.rst#L391-L394).
 - No exported `native_cpu_up`, `start_cpu`, `wakeup_secondary_cpu`, or `do_boot_cpu` symbol was observed in the local kernel `Module.symvers`. This absence is evidence against assuming a module-accessible wake/reset mechanism; it is not proof that no future protocol could exist.
 
 ## Primitive evidence table
@@ -40,12 +42,16 @@ The following evidence is deliberately narrow. Export observations were checked 
 | Claiming logical offline is physical CPU ownership | forbidden as ownership claim | Linux logical state is not possession of the physical CPU or control of reset/wake. |
 | Claiming hotplug blocking is ownership of a CPU | forbidden as ownership claim | Blocking future Linux hotplug does not isolate hardware or prove rollback. |
 | Combined logical-offline plus hotplug blocking | insufficient alone | Even together these primitives do not satisfy memory/control ownership, physical possession, wake/reset control, asynchronous-event policy, reverse rollback, or safe re-online. |
+| module-usable cpuhp STARTING use | required but undesigned | Potentially relevant early-CPU context, but no documented dynamic module allocation exists and it does not authorize foreign execution. |
+| dynamically allocated cpuhp PREPARE/ONLINE callbacks | insufficient alone | Module-accessible in principle, but they do not provide a safe point before the CPU returns to Linux ownership. |
+| Claiming cpuhp STARTING as a foreign execution hook | forbidden as ownership/authorization claim | STARTING has no documented dynamically allocatable module hook and does not authorize foreign execution or ownership. |
 
 ## Required proof obligations
 
 | Obligation | Classification | Required treatment |
 | --- | --- | --- |
 | CPU selection and physical possession | required but undesigned | A future design must define which CPU, how possession is established, and how Linux/hardware ownership conflicts are prevented. |
+| Execution injection point | required but undesigned | The logical-offline route lacks a documented production-safe injection point; this is absence of evidence/protocol, not proof of impossibility. |
 | Wake/reset control | unresolved/requires stronger protocol | No module-accessible ownership mechanism is established here. |
 | Re-online and rollback control | unresolved/requires stronger protocol | `add_cpu()` alone does not prove reverse-order rollback or ownership during failure. |
 | Memory ownership | unresolved/requires stronger protocol | The separate ownership matrix remains unresolved for production composition. |
@@ -65,4 +71,4 @@ The following evidence is deliberately narrow. Export observations were checked 
 - No live-CPU CR3/control-state transfer is presumed safe.
 - No real CPU hotplug call, wake/reset operation, ownership transfer, runtime, XNU execution, loader, patch, entry, MSR/IDT access, userland, transaction change, ABI/layout change, VM harness change, or `#216` work is authorized.
 
-The only supported conclusion is that the inventoried Linux primitives are insufficient evidence for a production-safe ownership claim. A complete reviewed design must resolve the proof obligations above before any executable experiment can even be proposed.
+The only supported conclusion is that the inventoried Linux primitives are insufficient evidence for a production-safe ownership claim, and the logical-offline route lacks a documented production-safe execution-injection point. This is an absence of evidence and protocol, not a claim of absolute impossibility. A complete reviewed design must resolve the proof obligations above before any executable experiment can even be proposed.

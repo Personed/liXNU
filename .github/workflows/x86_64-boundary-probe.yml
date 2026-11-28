@@ -36,6 +36,8 @@ jobs:
         run: bash tests/x86_64/test-fki-x86-stop-report.sh
       - name: Validate x86 exception ownership model fixtures
         run: bash tests/x86_64/test-fki-x86-exception-ownership.sh
+      - name: Validate x86 syscall ownership model fixtures
+        run: bash tests/x86_64/test-fki-x86-syscall-ownership.sh
       - name: Run boundary probe and check kernel release rejection in QEMU TCG
         run: |
           release=$(cat "$KDIR/include/config/kernel.release")

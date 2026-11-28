@@ -32,7 +32,9 @@ jobs:
       - name: Run synthetic x86_64 Mach-O parser fixtures
         run: tests/x86_64/test-macho-parser.sh
       - name: Run x86_64 bootstrap page directory fixtures
-        run: bash tests/x86_64/test-x86-boot-ptd.sh
+        run: |
+          bash tests/x86_64/test-x86-boot-ptd.sh
+          bash tests/x86_64/test-x86-page-table-audit.sh
       - name: Run source-pinned x86 CPU eligibility fixtures
         run: tests/x86_64/test-x86-cpu-compat.sh
       - name: Run read-only Mach-O artifact inspector fixtures

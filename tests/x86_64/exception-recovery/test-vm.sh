@@ -179,7 +179,7 @@ if ! grep -Fq 'x86-exception-recovery:' "$recovery_diagnostics"; then
 fi
 for cpu in 0 1; do
 	for vector in 14 13; do
-		diagnostic_pattern="x86-exception-recovery: cpu=${cpu} vector=${vector} rip=(0x)?[[:xdigit:]]+ error=(0x)?[[:xdigit:]]+ cr2=(0x)?[[:xdigit:]]+ recovery_count=1 idtr_restored=1 gprs=ok ds=(0x)?[[:xdigit:]]+ stacks=ok"
+		diagnostic_pattern="x86-exception-recovery: cpu=${cpu} vector=${vector} rip=(0x)?[[:xdigit:]]+ error=(0x)?[[:xdigit:]]+ cr2=(0x)?[[:xdigit:]]+ recovery_count=1 idtr_restored=1 gprs=ok ds=(0x)?[[:xdigit:]]+ stacks=ok transaction_state=9"
 		if ! grep -Eq "$diagnostic_pattern" "$recovery_diagnostics"; then
 			echo "x86 exception recovery VM missed successful diagnostic for cpu=$cpu vector=$vector" >&2
 			exit 1
@@ -256,7 +256,7 @@ for marker in \
 done
 for cpu in 0 1; do
   for vector in 14 13; do
-    diagnostic_pattern="x86-exception-recovery: cpu=${cpu} vector=${vector} rip=(0x)?[[:xdigit:]]+ error=(0x)?[[:xdigit:]]+ cr2=(0x)?[[:xdigit:]]+ recovery_count=1 idtr_restored=1 gprs=ok ds=(0x)?[[:xdigit:]]+ stacks=ok"
+    diagnostic_pattern="x86-exception-recovery: cpu=${cpu} vector=${vector} rip=(0x)?[[:xdigit:]]+ error=(0x)?[[:xdigit:]]+ cr2=(0x)?[[:xdigit:]]+ recovery_count=1 idtr_restored=1 gprs=ok ds=(0x)?[[:xdigit:]]+ stacks=ok transaction_state=9"
     if ! grep -Eq "$diagnostic_pattern" "$LOG"; then
       echo "disposable VM serial log missed successful diagnostic for cpu=$cpu vector=$vector" >&2
       exit 1

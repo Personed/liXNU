@@ -80,13 +80,25 @@ The exact representation of CR3 must distinguish the page-table root physical ad
 
 Version 1 accepts only `HOST_BOUND_SHIM`/`ENTER`; `XNU_PREBOOT_LONG`, `XNU_COLD_BOOT`, and `RESUME` are rejected as unsupported. It describes a four-level-paging Linux long-mode host boundary: LA57, LAM, memory-encryption CR3 bits, interrupts, trap flag, direction flag, IOPL, virtual-8086 mode, nested task state, alignment-check control, and virtual interrupt flags are outside this profile. XSAVE version 1 accepts only the standard format and the x87/SSE/AVX feature subset; later XCR0 features require an explicitly designed extension. Boot payload and stop-reporting fields are output/future state and must be zero in validation input. Undefined metadata flags, feature bits, stop-mask bits, and reserved bytes must also be zero.
 
+For `HOST_BOUND_SHIM` version 1, `rsp` is normatively the 16-byte-aligned pre-call stack pointer consumed by the host entry trampoline. It is not the architectural RSP at the first byte of `rip`: after the trampoline's call-like transfer, the target observes `rsp - 8` and the usual callee-entry alignment. The validator's 16-byte alignment requirement is therefore a deliberate custom entry ABI rule, not a claim that x86 architectural RSP must always be 16-byte aligned. The transaction-private stack must include at least the return-address slot below the supplied pre-call `rsp`. A future profile that describes raw architectural state at the first byte of `rip` needs an explicit versioned contract rather than reinterpreting this field.
+
 Passing this validator means only that the fixed state object is internally well formed for the limited profile. It does not arm a transaction, prove equality with live host registers, establish ownership of the referenced GDT/IDT/XSAVE/stack/CR3 memory, or permit foreign execution. A future transaction implementation must perform those live-state, ownership, pinning, restoration, and abort checks before using the object.
+
+### Validation-only memory ownership model
+
+`fki-ko/fki_x86_64_memory.h` defines an abstract memory-reference validation model outside the fixed control-block ABI. Its userspace fixtures in `tests/x86_64/test-fki-x86-memory.c` classify the existing control-block references without changing the version-1 layout. An extent records optional linear start, mandatory contiguous physical backing, byte length, ownership class, use class, access class, and reserved fields. The model validates the CR3 root page, GDT/IDT memory, XSAVE memory, pre-call stack memory, and executable text memory referenced by a `HOST_BOUND_SHIM` control block.
+
+Version 1 recognizes these abstract ownership classes: host-owned memory, transaction-private memory, foreign-owned memory, and explicitly shared memory. Foreign-owned and shared memory are rejected as unsupported in this version. Access policy is separate from ownership: CR3 page-table memory is host-owned and must be readable/writable because hardware page walks can update accessed/dirty bits even though foreign software must not write page-table entries directly; descriptor tables are host-owned and read-only; executable text is host-owned, readable/executable, and never writable; XSAVE and stack memory are transaction-private and writable. All linear extents must carry contiguous physical backing information. Linear overlaps, physical backing overlaps, and aliases are rejected at page granularity even if the aliased byte ranges are distinct. The validator also requires every control reference to be contained in an extent of the correct use class.
+
+This model does not pin pages, walk translations, reserve memory, or prove that the caller actually owns the extents. It is a contract and fixture layer only. Real kernel ownership, translation walking, pinning/refcounting, reclamation exclusion, and lifetime validation remain required before any transaction may be armed. The contiguous-backing rule is deliberately conservative; multi-page or noncontiguous objects must either be represented as separate extents or wait for a versioned extension.
 
 ### XSAVE policy
 
 The XSAVE area is out-of-line and variable length. Version 1 accepts only the architecturally defined standard format; compacted and supervisor-only formats are rejected until their use is designed. The recorded `xstate_bv` must be a subset of XCR0, XCR0 must be supported by the host CPU, and unsupported extended features must not be enabled merely because a hypervisor or CPUID leaf exposes them.
 
 The host must snapshot and restore enough floating-point/vector state even in `HOST_BOUND_SHIM`; otherwise a synthetic call that uses SSE/AVX can silently corrupt Linux or another task. The boundary probe's XCR0 and sentinel checks are the host-side oracle, not a substitute for transaction state validation.
+
+Extended-XCR0 support is deliberately deferred rather than inferred from the disposable-VM fixture. The boundary probe's projection to x87/SSE/AVX is only a test-only way to keep the version-1 validator inside its declared envelope on hosts that also enable MPX, PKU, AVX512, or later features; it is not a production transaction design. Before any real transaction or XNU profile, the implementation must choose and validate either a versioned XSAVE extension that explicitly enumerates the additional components or a host-managed opaque full-xstate save/restore mechanism with defined ownership, sizing, alignment, and feature-matrix rules. Until that decision is implemented, extended-XCR0 hosts remain outside production validation even when the synthetic fixture passes.
 
 ## Transaction lifecycle
 
@@ -185,6 +197,8 @@ Memory ownership is outside the register structure but mandatory for validation.
 
 CR3 validation requires knowing who owns the referenced page tables, whether Linux can reclaim them, whether the foreign kernel may write them, and how TLB invalidation is performed. PCID use requires an invalidation and migration policy. A CPU must not migrate while using foreign CR3/PCID state unless the transaction explicitly supports migration.
 
+The validation-only model in `fki-ko/fki_x86_64_memory.h` is the first fixture layer for this requirement: it checks coherent abstract ownership classes and rejects overlap/aliasing for the existing version-1 references. It is not the real ownership mechanism. Before arming any transaction, kernel code still has to establish actual ownership, pinning or lifetime exclusion, translation accessibility, MMIO/firmware exclusion, and the CR3/PCID invalidation policy for the selected profile.
+
 ## Intel and AMD separation
 
 CPUID feature bits are necessary but not sufficient. Validation records vendor, family/model/stepping, required baseline features, PCID/INVPCID support, XSAVE/XCR0 support, NX, paging width, speculative-control MSRs when relevant, and any vendor-specific errata or mitigation constraints. Intel evidence must not be presented as AMD evidence or vice versa.
@@ -196,7 +210,7 @@ AMD use additionally requires matching user-provided kernel patches and a separa
 The implementation must add automated fixtures before exposing a capability:
 
 1. fixed-layout and reserved-byte tests for every versioned structure;
-2. invalid-state rejection fixtures for control registers, descriptor state, RFLAGS, XSAVE metadata, PCID, and inconsistent mode combinations;
+2. invalid-state rejection fixtures for control registers, descriptor state, RFLAGS, XSAVE metadata, PCID, memory-reference ownership/overlap, and inconsistent mode combinations;
 3. transaction-state machine tests covering setup failure, normal return, resume, and abort;
 4. disposable-VM host-preservation tests extending the boundary probe to entry, faults, shutdown, and abort;
 5. Intel/AMD feature-matrix tests with explicit unsupported-feature failures;

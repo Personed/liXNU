@@ -140,6 +140,10 @@ struct fki_x86_context_control_v1 {
 	fki_u64 stop_mask;
 	fki_u64 feature_bits;
 
+	/* In v1 HOST_BOUND_SHIM, rsp is the 16-byte-aligned pre-call
+	 * stack pointer consumed by the entry trampoline, not the
+	 * architectural RSP after the call-like transfer to rip.
+	 */
 	fki_u64 rax, rbx, rcx, rdx, rsi, rdi, rbp, rsp;
 	fki_u64 r8, r9, r10, r11, r12, r13, r14, r15, rip;
 	fki_u64 rflags;

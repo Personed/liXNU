@@ -11,17 +11,19 @@ import sys
 import tempfile
 
 
-FILE_SIZE = 0x600
+FILE_SIZE = 0x800
 HEADER_SIZE = 32
 PAGEZERO_SIZE = 72
 TEXT_SIZE = 72 + 80
 THREAD_SIZE = 8 + 8 + 42 * 4
-COMMAND_BYTES = PAGEZERO_SIZE + 2 * TEXT_SIZE + THREAD_SIZE
+COMMAND_BYTES = PAGEZERO_SIZE + 3 * TEXT_SIZE + THREAD_SIZE
 PAGEZERO_OFF = HEADER_SIZE
 TEXT_OFF = PAGEZERO_OFF + PAGEZERO_SIZE
 HIB_OFF = TEXT_OFF + TEXT_SIZE
-THREAD_OFF = HIB_OFF + TEXT_SIZE
+DATA_OFF = HIB_OFF + TEXT_SIZE
+THREAD_OFF = DATA_OFF + TEXT_SIZE
 RIP_OFF = THREAD_OFF + 8 + 8 + 16 * 8
+HIGH_BASE = 0xFFFFFF8000000000
 
 MH_EXECUTE = 2
 CPU_TYPE_X86_64 = 0x01000007
@@ -54,7 +56,11 @@ def put_name(data, offset, value):
 
 
 def protected_entry_sequence(entry_low=0x1100, boot_pml4=0x2000, boot_pdpt=0x3000,
-                             gdt_address=0x4000, initial_esp=0x5000):
+                             gdt_address=0x4000, initial_esp=0x5000,
+                             canary_address=0x6008, vstart_address=0x4308):
+    def rel32(target, origin):
+        return struct.pack("<i", target - origin)
+
     sequence = bytearray()
     sequence += b"\x89\xc7"
     sequence += b"\xbc" + struct.pack("<I", initial_esp)
@@ -70,8 +76,35 @@ def protected_entry_sequence(entry_low=0x1100, boot_pml4=0x2000, boot_pdpt=0x300
     sequence += b"\x0f\x22\xd8"
     sequence += b"\x0f\x20\xc0\x0d\x00\x00\x01\x80\x0f\x22\xc0"
     sequence += b"\xea" + struct.pack("<I", entry_low + 0x5C) + b"\x08\x00"
-    sequence += b"\x31\xc0\x8e\xd0\x8e\xd8\x8e\xc0\x8e\xe0\x8e\xe8\x85\xff"
-    assert len(sequence) == 0x6A
+    sequence += b"\x31\xc0\x8e\xd0\x8e\xd8\x8e\xc0\x8e\xe0\x8e\xe8"
+    assert len(sequence) == 0x68
+
+    sequence += b"\x85\xff"
+    sequence += b"\x74" + struct.pack("b", 0x8A - 0x6C)
+    sequence += b"\xb8\x01\x00\x00\x00\x0f\xa2"
+    sequence += b"\xf7\xc1\x00\x00\x00\x40"
+    sequence += b"\x74" + struct.pack("b", 0xAA - 0x7B)
+    sequence += b"\x48\x0f\xc7\xf0"
+    sequence += b"\x73" + struct.pack("b", 0xAA - 0x81)
+    sequence += b"\x30\xe4"
+    assert len(sequence) == 0x83
+    sequence += b"\x48\x89\x05" + rel32(canary_address, entry_low + 0x8A)
+    assert len(sequence) == 0x8A
+    sequence += b"\x48\x8d\x0d" + rel32(vstart_address, entry_low + 0x91)
+    assert len(sequence) == 0x91
+    sequence += b"\x48\xb8" + struct.pack("<Q", HIGH_BASE)
+    sequence += b"\x48\x09\xc4\x48\x09\xc8"
+    sequence += b"\x48\x83\xe4\xf0\x48\x31\xed\xff\xd0"
+    assert len(sequence) == 0xAA
+    sequence += (
+        b"\x0f\x31\x89\xc1\x30\xc4\x48\xc1\xe1\x10\x48\x31\xc8\x31\xc2"
+        b"\x48\x8d\x0d\x00\x00\x00\x00\x48\xc1\xe9\x15\x0f\xb6\xc9"
+        b"\xc1\xe1\x10\x31\xca\x88\xe1\xd3\xca\x48\xc1\xe2\x20"
+        b"\x48\x31\xd0\x88\xc8"
+    )
+    assert len(sequence) == 0xD9
+    sequence += b"\xeb" + struct.pack("b", 0x81 - 0xDB)
+    assert len(sequence) == 0xDB
     return bytes(sequence)
 
 
@@ -83,7 +116,7 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL, *, hib_protections=7):
             CPU_TYPE_X86_64,
             subtype,
             MH_EXECUTE,
-            4,
+            5,
             COMMAND_BYTES,
             0,
             0,
@@ -100,7 +133,7 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL, *, hib_protections=7):
     put_u32(data, TEXT_OFF, LC_SEGMENT_64)
     put_u32(data, TEXT_OFF + 4, TEXT_SIZE)
     put_name(data, TEXT_OFF + 8, "__TEXT")
-    put_u64(data, TEXT_OFF + 24, 0x4000)
+    put_u64(data, TEXT_OFF + 24, HIGH_BASE + 0x4000)
     put_u64(data, TEXT_OFF + 32, 0x2000)
     put_u64(data, TEXT_OFF + 40, 0)
     put_u64(data, TEXT_OFF + 48, 0x400)
@@ -111,7 +144,7 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL, *, hib_protections=7):
 
     put_name(data, TEXT_OFF + 72, "__text")
     put_name(data, TEXT_OFF + 88, "__TEXT")
-    put_u64(data, TEXT_OFF + 104, 0x4300)
+    put_u64(data, TEXT_OFF + 104, HIGH_BASE + 0x4300)
     put_u64(data, TEXT_OFF + 112, 0x20)
     put_u32(data, TEXT_OFF + 120, 0x300)
     put_u32(data, TEXT_OFF + 124, 4)
@@ -120,7 +153,7 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL, *, hib_protections=7):
     put_u32(data, HIB_OFF, LC_SEGMENT_64)
     put_u32(data, HIB_OFF + 4, TEXT_SIZE)
     put_name(data, HIB_OFF + 8, "__HIB")
-    put_u64(data, HIB_OFF + 24, 0x1000)
+    put_u64(data, HIB_OFF + 24, HIGH_BASE + 0x1000)
     put_u64(data, HIB_OFF + 32, 0x2000)
     put_u64(data, HIB_OFF + 40, 0x400)
     put_u64(data, HIB_OFF + 48, 0x200)
@@ -129,18 +162,35 @@ def make_valid_image(subtype=CPU_SUBTYPE_X86_64_ALL, *, hib_protections=7):
     put_u32(data, HIB_OFF + 64, 1)
     put_name(data, HIB_OFF + 72, "__text")
     put_name(data, HIB_OFF + 88, "__HIB")
-    put_u64(data, HIB_OFF + 104, 0x1100)
+    put_u64(data, HIB_OFF + 104, HIGH_BASE + 0x1100)
     put_u64(data, HIB_OFF + 112, 0x80)
     put_u32(data, HIB_OFF + 120, 0x500)
     put_u32(data, HIB_OFF + 124, 4)
     put_u32(data, HIB_OFF + 136, S_ATTR_PURE_INSTRUCTIONS)
 
+    put_u32(data, DATA_OFF, LC_SEGMENT_64)
+    put_u32(data, DATA_OFF + 4, TEXT_SIZE)
+    put_name(data, DATA_OFF + 8, "__DATA")
+    put_u64(data, DATA_OFF + 24, HIGH_BASE + 0x6000)
+    put_u64(data, DATA_OFF + 32, 0x1000)
+    put_u64(data, DATA_OFF + 40, 0x600)
+    put_u64(data, DATA_OFF + 48, 0x20)
+    put_u32(data, DATA_OFF + 56, 3)
+    put_u32(data, DATA_OFF + 60, 3)
+    put_u32(data, DATA_OFF + 64, 1)
+    put_name(data, DATA_OFF + 72, "__data")
+    put_name(data, DATA_OFF + 88, "__DATA")
+    put_u64(data, DATA_OFF + 104, HIGH_BASE + 0x6000)
+    put_u64(data, DATA_OFF + 112, 0x20)
+    put_u32(data, DATA_OFF + 120, 0x600)
+    put_u32(data, DATA_OFF + 124, 8)
+
     put_u32(data, THREAD_OFF, LC_UNIXTHREAD)
     put_u32(data, THREAD_OFF + 4, THREAD_SIZE)
     put_u32(data, THREAD_OFF + 8, X86_THREAD_STATE64)
     put_u32(data, THREAD_OFF + 12, X86_THREAD_STATE64_COUNT)
-    put_u64(data, RIP_OFF, 0x1100)
-    data[0x500:0x500 + 0x6A] = protected_entry_sequence()
+    put_u64(data, RIP_OFF, HIGH_BASE + 0x1100)
+    data[0x500:0x500 + 0xDB] = protected_entry_sequence()
     return data
 
 
@@ -288,6 +338,10 @@ def run_case(verifier, name, image, expected_success, mutate_manifest=None,
             raise AssertionError(f"{name}: protected-mode sequence policy was not recorded")
         if report["validation_scope"].get("entry_sequence_verified") is not True:
             raise AssertionError(f"{name}: protected-mode sequence verification was not recorded")
+        if report["validation_scope"].get("post_entry_sequence") != "xnu-source-pin-vstart-v1":
+            raise AssertionError(f"{name}: post-entry sequence policy was not recorded")
+        if report["validation_scope"].get("post_entry_sequence_verified") is not True:
+            raise AssertionError(f"{name}: post-entry sequence verification was not recorded")
         if expect_hib_metadata:
             hib_entry = report["inspection"].get("hib_entry")
             if hib_entry != {"section": "__HIB,__text", "file_offset": "0x0000000000000500"}:
@@ -340,9 +394,34 @@ def main():
              expected_diagnostic="not page aligned")
 
     shifted_entry = make_valid_image()
-    put_u64(shifted_entry, RIP_OFF, 0x1101)
+    put_u64(shifted_entry, RIP_OFF, HIGH_BASE + 0x1101)
     run_case(verifier, "entry offset shifted into sequence", shifted_entry, False,
              expected_diagnostic="protected-mode entry")
+
+    bad_canary_branch = make_valid_image()
+    bad_canary_branch[0x500 + 0x6B] += 1
+    run_case(verifier, "semantically invalid non-BSP canary branch", bad_canary_branch, False,
+             expected_diagnostic="non-BSP canary bypass branch target")
+
+    bad_canary_target = make_valid_image()
+    put_u32(bad_canary_target, 0x500 + 0x86, 0)
+    run_case(verifier, "canary store target outside __DATA", bad_canary_target, False,
+             expected_diagnostic="stack-canary store target")
+
+    bad_vstart_target = make_valid_image()
+    put_u32(bad_vstart_target, 0x500 + 0x8D, 0)
+    run_case(verifier, "_vstart target outside __TEXT", bad_vstart_target, False,
+             expected_diagnostic="_vstart target")
+
+    bad_kernel_base = make_valid_image()
+    bad_kernel_base[0x500 + 0x98] ^= 1
+    run_case(verifier, "KERNEL_BASE immediate mismatch", bad_kernel_base, False,
+             expected_diagnostic="KERNEL_BASE immediate")
+
+    bad_fallback_branch = make_valid_image()
+    bad_fallback_branch[0x500 + 0xDA] += 1
+    run_case(verifier, "semantically invalid canary fallback branch", bad_fallback_branch, False,
+             expected_diagnostic="fallback-to-canary-store jump branch target")
 
     truncated = make_valid_image()[:0x540]
     run_case(verifier, "truncated protected-mode entry sequence", truncated, False)
@@ -368,7 +447,7 @@ def main():
     run_case(verifier, "wrong thread-state count", bad_thread_count, False)
 
     rip_outside_file = make_valid_image()
-    put_u64(rip_outside_file, RIP_OFF, 0x2500)
+    put_u64(rip_outside_file, RIP_OFF, HIGH_BASE + 0x2500)
     run_case(verifier, "RIP outside file-backed bootstrap segment", rip_outside_file, False)
 
     data_entry = make_valid_image(hib_protections=3)
@@ -377,7 +456,7 @@ def main():
              expected_diagnostic="HIB metadata mode (status 3)")
 
     rw_rip_outside_text = make_valid_image(hib_protections=3)
-    put_u64(rw_rip_outside_text, RIP_OFF, 0x1180)  # Exclusive end of __HIB,__text.
+    put_u64(rw_rip_outside_text, RIP_OFF, HIGH_BASE + 0x1180)  # Exclusive end of __HIB,__text.
     run_case(verifier, "RIP outside the RW hibernation instruction section", rw_rip_outside_text, False)
 
     mismatched_hib_maxprot = make_valid_image(hib_protections=3)
@@ -385,7 +464,7 @@ def main():
     run_case(verifier, "RW hibernation entry with executable max protections", mismatched_hib_maxprot, False)
 
     rip_in_text = make_valid_image()
-    put_u64(rip_in_text, RIP_OFF, 0x4300)
+    put_u64(rip_in_text, RIP_OFF, HIGH_BASE + 0x4300)
     run_case(verifier, "RIP in __TEXT instead of __HIB", rip_in_text, False,
              expected_diagnostic="thread RIP is not inside the file-backed __HIB")
 

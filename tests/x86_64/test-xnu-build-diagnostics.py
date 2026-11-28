@@ -81,45 +81,94 @@ def test_linker_warnings_do_not_hide_compiler_errors() -> None:
     assert output == ["  clang: error: linker command failed with exit code 1"], output
 
 
-def test_interleaved_parallel_log_fragments_are_not_linker_errors() -> None:
-    expected = ["No compiler or linker errors recorded yet."]
-    lines = [
-        "ld:  odr_union_to_sockaddr",
-        "ld: lock 194enIn file included from /src/bsd/netinet/in_var.h:595:",
-        "ld:41:",
-    ]
-    assert MODULE.summarize(lines) == expected
-
-
-def test_linker_candidates_are_emitted_after_confirmed_linker_failure() -> None:
-    lines = [
-        "ld: file too small (length=8) for architecture x86_64",
-        "ld: unknown option: -bad",
-        "clang: error: linker command failed with exit code 1",
-    ]
-    assert MODULE.summarize(lines) == [
-        "  ld: file too small (length=8) for architecture x86_64",
-        "  ld: unknown option: -bad",
-        "  clang: error: linker command failed with exit code 1",
-    ]
-
-
-def test_stale_interleaved_fragments_are_not_linker_failure_details() -> None:
-    lines = [
-        "ld:  odr_union_to_sockaddr",
-        *(f"ordinary parallel output {index}" for index in range(MODULE.MAX_LINKER_CANDIDATE_GAP + 1)),
-        "ld: file too small (length=8) for architecture x86_64",
-        "clang: error: linker command failed with exit code 1",
-    ]
-    rendered = "\n".join(MODULE.summarize(lines))
-    assert "odr_union_to_sockaddr" not in rendered, rendered
-    assert "file too small" in rendered, rendered
-
-
 def test_empty_and_non_error_logs_are_explained() -> None:
-    expected = ["No compiler or linker errors recorded yet."]
+    expected = ["No confirmed compiler or linker errors recorded yet."]
     assert MODULE.summarize([]) == expected
     assert MODULE.summarize(["build started", "warning: still compiling"]) == expected
+    assert MODULE.summarize([
+        "ld:  odr_union_to_sockaddr",
+        "ld: lock 194enIn file included from ...",
+        "ld: interleaved fragment: error: from another command",
+        "ld: note: repeated text: error: from another command",
+    ]) == expected
+
+
+def test_apple_clangxx_confirms_recent_context() -> None:
+    terminal = "clang++: error: linker command failed with exit code 1 (use -v to see invocation)"
+    lines = ["ld: stale detail", *("compiling" for _ in range(MODULE.LINKER_CONTEXT_LINES))]
+    assert MODULE.summarize([*lines, "ld: file too small", terminal]) == [
+        "    ld: file too small", f"  {terminal}",
+    ]
+    output = MODULE.summarize([
+        *(f"ld: detail {i}" for i in range(MODULE.MAX_LINKER_CONTEXT + 1)), terminal, terminal,
+    ])
+    assert output == [
+        *(f"    ld: detail {i}" for i in range(1, MODULE.MAX_LINKER_CONTEXT + 1)),
+        f"  {terminal}", f"  {terminal}",
+    ], output
+
+
+def test_explicit_linker_error_is_kept_without_a_driver_marker() -> None:
+    line = "ld: error: malformed input file"
+    assert MODULE.summarize([line]) == [f"  {line}"]
+
+
+def test_each_linker_detail_expires_independently() -> None:
+    gap = MODULE.LINKER_CONTEXT_LINES
+    lines = [
+        "ld: stale detail",
+        *("ordinary compiler output" for _ in range(gap - 1)),
+        "ld: fresh detail",
+        "clang: error: linker command failed with exit code 1",
+    ]
+    output = MODULE.summarize(lines)
+    assert output == [
+        "    ld: fresh detail",
+        "  clang: error: linker command failed with exit code 1",
+    ], output
+
+
+def test_compiler_diagnostic_cannot_confirm_linker_context() -> None:
+    compiler_error = "/src/comment.c:8:3: error: linker command failed explanation"
+    output = MODULE.summarize(["ld: unrelated fragment", compiler_error])
+    assert output == [f"  {compiler_error}"], output
+
+
+def test_partial_darwin_link_error_without_clang_confirmation() -> None:
+    error = "ld: file too small (length=8) for architecture x86_64"
+    output = MODULE.summarize(["ld: interleaved fragment", error])
+    assert output == [f"  {error}"], output
+
+
+def test_interleaved_prefix_does_not_hide_compiler_error() -> None:
+    error = "/src/example.c:42:9: error: incompatible pointer types"
+    output = MODULE.summarize(["ld: unrelated fragment", f"ld:   {error}"])
+    assert output == [f"  {error}"], output
+
+
+def test_interleaved_linker_fragment_does_not_end_symbol_context() -> None:
+    header = "Undefined symbols for architecture x86_64:"
+    fragment = "ld: interleaved linker detail"
+    symbol = '    "_required_symbol", referenced from:'
+    reference = "        _callee in real.o"
+    terminal = "clang: error: linker command failed with exit code 1"
+    output = MODULE.summarize([header, f"    {fragment}", symbol, reference, terminal])
+    assert output == [
+        f"  {header}", f"  {symbol}", f"  {reference}", f"    {fragment}", f"  {terminal}",
+    ], output
+
+
+def test_last_symbol_block_limits_interleaved_fragment_reading() -> None:
+    def bounded_input():
+        for index in range(MODULE.MAX_DIAGNOSTICS - 1):
+            yield f"/src/file{index}.c:1:2: error: synthetic failure"
+        yield "Undefined symbols for architecture x86_64:"
+        for _ in range(MODULE.LINKER_CONTEXT_LINES):
+            yield "    ld: interleaved fragment"
+        raise AssertionError("summary read beyond the final context scan limit")
+
+    output = MODULE.summarize(bounded_input())
+    assert len(output) == MODULE.MAX_DIAGNOSTICS, output
 
 
 if __name__ == "__main__":
@@ -129,8 +178,13 @@ if __name__ == "__main__":
     test_summary_stops_reading_after_the_primary_diagnostic_limit()
     test_last_symbol_block_stops_after_its_context_limit()
     test_linker_warnings_do_not_hide_compiler_errors()
-    test_interleaved_parallel_log_fragments_are_not_linker_errors()
-    test_linker_candidates_are_emitted_after_confirmed_linker_failure()
-    test_stale_interleaved_fragments_are_not_linker_failure_details()
     test_empty_and_non_error_logs_are_explained()
+    test_apple_clangxx_confirms_recent_context()
+    test_explicit_linker_error_is_kept_without_a_driver_marker()
+    test_each_linker_detail_expires_independently()
+    test_compiler_diagnostic_cannot_confirm_linker_context()
+    test_partial_darwin_link_error_without_clang_confirmation()
+    test_interleaved_prefix_does_not_hide_compiler_error()
+    test_interleaved_linker_fragment_does_not_end_symbol_context()
+    test_last_symbol_block_limits_interleaved_fragment_reading()
     print("XNU diagnostic summary tests passed.")

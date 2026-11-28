@@ -13,10 +13,21 @@ from collections.abc import Iterable
 
 MAX_DIAGNOSTICS = 20
 MAX_UNDEFINED_SYMBOL_CONTEXT = 5
-MAX_LINKER_CANDIDATE_GAP = 40
+MAX_LINKER_CONTEXT = 5
+LINKER_CONTEXT_LINES = 40
 ERROR_LINE = re.compile(r": (?:fatal )?error:|^Undefined symbols")
-LINKER_CANDIDATE = re.compile(r"^ld: (?!warning:|note:)")
-LINKER_FAILURE = re.compile(r": (?:fatal )?error: linker command failed")
+LINKER_LINE = re.compile(r"^\s*ld: ")
+LINKER_NONERROR = re.compile(r"^\s*ld: (?:warning|note):")
+LINKER_ERROR = re.compile(
+    r"^\s*ld: (?:(?:error|fatal error|fatal):|"
+    r"file too small \(length=[0-9]+\) for architecture [A-Za-z0-9_]+(?: in .+)?$)"
+)
+INTERLEAVED_COMPILER_ERROR = re.compile(
+    r"^\s*ld:\s+(?P<source>[^:\s][^:]*:[0-9]+:[0-9]+: (?:fatal )?error:)"
+)
+LINKER_FAILURE = re.compile(
+    r"^\s*clang(?:\+\+)?(?:-\d+)?:(?: fatal)? error: linker command failed\b"
+)
 
 
 def clean(line: str) -> str:
@@ -26,72 +37,76 @@ def clean(line: str) -> str:
 def summarize(lines: Iterable[str]) -> list[str]:
     output: list[str] = []
     diagnostics = 0
-    iterator = iter(lines)
-    pending: str | None = None
-    linker_candidates: deque[str] = deque()
-    linker_candidate_gap = 0
+    iterator = enumerate(lines)
+    pending: tuple[int, str] | None = None
+    linker_context: deque[tuple[int, str]] = deque(maxlen=MAX_LINKER_CONTEXT)
 
     while diagnostics < MAX_DIAGNOSTICS:
         if pending is None:
             try:
-                raw_line = next(iterator)
+                index, raw_line = next(iterator)
             except StopIteration:
                 break
         else:
-            raw_line, pending = pending, None
+            index, raw_line = pending
+            pending = None
         line = raw_line.rstrip("\r\n")
-
-        if LINKER_CANDIDATE.search(line):
-            linker_candidates.append(line)
-            linker_candidate_gap = 0
+        if interleaved := INTERLEAVED_COMPILER_ERROR.match(line):
+            line = line[interleaved.start("source"):]
+        if LINKER_LINE.match(line):
+            if not LINKER_ERROR.match(line):
+                # Parallel compiler output can leave fragments that start with `ld:`.
+                if not LINKER_NONERROR.match(line):
+                    linker_context.append((index, clean(line)))
+                continue
+        elif not ERROR_LINE.search(line):
             continue
 
-        linker_candidate_gap += 1
-        if linker_candidate_gap > MAX_LINKER_CANDIDATE_GAP:
-            linker_candidates.clear()
-
-        if LINKER_FAILURE.search(line):
-            # Parallel xcodebuild output can interleave arbitrary fragments at
-            # the start of a physical line. Treat ld-prefixed lines as
-            # candidates only, and emit the recent candidates once the clang
-            # driver confirms that the linker actually failed.
-            while linker_candidates and diagnostics < MAX_DIAGNOSTICS - 1:
-                output.append(f"  {clean(linker_candidates.popleft())}")
-                diagnostics += 1
-            linker_candidates.clear()
-
-        if not ERROR_LINE.search(line):
-            continue
-
+        if LINKER_FAILURE.match(line):
+            output.extend(f"    {detail}" for number, detail in linker_context
+                          if index - number <= LINKER_CONTEXT_LINES)
+            linker_context.clear()
         output.append(f"  {clean(line)}")
         diagnostics += 1
 
         if line.startswith("Undefined symbols"):
             context_count = 0
+            context_index = index
             while True:
-                if (
-                    diagnostics >= MAX_DIAGNOSTICS
-                    and context_count >= MAX_UNDEFINED_SYMBOL_CONTEXT
+                if diagnostics >= MAX_DIAGNOSTICS and (
+                    context_count >= MAX_UNDEFINED_SYMBOL_CONTEXT
+                    or context_index - index >= LINKER_CONTEXT_LINES
                 ):
                     break
                 try:
-                    raw_context = next(iterator)
+                    context_index, raw_context = next(iterator)
                 except StopIteration:
                     break
                 context = raw_context.rstrip("\r\n")
                 if (
+                    context[:1].isspace()
+                    and LINKER_LINE.match(context)
+                    and not LINKER_ERROR.match(context)
+                    and not INTERLEAVED_COMPILER_ERROR.match(context)
+                ):
+                    # Parallel linker fragments can appear between symbol lines.
+                    if not LINKER_NONERROR.match(context):
+                        linker_context.append((context_index, clean(context.lstrip())))
+                    continue
+                if (
                     not context.strip()
                     or not context[:1].isspace()
                     or ERROR_LINE.search(context)
+                    or LINKER_LINE.match(context)
                 ):
-                    pending = raw_context
+                    pending = (context_index, raw_context)
                     break
                 if context_count < MAX_UNDEFINED_SYMBOL_CONTEXT:
                     output.append(f"  {clean(context)}")
                     context_count += 1
 
     if diagnostics == 0:
-        output.append("No compiler or linker errors recorded yet.")
+        output.append("No confirmed compiler or linker errors recorded yet.")
     return output
 
 

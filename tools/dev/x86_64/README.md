@@ -54,4 +54,59 @@ The synthetic fixtures run with:
 tests/x86_64/test-macho-inspect.sh
 ```
 
+## Verifying a built kernel artifact
+
+`verify-xnu-artifact.py` combines the inspector with the matching XNU
+`build-result.json` for the Tahoe 26.5 source build. It requires manifest
+schema version 1, the pinned XNU commit/tag, source release, SDK, Xcode and
+runtime target fields, plus the passed artifact's exact size and SHA-256. The
+old absolute `artifact` path is not used. The CPU subtype must be selected
+explicitly; it is not inferred from the parser's support list. The structural
+profile requires a unique `__TEXT` segment at file offset zero, read/execute
+protections, at least one section, one leading optional `__PAGEZERO`, unique
+segment names, and no unclassified optional load commands. The pinned XNU
+linker selects `__start`, which `osfmk/x86_64/start.s` places in `__HIB,__text`.
+The standard inspector accepts a file-backed RIP in an executable `__HIB`.
+If standard parsing rejects the image as invalid, the verifier tries the
+userspace `--hib-entry-metadata` mode. That mode requires a file-backed
+instruction section `__HIB,__text` in an `rw-` segment. It reports the entry
+file offset and keeps the declared permissions, so the JSON marks the entry
+file-backed and records that the segment lacks execute permission. The
+manifest must report the pinned XNU patch hashes, the expected non-Intel
+vendor policy, and a native x86_64 build host and process.
+
+Earlier artifacts can record the vendor guard under its former path in
+`xnu-patches/`. Both manifest paths use the SHA-256 of the same patch checked
+out under `scripts/x86_64/`.
+
+```sh
+python3 tools/dev/x86_64/verify-xnu-artifact.py \
+  --output /tmp/xnu-artifact-report.json \
+  --expected-subtype X86_64_ALL \
+  /path/to/kernel.development /path/to/build-result.json
+```
+
+The verifier compiles and runs the inspector from this checkout, on a private,
+read-only snapshot. It hashes the snapshot before and after inspection. The
+report is structural preflight evidence only: the parser validates selected
+Mach-O headers, segment/section ranges, thread state, entry range and relevant
+linkedit command bounds. For chained-fixup metadata it validates selected
+formats and table/range bounds, but does not resolve pointer values, relocate
+the image, or write fixups. It does not perform a real load, establish
+XNU/Linux ABI compatibility, or boot the kernel. Data in the
+manifest about runtime targets is recorded as build metadata and is not runtime
+evidence. Unknown optional load commands are rejected because the inspector
+cannot classify their semantics.
+
+The layout profile remains provisional until the Intel job inspects a real
+build artifact. Run the synthetic cases with the command below.
+
+```sh
+tests/x86_64/test-xnu-artifact-verifier.sh
+```
+
+The CI integration runs this preflight in the Intel-native build job and
+uploads its structural report with that job's artifact. It does not inspect or
+include the separate Apple Silicon cross-build artifact.
+
 No Apple image or firmware is included in this repository.

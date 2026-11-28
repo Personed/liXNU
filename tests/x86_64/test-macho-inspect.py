@@ -34,6 +34,11 @@ CPU_SUBTYPE_X86_64_ALL = 3
 CPU_SUBTYPE_X86_64_H = 8
 LC_SEGMENT_64 = 0x19
 LC_UNIXTHREAD = 0x5
+LC_SYMTAB = 0x2
+LC_DYSYMTAB = 0xB
+LC_UUID = 0x1B
+LC_SOURCE_VERSION = 0x2A
+LC_BUILD_VERSION = 0x32
 LC_DYLD_CHAINED_FIXUPS = 0x80000034
 SG_NORELOC = 4
 S_ATTR_PURE_INSTRUCTIONS = 0x80000000
@@ -545,6 +550,55 @@ def main():
         0,
         expect_unknown_optional_is_reported,
     )
+
+    def expect_classified_commands(report):
+        assert report["unclassified_optional_commands"] == 0, report
+
+    for name, command, size in (
+        ("UUID", LC_UUID, 24),
+        ("source version", LC_SOURCE_VERSION, 16),
+        ("build version with one tool", LC_BUILD_VERSION, 32),
+    ):
+        data = make_valid_image()
+        append_command(data, command, size)
+        if command == LC_BUILD_VERSION:
+            put_u32(data, COMMANDS_END + 20, 1)
+        run_case(binary, name, data, 0, expect_classified_commands)
+
+    for name, command, size in (
+        ("UUID", LC_UUID, 16),
+        ("source version", LC_SOURCE_VERSION, 24),
+        ("build version without declared tool", LC_BUILD_VERSION, 32),
+        ("short dynamic symbol table", LC_DYSYMTAB, 72),
+    ):
+        data = make_valid_image()
+        append_command(data, command, size)
+        run_case(binary, f"malformed {name} command", data, 3)
+
+    dysymtab = make_valid_image()
+    append_command(dysymtab, LC_DYSYMTAB, 80)
+    run_case(binary, "dynamic symbol table without LC_SYMTAB", dysymtab, 3)
+
+    # Place LC_SYMTAB after LC_DYSYMTAB to exercise order-independent checks.
+    symtab_off = COMMANDS_END + 80
+    put_u32(dysymtab, 16, 5)
+    put_u32(dysymtab, 20, COMMAND_BYTES + 80 + 24)
+    put_u32(dysymtab, symtab_off, LC_SYMTAB)
+    put_u32(dysymtab, symtab_off + 4, 24)
+    put_u32(dysymtab, symtab_off + 8, 0x300)
+    put_u32(dysymtab, symtab_off + 12, 1)
+    put_u32(dysymtab, COMMANDS_END + 12, 1)  # One local symbol.
+    put_u32(dysymtab, COMMANDS_END + 56, FILE_SIZE - 4)  # Indirect index table.
+    put_u32(dysymtab, COMMANDS_END + 60, 1)
+    run_case(binary, "bounded dynamic symbol table", dysymtab, 0, expect_classified_commands)
+
+    bad_symbols = bytearray(dysymtab)
+    put_u32(bad_symbols, COMMANDS_END + 12, 2)
+    run_case(binary, "dynamic symbol range exceeds symbol count", bad_symbols, 3)
+
+    bad_table = bytearray(dysymtab)
+    put_u32(bad_table, COMMANDS_END + 60, 0xFFFFFFFF)
+    run_case(binary, "indirect symbol table exceeds the file", bad_table, 3)
 
     wrong_cpu = make_valid_image()
     put_u32(wrong_cpu, 4, 0x0100000C)

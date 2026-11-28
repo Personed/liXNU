@@ -1,0 +1,54 @@
+diff --git a/osfmk/i386/cpuid.c b/osfmk/i386/cpuid.c
+index 7460cfa..23be02b 100644
+--- a/osfmk/i386/cpuid.c
++++ b/osfmk/i386/cpuid.c
+@@ -941,6 +941,25 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
+ 	DBG("cpuid_set_cpufamily(%p) returning 0x%x\n", info_p, cpufamily);
+ 	return cpufamily;
+ }
++
++/*
++ * Reject unsupported vendors before any Intel-specific CPUID workaround or MSR access.
++ */
++static boolean_t
++cpuid_vendor_is_intel(void)
++{
++	uint32_t reg[4];
++	char vendor[sizeof(CPUID_VID_INTEL)];
++
++	cpuid_fn(0, reg);
++	bcopy(&reg[ebx], &vendor[0], 4);
++	bcopy(&reg[edx], &vendor[4], 4);
++	bcopy(&reg[ecx], &vendor[8], 4);
++	vendor[sizeof(vendor) - 1] = '\0';
++
++	return strncmp(CPUID_VID_INTEL, vendor, sizeof(vendor)) == 0;
++}
++
+ /*
+  * Must be invoked either when executing single threaded, or with
+  * independent synchronization.
+@@ -951,16 +970,18 @@ cpuid_set_info(void)
+ 	i386_cpu_info_t         *info_p = &cpuid_cpu_info;
+ 	boolean_t               enable_x86_64h = TRUE;
+ 
++	/* Reject non-Intel vendors before Intel-specific workarounds or MSR accesses. */
++	if (!cpuid_vendor_is_intel()) {
++		panic("Unsupported CPU");
++	}
++
+ 	/* Perform pre-cpuid workarounds (since their effects impact values returned via cpuid) */
+ 	cpuid_do_precpuid_was();
+ 
+ 	cpuid_set_generic_info(info_p);
+ 
+-	/* verify we are running on a supported CPU */
+-	if ((strncmp(CPUID_VID_INTEL, info_p->cpuid_vendor,
+-	    min(strlen(CPUID_STRING_UNKNOWN) + 1,
+-	    sizeof(info_p->cpuid_vendor)))) ||
+-	    (cpuid_set_cpufamily(info_p) == CPUFAMILY_UNKNOWN)) {
++	/* verify we are running on a supported CPU family */
++	if (cpuid_set_cpufamily(info_p) == CPUFAMILY_UNKNOWN) {
+ 		panic("Unsupported CPU");
+ 	}
+ 

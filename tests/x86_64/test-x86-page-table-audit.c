@@ -121,12 +121,90 @@ static void test_bootstrap_tree(void)
 	assert(xnu_x86_page_table_audit(&boot, base, OWNED_BYTES) == 0);
 }
 
+static void test_expected_physical_mapping(void)
+{
+	struct xnu_x86_expected_mapping expected = {
+		.va = LARGE_BYTES + PAGE_BYTES - 16,
+		.pa = BASE + PAGE_BYTES - 16,
+		.size = 32,
+		.permissions = XNU_X86_PAGE_WRITE,
+		.permission_mask = XNU_X86_PAGE_WRITE | XNU_X86_PAGE_USER,
+	};
+
+	make_tables();
+	assert(xnu_x86_page_table_check_mapping(&snapshot, BASE, OWNED_BYTES,
+						 &expected) == -ERANGE);
+	ENTRY(3, 1) = (BASE + PAGE_BYTES) | PRESENT_RW;
+	assert(xnu_x86_page_table_check_mapping(&snapshot, BASE, OWNED_BYTES,
+						 &expected) == 0);
+	ENTRY(3, 1) = 0;
+	assert(xnu_x86_page_table_check_mapping(&snapshot, BASE, OWNED_BYTES,
+						 &expected) == -ENOENT);
+}
+
+static void test_effective_permissions(void)
+{
+	const unsigned int all = XNU_X86_PAGE_WRITE | XNU_X86_PAGE_EXEC |
+				 XNU_X86_PAGE_USER;
+	struct xnu_x86_expected_mapping expected = {
+		.va = 0xffffff8000400020ULL,
+		.pa = BASE + LARGE_BYTES + 32,
+		.size = 16,
+		.permissions = XNU_X86_PAGE_WRITE,
+		.permission_mask = all,
+	};
+
+	make_tables();
+	assert(xnu_x86_page_table_check_mapping(&snapshot, BASE, OWNED_BYTES,
+						 &expected) == 0);
+	/* The leaf supports user writes and execution in isolation. Ancestors
+	 * remove user access and set NX for the high alias.
+	 */
+	ENTRY(2, 2) |= 1ULL << 2;
+	ENTRY(2, 2) &= ~NX;
+	ENTRY(0, 511) |= NX;
+	assert(xnu_x86_page_table_check_mapping(&snapshot, BASE, OWNED_BYTES,
+						 &expected) == 0);
+	expected.permissions |= XNU_X86_PAGE_EXEC;
+	assert(xnu_x86_page_table_check_mapping(&snapshot, BASE, OWNED_BYTES,
+						 &expected) == -EPERM);
+	expected.va = 2 * LARGE_BYTES + 32; /* The low alias remains executable. */
+	assert(xnu_x86_page_table_check_mapping(&snapshot, BASE, OWNED_BYTES,
+						 &expected) == 0);
+	ENTRY(1, 0) &= ~(1ULL << 1);
+	assert(xnu_x86_page_table_check_mapping(&snapshot, BASE, OWNED_BYTES,
+						 &expected) == -EPERM);
+}
+
+static void test_invalid_virtual_ranges(void)
+{
+	struct xnu_x86_expected_mapping expected = {
+		.va = (1ULL << 47) - 16,
+		.pa = BASE,
+		.size = 32,
+	};
+
+	make_tables();
+	assert(xnu_x86_page_table_check_mapping(&snapshot, BASE, OWNED_BYTES,
+						 &expected) == -EINVAL);
+	expected.va = UINT64_MAX - 15;
+	assert(xnu_x86_page_table_check_mapping(&snapshot, BASE, OWNED_BYTES,
+						 &expected) == -EINVAL);
+	expected.va = LARGE_BYTES;
+	expected.permissions = XNU_X86_PAGE_WRITE;
+	assert(xnu_x86_page_table_check_mapping(&snapshot, BASE, OWNED_BYTES,
+						 &expected) == -EINVAL);
+}
+
 int main(void)
 {
 	test_owned_leaves();
 	test_bad_entries_and_snapshot();
 	test_work_limit();
 	test_bootstrap_tree();
+	test_expected_physical_mapping();
+	test_effective_permissions();
+	test_invalid_virtual_ranges();
 	puts("xnu x86 page table ownership fixtures passed");
 	return 0;
 }

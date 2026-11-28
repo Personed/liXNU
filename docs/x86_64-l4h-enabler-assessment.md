@@ -58,7 +58,9 @@ Repository facts:
 
 Assessment/inference:
 
-L4H/seL4 answers the kernel-mode gap only by changing who owns the host/privilege boundary. The blocker documented for stock Linux was that syscall MSRs, IDT, KPTI/CR3/GS, and exception entry architecturally enter Linux first. Under L4H, Linux is not the machine-owner in that sense: seL4 mediates user execution and faults before the paravirtualized Linux guest handles them.
+L4H/seL4 answers the architectural ownership part of the kernel-mode gap only by changing who owns the host/privilege boundary. The blocker documented for stock Linux was that syscall MSRs, IDT, KPTI/CR3/GS, and exception entry architecturally enter Linux first. Under L4H, Linux is not the machine-owner in that sense: seL4 mediates user execution and faults before the paravirtualized Linux guest handles them.
+
+That is not yet evidence that faults or control-flow inside an XNU kernel hosted as a module in the same Linux guest are separately identified and mediated. Distinguishing guest-user faults, Linux-kernel behavior, and XNU-kernel execution requires an explicit XNU/LINUX64/FKI execution-boundary design; L4H supplies the host primitive and architecture, not that XNU-specific mediation contract.
 
 Therefore L4H/seL4 is evidence for a type-1 microkernel/paravirtualized architecture, not evidence for the stock-kernel module path. It does not refute the prior stock-kernel synthesis; it reframes the host architecture.
 
@@ -97,7 +99,7 @@ Whether that deployment model satisfies the project goal “native x86_64 Linux 
 
 ## Conclusion
 
-L4H/seL4 is concrete evidence of a plausible type-1 microkernel/paravirtualized mediation boundary covering both foreign user tasks and the architectural kernel-mode gap. It is not evidence for a stock-kernel module path, because it resolves the gap by moving the machine/privilege boundary from stock Linux to seL4 and running Linux paravirtualized under it.
+L4H/seL4 is concrete evidence of a plausible type-1 microkernel/paravirtualized mediation architecture for foreign user tasks and for relocating the architectural machine-ownership boundary away from stock Linux. It is not yet evidence that XNU kernel-mode faults inside the Linux guest are separately identified and mediated; that remains an XNU/LINUX64/FKI design obligation. It is also not evidence for a stock-kernel module path, because it relocates the machine/privilege boundary from stock Linux to seL4 and runs Linux paravirtualized under it.
 
 The repository already contains an AArch64-specific `CONFIG_L4H` FKI backend shaped around this model, but no x86 backend exists. Any x86 backend, ABI, XNU patch integration, runtime, boot/deploy support, or hardware acceptance claim requires later explicit design and implementation authorization.
 

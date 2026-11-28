@@ -151,6 +151,8 @@ static void test_valid_baseline(void)
 
 	copy_valid(&state, &host, extents);
 	assert(VALIDATE_MEMORY(&state, &host, extents, EXTENT_COUNT) == 0);
+	state.operation = FKI_X86_CONTEXT_OP_RESUME;
+	assert(VALIDATE_MEMORY(&state, &host, extents, EXTENT_COUNT) == 0);
 	assert(sizeof(struct fki_x86_memory_extent) == 48);
 }
 

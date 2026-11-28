@@ -21,6 +21,8 @@
 #define BP_OFF_COOP_RESUME_COUNT  248
 #define BP_OFF_COOP_STATE         256
 #define BP_OFF_COOP_RESUME_RSP    264
+#define BP_OFF_STOP_RIP           272
+#define BP_OFF_STOP_RSP           280
 
 #define BP_COOP_MODE_STOP           2
 #define BP_COOP_MODE_RESUME         3

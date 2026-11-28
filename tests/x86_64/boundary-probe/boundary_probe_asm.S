@@ -115,7 +115,12 @@ SYM_FUNC_START(x86_boundary_probe_inner)
 	cmpl $BP_COOP_MODE_RESUME, %esi
 	je .Lcooperative_resume
 	testl %esi, %esi
-	jnz .Lsoftware_abort
+	jnz x86_boundary_probe_abort_stop
+	.globl x86_boundary_probe_normal_stop
+x86_boundary_probe_normal_stop:
+	movq %rsp, BP_OFF_STOP_RSP(%rdi)
+	leaq x86_boundary_probe_normal_stop(%rip), %r11
+	movq %r11, BP_OFF_STOP_RIP(%rdi)
 	xorl %eax, %eax
 	jmp .Lreturn_with_changed_flags
 .Lcooperative_stop:
@@ -150,7 +155,11 @@ SYM_FUNC_START(x86_boundary_probe_inner)
 .Lcooperative_stale:
 	movq $-116, %rax /* -ESTALE */
 	jmp .Lreturn_with_changed_flags
-.Lsoftware_abort:
+	.globl x86_boundary_probe_abort_stop
+x86_boundary_probe_abort_stop:
+	movq %rsp, BP_OFF_STOP_RSP(%rdi)
+	leaq x86_boundary_probe_abort_stop(%rip), %r11
+	movq %r11, BP_OFF_STOP_RIP(%rdi)
 	movq $-125, %rax /* -ECANCELED */
 
 .Lreturn_with_changed_flags:

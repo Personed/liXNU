@@ -33,6 +33,42 @@ catalog's `latest` selector returned 26.6.2 (`25G83`). The standalone kernel
 audit in #185 identified the 26.7.3 (`25G342`) kernel in the KDK. The installed
 boot collection for `25G342` still needs inspection.
 
+The Recovery audit uses the pinned OpenCore
+[Tahoe recipe](https://github.com/acidanthera/OpenCorePkg/blob/ebea824880706ac9faa8ee45604245de62be658b/Utilities/macrecovery/recovery_urls.txt#L50-L51).
+`macrecovery.py` accepts `default` and `latest` as catalog selectors. Neither
+pins a build. The separate Intel OTA inventory checks the size and SHA-256
+of the Apple CDN ZIP indexed for `25G76 → 25G342` by
+[AppleDB](https://github.com/littlebyteorg/appledb/blob/2d59226769714041389efda35daf4b9a938ba8a9/osFiles/macOS/25x%20-%2026.x/25G342.json).
+The JSON lists collection files, binary deltas, error correction data, BOMs,
+and payload containers visible in the ZIP directory. A delta requires the
+matching base. Files inside payload containers and the collection selected by
+an installed System volume require separate inspection.
+
+The Intel CI job also inspects the exact BootKC in the OTA's `AssetData/boot`
+area with `xnu-fileset-metadata`. Its report records the member's SHA-256,
+Mach-O structure and any XNU release strings. The OTA boot member and the
+collection created for the installed System have separate provenance.
+
+Reproduce both steps from the checkout with a local copy of the OTA:
+
+```sh
+(
+  set -eu
+  scratch=$(mktemp -d)
+  trap 'rm -rf -- "$scratch"' EXIT
+  cc -std=c11 -Wall -Wextra -Werror \
+    tools/dev/x86_64/xnu-fileset-metadata.c xnu-ko/macho_parse_x86_64.c \
+    -o "$scratch/xnu-fileset-metadata"
+  python3 scripts/x86_64/audit-tahoe-ota.py --archive /path/to/intel-ota.zip \
+    --fileset-inspector "$scratch/xnu-fileset-metadata"
+)
+```
+
+With a local System volume from `25G76`, add `--base-system-root /path/to/volume`
+to compare its BootKC with the exact base digest declared by the installed
+System delta. CI tries this read-only comparison against its System volume.
+The report records eligibility as a delta base. Reconstruction is a later step.
+
 The [full installer catalog recorded by #187](https://github.com/Personed/liXNU/actions/runs/46073430260/job/140755502992)
 lists `25G342` at 17,957,880 KiB (about 17.1 GiB). That exceeds the 14 GB of
 SSD documented for the [standard Intel runner](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
